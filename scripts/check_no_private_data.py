@@ -83,7 +83,7 @@ EMAIL_ALLOWLIST = re.compile(
     re.IGNORECASE,
 )
 
-#: Paths never scanned.
+#: Paths never scanned, by directory name.
 SKIP_DIRECTORIES = frozenset(
     {
         ".git",
@@ -104,8 +104,30 @@ SKIP_DIRECTORIES = frozenset(
         "dist",
         ".eggs",
         "htmlcov",
+        "site-packages",
     }
 )
+
+
+def _virtualenv_roots(root: Path) -> set[Path]:
+    """Find virtualenvs under ``root``, whatever they are named.
+
+    Matching on the names ``.venv``/``venv``/``env`` alone is not enough: someone
+    with ``.civenv``, ``env311`` or ``myproject-env`` would have the scanner walk
+    thousands of dependency files and report their bundled CA certificates as
+    "key material". The scan becomes noise, and noise gets ignored.
+
+    ``pyvenv.cfg`` sits at the root of every PEP 405 virtualenv, so detect that
+    instead of guessing names.
+    """
+    roots: set[Path] = set()
+    for marker in root.rglob("pyvenv.cfg"):
+        # Skip anything already inside a discovered venv to bound the walk.
+        if any(parent in roots for parent in marker.parents):
+            continue
+        roots.add(marker.parent)
+    return roots
+
 
 SKIP_SUFFIXES = frozenset(
     {
@@ -187,18 +209,24 @@ class Finding:
 
 
 def _iter_files(root: Path, paths: list[Path] | None = None):
-    """Yield files to scan."""
+    """Yield files to scan, skipping virtualenvs and generated directories."""
     if paths:
         for path in paths:
             if path.is_file():
                 yield path
         return
+
+    venvs = _virtualenv_roots(root)
     for path in root.rglob("*"):
         if not path.is_file():
             continue
         if any(part in SKIP_DIRECTORIES for part in path.parts):
             continue
         if path.suffix.lower() in SKIP_SUFFIXES:
+            continue
+        # Installed dependencies are not this repository's content, and their
+        # bundled certificates and test fixtures produce nothing but noise.
+        if any(venv in path.parents for venv in venvs):
             continue
         yield path
 

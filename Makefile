@@ -47,6 +47,8 @@ typecheck: ## Run mypy
 
 .PHONY: test
 test: ## Run the test suite
+	# Bare `pytest`, deliberately matching CI. `python -m pytest` also puts the
+	# working directory on sys.path, which hides import errors that CI then hits.
 	$(BIN)/pytest
 
 .PHONY: test-fast

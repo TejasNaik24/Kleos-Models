@@ -136,7 +136,12 @@ follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." as well as "src": the test modules import shared helpers via
+# `from tests.conftest import ...`, which needs the repository root importable.
+# `python -m pytest` happens to add the working directory to sys.path, but bare
+# `pytest` does not — so without this, tests pass locally and fail collection in
+# CI with "No module named 'tests'".
+pythonpath = ["src", "."]
 addopts = "-ra --strict-markers"
 markers = [
   "requires_torch: test needs torch + transformers installed (skipped otherwise)",
