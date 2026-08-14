@@ -124,6 +124,7 @@ class TestReferences:
     def test_referenced_cli_flags_exist(self, loaded):
         """Flags used in notebooks must be accepted by the scripts they call."""
         import subprocess
+        import sys
 
         invocations = re.findall(
             r"python (scripts/[a-z_]+\.py)((?:\s+\\?\s*--[\w-]+(?:\s+[^\s\\]+)?)*)",
@@ -132,8 +133,11 @@ class TestReferences:
         assert invocations, "no script invocations found in the training notebook"
 
         for script, flag_text in invocations:
+            # sys.executable, not a hard-coded ".venv/bin/python": CI installs
+            # into the runner's own environment and has no .venv, so the literal
+            # path passes locally and raises FileNotFoundError on every CI run.
             help_text = subprocess.run(
-                [str(REPO_ROOT / ".venv" / "bin" / "python"), str(REPO_ROOT / script), "--help"],
+                [sys.executable, str(REPO_ROOT / script), "--help"],
                 capture_output=True,
                 text=True,
                 cwd=REPO_ROOT,
