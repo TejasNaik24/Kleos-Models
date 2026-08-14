@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------------------
+# Qwen3-8B — the small KLEOS model.
+#
+# Dense causal LM with switchable thinking. Trainable in 4-bit on a free Colab
+# T4 (16GB), which makes it the default choice for iteration.
+#
+# Architecture facts verified against the checkpoint's config.json:
+#   architectures: ["Qwen3ForCausalLM"], model_type: qwen3
+#   36 layers, hidden 4096, vocab 151936, max_position_embeddings 40960
+# ---------------------------------------------------------------------------
+
+model:
+  name: qwen3_8b
+  family: qwen
+  base_model: Qwen/Qwen3-8B
+  # Pin a commit sha for a real research run so the checkpoint cannot move.
+  revision: main
+  trust_remote_code: false
+
+  model_type: qwen3
+  architecture: Qwen3ForCausalLM
+  parameter_count: 8.2e9
+  is_moe: false
+  is_multimodal: false
+  context_limit: 40960
+
+  # 2048 fits a T4 comfortably with gradient checkpointing. Raise it only after
+  # checking scripts/plan_run.py.
+  max_seq_length: 2048
+  dtype: auto
+  attn_implementation: sdpa
+  device_map: auto
+
+  reasoning:
+    supported: true
+    # Non-thinking by default: KLEOS decision tasks are short-horizon, and
+    # thinking mode multiplies token cost. Switch deliberately, and record it.
+    default_mode: non_thinking
+    strip_thinking_from_targets: true
+    strip_thinking_from_history: true
+
+  quantization:
+    mode: nf4
+    # auto → bfloat16 on compute capability >= 8.0, float16 otherwise.
+    # A Colab T4 is 7.5 and cannot do bfloat16.
+    compute_dtype: auto
+    double_quant: true
+
+  lora:
+    # 'auto' asks the family adapter for architecture-appropriate targets, which
+    # are then validated against the loaded model. Never copy targets from a
+    # tutorial written for a different architecture.
+    target_modules: auto
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    task_type: CAUSAL_LM
+
+  notes: >-
+    Small KLEOS model. Qwen3 supports switchable thinking through the chat
+    template's enable_thinking argument.

@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# QLoRA training configuration — small KLEOS model.
+#
+#   INITIAL ENGINEERING DEFAULTS — MUST BE TUNED AND VALIDATED DURING THE
+#   RESEARCH PHASE. These values are chosen to run reliably end to end on a free
+#   Colab T4, NOT to maximize performance. Do not present results from these
+#   hyperparameters as tuned. (spec §47, §48)
+#
+#     python scripts/train.py --config configs/training/qlora_small.yaml
+#     python scripts/train.py --config configs/training/qlora_small.yaml \
+#                             --dataset /path/to/private/dataset
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/qwen3_8b.yaml
+  dataset: ../datasets/example.yaml
+  evaluation: ../evaluation/default.yaml
+
+name: kleos-qlora-small
+description: >-
+  QLoRA adapter training for the small KLEOS model. Engineering defaults, not
+  tuned hyperparameters.
+tags: [qlora, small]
+
+# Single-task training is the default. The research plan explicitly rejects the
+# assumption that one monolithic "KLEOS personality" fine-tune is the right
+# approach, so each task is trainable in isolation.
+task: notification_prioritization
+
+training:
+  num_train_epochs: 3.0
+  max_steps: -1
+
+  # 2e-4 is the conventional QLoRA starting point. It is a starting point.
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+
+  # Effective batch 8 = 1 x 8. Batch size 1 keeps activation memory low on a
+  # 16GB GPU; accumulation recovers the effective batch without the memory cost.
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  per_device_eval_batch_size: 1
+
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+
+  # Paged 8-bit keeps optimizer state off the critical VRAM path. Falls back to
+  # adamw_torch with a RECORDED adjustment if bitsandbytes is unavailable.
+  optim: paged_adamw_8bit
+  gradient_checkpointing: true
+
+  # auto → bf16 on compute capability >= 8.0, fp16 on a T4 (7.5).
+  precision: auto
+
+  logging_steps: 5
+  save_strategy: steps
+  save_steps: 50
+  # Three checkpoints: enough to recover from a bad late step, few enough to fit
+  # Colab disk. The manager never deletes the last remaining checkpoint.
+  save_total_limit: 3
+  eval_strategy: steps
+  eval_steps: 50
+
+  # Set to true for a real research run: any automatic adjustment then becomes a
+  # hard error instead of a recorded change, so a comparison cannot be silently
+  # invalidated by a memory-driven fallback.
+  strict_config: false
+
+  # QLoRA must stay QLoRA. The trainer refuses to full-fine-tune by accident.
+  allow_full_finetune: false

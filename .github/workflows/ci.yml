@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# CI never runs GPU training. It exercises the logic layers on synthetic
+# fixtures only, which is why the dependency-isolation rule matters: the whole
+# data/config/evaluation suite runs without installing torch.
+env:
+  PYTHONUNBUFFERED: "1"
+  TOKENIZERS_PARALLELISM: "false"
+
+jobs:
+  privacy:
+    name: Private-data scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Runs first and needs no dependencies: a leaked secret should fail the
+      # build immediately, not after a five-minute install.
+      - name: Scan for secrets and private data
+        run: python scripts/check_no_private_data.py .
+
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: ruff check
+        run: ruff check --output-format=github .
+      - name: ruff format --check
+        run: ruff format --check .
+
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: mypy src/kleos_models
+
+  test:
+    name: Tests (py${{ matrix.python-version }}, no torch)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      # Deliberately no torch: this proves the light layer stays importable and
+      # fully testable without it.
+      - name: Run the test suite
+        run: pytest -v --tb=short
+
+  test-with-torch:
+    name: Tests with torch (CPU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU torch and the training extra
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[train,dev]"
+      # These build tiny randomly-initialized models and run real training
+      # steps on CPU. No weights are downloaded and no GPU is used.
+      - name: Run the full suite including tiny-model training
+        run: pytest -v --tb=short
+
+  validate:
+    name: Configs, schemas and fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+
+      - name: Validate every config
+        run: python scripts/validate_configs.py
+
+      - name: Validate the development fixtures
+        run: |
+          python scripts/validate_dataset.py \
+            --dataset data/examples \
+            --eval data/examples/synthetic_eval.jsonl \
+            --require-reviewed
+
+      - name: Check JSON schemas are current
+        run: |
+          python scripts/prepare_dataset.py --emit-schemas
+          git diff --exit-code data/schema/ || {
+            echo "::error::data/schema/ is out of date."
+            echo "Run: python scripts/prepare_dataset.py --emit-schemas"
+            exit 1
+          }
+
+      - name: Check fixtures are reproducible
+        run: |
+          python scripts/prepare_dataset.py --generate-fixtures
+          git diff --exit-code data/examples/ || {
+            echo "::error::data/examples/ does not match its generator."
+            echo "Run: python scripts/prepare_dataset.py --generate-fixtures"
+            exit 1
+          }
+
+      - name: Check notebooks are current
+        run: |
+          python scripts/build_notebooks.py
+          git diff --exit-code notebooks/ || {
+            echo "::error::notebooks/ is out of date."
+            echo "Run: python scripts/build_notebooks.py"
+            exit 1
+          }
+
+  smoke:
+    name: Smoke test and pipeline scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+
+      - name: Smoke test
+        run: python scripts/smoke_test.py
+
+      - name: Dataset inspection
+        run: python scripts/inspect_dataset.py --dataset data/examples --coverage
+
+      - name: Leakage report
+        run: |
+          python scripts/validate_dataset.py \
+            --dataset data/examples --leakage-report reports/leakage
+
+      - name: Split, evaluate and compare on fixtures
+        run: |
+          python scripts/split_dataset.py \
+            --input data/examples/synthetic_train.jsonl \
+            --output /tmp/ci-dataset --strategy group --seed 42
+          python scripts/evaluate.py \
+            --config configs/training/qlora_small.yaml \
+            --echo --arm arm0_base --output /tmp/base.json
+          python scripts/evaluate.py \
+            --config configs/training/qlora_small.yaml \
+            --echo --arm arm0_base --output /tmp/ft.json
+          python scripts/compare.py --base /tmp/base.json --finetuned /tmp/ft.json
+
+      - name: Feasibility planning
+        run: python scripts/plan_run.py --all-models

@@ -1,0 +1,35 @@
+# ---------------------------------------------------------------------------
+# Development fixture dataset.
+#
+# THIS IS NOT THE KLEOS RESEARCH DATASET. The examples in data/examples/ are
+# synthetic fixtures whose only purpose is to exercise the pipeline end to end.
+# Any metric computed from them describes the plumbing, not KLEOS.
+#
+# For a real run, point --dataset at the artifact produced by the private
+# kleos-training-data repository:
+#     python scripts/train.py --config ... --dataset /path/to/private/dataset
+# ---------------------------------------------------------------------------
+
+dataset:
+  version: kleos-dev-fixtures-v0.1.0
+  path: data/examples
+
+  filters:
+    # Fixtures are marked 'reviewed' so the default quality gate accepts them.
+    quality_statuses:
+      - reviewed
+    min_messages: 2
+
+  split:
+    # Random is development-only. A real run must use a held-out strategy, or
+    # the resulting "generalization" number measures nothing.
+    strategy: random
+    seed: 42
+    train_fraction: 0.7
+    validation_fraction: 0.15
+    test_fraction: 0.15
+
+  packing: false
+  shuffle: true
+  require_manifest: false
+  allow_unreviewed: false

@@ -1,0 +1,46 @@
+# ---------------------------------------------------------------------------
+# Template for consuming the PRIVATE kleos-training-data artifact (spec §27, §50).
+#
+# The private repository exports:
+#     dataset/
+#       manifest.json
+#       train.jsonl
+#       validation.jsonl
+#       test.jsonl
+#
+# Point `path` at that directory — ANYWHERE on disk, outside this repository.
+# Never copy the artifact into this public repo.
+#
+#     python scripts/train.py --config configs/training/qlora_small.yaml \
+#                             --dataset /path/to/private/dataset
+#
+# The --dataset flag overrides `path` below, which is why it is left as an
+# environment variable with no default.
+# ---------------------------------------------------------------------------
+
+dataset:
+  version: kleos-policy-v0.1.0
+  path: ${env:KLEOS_DATASET_PATH:/path/to/private/dataset}
+
+  filters:
+    # Research runs use reviewed examples only. Widening this is a deliberate
+    # act that changes what the experiment measures.
+    quality_statuses:
+      - reviewed
+    min_messages: 2
+
+  split:
+    # Held-out entities: does the learned policy transfer to entities the model
+    # never trained on? This is the split that supports a generalization claim.
+    strategy: entity_holdout
+    seed: 42
+    train_fraction: 0.7
+    validation_fraction: 0.15
+    test_fraction: 0.15
+    group_key: scenario_family
+
+  packing: false
+  shuffle: true
+  # A real run must know exactly which dataset version it consumed.
+  require_manifest: true
+  allow_unreviewed: false

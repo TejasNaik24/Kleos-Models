@@ -1,0 +1,21 @@
+# Normalize line endings.
+* text=auto eol=lf
+
+*.py    text diff=python
+*.md    text
+*.yaml  text
+*.yml   text
+*.json  text
+*.jsonl text
+*.ipynb text
+
+# Binary model artifacts should never be committed (see .gitignore), but if a
+# reviewer force-adds one, at least do not try to diff it as text.
+*.safetensors binary
+*.bin         binary
+*.pt          binary
+*.pth         binary
+*.gguf        binary
+
+# Notebooks: mark as generated so large diffs do not dominate PR review.
+*.ipynb linguist-generated=true

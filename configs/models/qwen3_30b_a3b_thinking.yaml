@@ -1,0 +1,80 @@
+# ---------------------------------------------------------------------------
+# Qwen3-30B-A3B-Thinking-2507 — the larger reasoning KLEOS candidate.
+#
+# READ THIS BEFORE USING THIS CONFIG.
+#
+# 1. MIXTURE OF EXPERTS. ~30B total parameters, ~3B active per token.
+#    Do NOT plan compute as if this were a dense 30B model for *speed* — but DO
+#    plan memory as if it were, because every expert is resident in VRAM even
+#    though only 8 of 128 activate per token.
+#
+# 2. LoRA TARGETS ATTENTION ONLY.
+#    48 layers x 128 experts x 3 projections = ~18,400 adapter modules if the
+#    experts were targeted. Beyond being impractical, each expert sees only a
+#    fraction of tokens, so per-expert adapters would train on very little data.
+#    The MoE router (mlp.gate) is excluded from both LoRA and quantization:
+#    perturbing routing destabilizes training in ways that are hard to attribute.
+#
+# 3. THINKING-ONLY CHECKPOINT.
+#    The chat template does not accept enable_thinking and always emits a
+#    reasoning span. Requesting non-thinking mode raises a clear error rather
+#    than silently producing a mangled prompt. Reasoning here is a real model
+#    capability, not a <think> string injected into the prompt.
+#
+# 4. DOES NOT FIT A FREE COLAB T4. Needs an A100-class GPU (40GB+) to train.
+#
+# Verified: architectures ["Qwen3MoeForCausalLM"], model_type qwen3_moe,
+#   48 layers, 128 experts, 8 active, moe_intermediate_size 768,
+#   max_position_embeddings 262144
+# ---------------------------------------------------------------------------
+
+model:
+  name: qwen3_30b_a3b_thinking
+  family: qwen
+  base_model: Qwen/Qwen3-30B-A3B-Thinking-2507
+  revision: main
+  trust_remote_code: false
+
+  model_type: qwen3_moe
+  architecture: Qwen3MoeForCausalLM
+  parameter_count: 30.5e9
+  active_parameter_count: 3.3e9
+  is_moe: true
+  is_multimodal: false
+  context_limit: 262144
+
+  # Thinking output is long. 4096 leaves room for a reasoning span plus an
+  # answer; shorter windows truncate the answer and produce misleading scores.
+  max_seq_length: 4096
+  dtype: auto
+  attn_implementation: sdpa
+  device_map: auto
+
+  reasoning:
+    supported: true
+    # Must be 'thinking'. This checkpoint has no other mode.
+    default_mode: thinking
+    # Reasoning spans are stripped from training targets and from multi-turn
+    # history, per Qwen's guidance. We train the decision, not the display CoT.
+    strip_thinking_from_targets: true
+    strip_thinking_from_history: true
+
+  quantization:
+    mode: nf4
+    compute_dtype: auto
+    double_quant: true
+
+  lora:
+    # Resolves to attention only. Experts and the router are excluded.
+    target_modules: auto
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    task_type: CAUSAL_LM
+
+  notes: >-
+    MoE reasoning candidate. Thinking-only: enable_thinking is not accepted.
+    LoRA targets attention only; 128 experts per layer are excluded, as is the
+    router. Requires an A100-class GPU. Memory tracks total parameters, not
+    active ones, since all experts stay resident.

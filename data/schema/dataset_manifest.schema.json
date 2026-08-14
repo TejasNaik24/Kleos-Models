@@ -1,0 +1,175 @@
+{
+  "$defs": {
+    "SplitCounts": {
+      "additionalProperties": false,
+      "description": "Example counts per partition.",
+      "properties": {
+        "test": {
+          "default": 0,
+          "title": "Test",
+          "type": "integer"
+        },
+        "train": {
+          "default": 0,
+          "title": "Train",
+          "type": "integer"
+        },
+        "validation": {
+          "default": 0,
+          "title": "Validation",
+          "type": "integer"
+        }
+      },
+      "title": "SplitCounts",
+      "type": "object"
+    }
+  },
+  "$id": "https://kleos.dev/schema/dataset_manifest.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Dataset-level provenance (spec section 26).\n\nA dataset version is immutable. ``scripts/split_dataset.py`` refuses to\noverwrite an existing version directory, because silently rewriting a version\nbreaks every comparison that referenced it.",
+  "properties": {
+    "contains_private_data": {
+      "default": false,
+      "description": "Set true only in the PRIVATE repository. A dataset with this flag must never be committed here; loaders warn loudly when they see it.",
+      "title": "Contains Private Data",
+      "type": "boolean"
+    },
+    "content_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Digest over all split hashes combined.",
+      "title": "Content Hash"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "domain_distribution": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Domain Distribution",
+      "type": "object"
+    },
+    "example_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Example Count",
+      "type": "integer"
+    },
+    "file_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "sha256 per split file, so a manifest identifies exact content.",
+      "title": "File Hashes",
+      "type": "object"
+    },
+    "holdout_values": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Holdout Values",
+      "type": "array"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notes"
+    },
+    "preprocessing_version": {
+      "default": "1.0",
+      "title": "Preprocessing Version",
+      "type": "string"
+    },
+    "quality_distribution": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Quality Distribution",
+      "type": "object"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source": {
+      "default": "synthetic",
+      "description": "Where the data came from, at a level safe to publish.",
+      "title": "Source",
+      "type": "string"
+    },
+    "source_distribution": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Source Distribution",
+      "type": "object"
+    },
+    "split_seed": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Split Seed"
+    },
+    "split_strategy": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Split Strategy"
+    },
+    "splits": {
+      "$ref": "#/$defs/SplitCounts"
+    },
+    "task_distribution": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Task Distribution",
+      "type": "object"
+    },
+    "version": {
+      "description": "e.g. 'kleos-policy-v0.1.0'.",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "title": "DatasetManifest",
+  "type": "object"
+}

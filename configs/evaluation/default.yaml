@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------------------
+# Default evaluation configuration (spec §19-§24).
+#
+# The settings here are held IDENTICAL across arms. That is the whole point: if
+# decoding, benchmark, graders or seeds differed between base and fine-tuned,
+# any difference in score would be uninterpretable.
+# ---------------------------------------------------------------------------
+
+evaluation:
+  benchmark_path: data/examples/synthetic_eval.jsonl
+
+  # Arms to run. arm0 vs arm2 isolates the fine-tuning effect; add arm1/arm3 to
+  # separate the orchestration effect from it.
+  arms:
+    - arm0_base
+    - arm2_finetuned
+
+  graders:
+    - classification
+    - ranking
+    - heuristic_rubric
+
+  metrics:
+    - accuracy
+    - macro_f1
+    - ndcg
+
+  generation:
+    # Greedy. Deterministic evaluation means a re-run reproduces the number.
+    temperature: 0.0
+    top_p: 1.0
+    do_sample: false
+    max_new_tokens: 512
+    repetition_penalty: 1.0
+
+  # One seed is correct for greedy decoding — extra seeds would produce identical
+  # output. Add seeds only alongside generation.do_sample: true.
+  seeds: [42]
+  batch_size: 1
+
+  consistency:
+    enabled: true
+    # Groups logically equivalent perturbations of one scenario.
+    group_key: scenario_family
+    min_group_size: 2
+
+  ood:
+    enabled: true
+    # in_distribution / ood / gap are always reported separately, never blended.
+    report_separately: true
+
+  capability:
+    # General-capability regression suite. Enable once a fixed suite exists;
+    # the suite must then stay CONSTANT across experiments or comparisons break.
+    enabled: false

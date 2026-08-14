@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# Debug configuration (spec §47).
+#
+# Purpose: answer "can the entire pipeline execute end to end?" as fast as
+# possible. It is NOT a research configuration and its loss values mean nothing.
+#
+#     python scripts/train.py --config configs/training/debug.yaml
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/qwen3_8b.yaml
+  dataset: ../datasets/example.yaml
+  evaluation: ../evaluation/default.yaml
+
+name: kleos-debug
+description: Tiny end-to-end pipeline check. Not a research run.
+tags: [debug, smoke]
+
+model:
+  # Short sequences so a step takes seconds.
+  max_seq_length: 512
+  lora:
+    r: 8
+    alpha: 16
+
+training:
+  # Ten steps is enough to prove the loop runs, checkpoints and saves.
+  max_steps: 10
+  num_train_epochs: 1
+  learning_rate: 2.0e-4
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 2
+  gradient_checkpointing: true
+
+  # Frequent logging and checkpointing: the point is to observe the machinery.
+  logging_steps: 1
+  save_strategy: steps
+  save_steps: 5
+  save_total_limit: 2
+  eval_strategy: steps
+  eval_steps: 5
+
+  # Debug runs may be adjusted freely; nothing is being compared.
+  strict_config: false
+
+evaluation:
+  max_examples: 4

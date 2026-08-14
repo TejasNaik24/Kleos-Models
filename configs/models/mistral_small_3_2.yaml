@@ -1,0 +1,80 @@
+# ---------------------------------------------------------------------------
+# Mistral-Small-3.2-24B-Instruct-2506
+#
+# READ THIS BEFORE USING THIS CONFIG.
+#
+# 1. THIS IS A VISION-LANGUAGE MODEL, NOT A PLAIN CAUSAL LM.
+#    Its config.json declares:
+#        architectures: ["Mistral3ForConditionalGeneration"]
+#        model_type:    "mistral3"
+#    In transformers, `mistral3` is registered ONLY in
+#    MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES — it is NOT in the causal-LM
+#    mapping. `AutoModelForCausalLM.from_pretrained(...)` on this checkpoint
+#    FAILS. The Mistral3VLMAdapter loads it via AutoModelForImageTextToText.
+#
+#    It has a 40-layer text tower plus a 24-layer vision tower. KLEOS training
+#    data is text-only, so LoRA is scoped to `language_model.*` and the vision
+#    tower and projector stay frozen and unquantized.
+#
+# 2. IT DOES NOT FIT A FREE COLAB T4 FOR TRAINING.
+#    In 4-bit the weights alone are roughly 14-15GB, before optimizer state and
+#    activations. Adapter training needs an A100-class GPU (40GB+). Check first:
+#        python scripts/plan_run.py --config configs/training/qlora_small.yaml \
+#                                   --set-model configs/models/mistral_small_3_2.yaml
+#
+# 3. SCALE IS CONFOUNDED WITH FAMILY HERE.
+#    Comparing this 24B multimodal model against Qwen3-8B measures family, scale
+#    and modality together. For a controlled family comparison use
+#    configs/models/ministral_8b.yaml instead.
+#
+# Verified: text_config 40 layers, hidden 5120, intermediate 32768,
+#   vocab 131072, max_position_embeddings 131072; vision_config 24 layers.
+# ---------------------------------------------------------------------------
+
+model:
+  name: mistral_small_3_2
+  family: mistral
+  base_model: mistralai/Mistral-Small-3.2-24B-Instruct-2506
+  revision: main
+  trust_remote_code: false
+
+  model_type: mistral3
+  architecture: Mistral3ForConditionalGeneration
+  parameter_count: 24.0e9
+  is_moe: false
+  is_multimodal: true
+  context_limit: 131072
+
+  # Deliberately conservative: this model is large and activation memory is the
+  # binding constraint on anything smaller than an A100.
+  max_seq_length: 1024
+  dtype: auto
+  attn_implementation: sdpa
+  device_map: auto
+
+  reasoning:
+    supported: false
+    default_mode: standard
+
+  quantization:
+    mode: nf4
+    compute_dtype: auto
+    double_quant: true
+    # The adapter also forces the vision tower and projector to full precision;
+    # quantizing a tower that is never trained buys nothing and risks load errors.
+    skip_modules: []
+
+  lora:
+    # Resolves to attention + MLP, scoped to language_model.* by the adapter.
+    target_modules: auto
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    task_type: CAUSAL_LM
+
+  notes: >-
+    Mistral Small 3.2 is a vision-language model (Mistral3ForConditionalGeneration).
+    AutoModelForCausalLM cannot load it. LoRA is scoped to the language tower;
+    the vision tower is frozen and unquantized because KLEOS data is text-only.
+    Requires an A100-class GPU for adapter training.

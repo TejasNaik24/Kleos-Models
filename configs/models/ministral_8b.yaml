@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------------------
+# Ministral-8B-Instruct-2410 — the scale-matched Mistral arm.
+#
+# WHY THIS CONFIG EXISTS
+# Comparing Qwen3-8B (8B, dense, text-only) against Mistral-Small-3.2-24B (24B,
+# multimodal) confounds three variables at once: model family, parameter count,
+# and modality. A "Qwen beats Mistral" result from that comparison would be
+# uninterpretable.
+#
+# Ministral-8B is a plain text-only MistralForCausalLM at the same scale as
+# Qwen3-8B, so the family comparison controls for scale. Use this arm when the
+# question is about family; use mistral_small_3_2 when the question is about the
+# specific 24B checkpoint.
+#
+# Verified: architectures ["MistralForCausalLM"], model_type mistral,
+#   36 layers, hidden 4096, vocab 131072, max_position_embeddings 32768
+# ---------------------------------------------------------------------------
+
+model:
+  name: ministral_8b
+  family: mistral
+  base_model: mistralai/Ministral-8B-Instruct-2410
+  revision: main
+  trust_remote_code: false
+
+  model_type: mistral
+  architecture: MistralForCausalLM
+  parameter_count: 8.0e9
+  is_moe: false
+  is_multimodal: false
+  context_limit: 32768
+
+  max_seq_length: 2048
+  dtype: auto
+  attn_implementation: sdpa
+  device_map: auto
+
+  reasoning:
+    # No reasoning mode. Requesting 'thinking' raises rather than faking it.
+    supported: false
+    default_mode: standard
+
+  quantization:
+    mode: nf4
+    compute_dtype: auto
+    double_quant: true
+
+  lora:
+    target_modules: auto
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    task_type: CAUSAL_LM
+
+  notes: >-
+    Scale-matched Mistral counterpart to Qwen3-8B, so the Qwen-vs-Mistral family
+    comparison is not confounded with parameter count or modality. Gated
+    repository: accept the licence on Hugging Face and set HF_TOKEN.

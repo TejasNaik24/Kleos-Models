@@ -1,0 +1,126 @@
+# ---------------------------------------------------------------------------
+# KLEOS Models .gitignore
+#
+# This repository is PUBLIC. The rules below are a safety net, not a substitute
+# for judgement. Before committing, run:
+#
+#     python scripts/check_no_private_data.py .
+#
+# See SECURITY.md and docs/privacy.md.
+# ---------------------------------------------------------------------------
+
+# --- data/ is DENY-BY-DEFAULT ----------------------------------------------
+#
+# Everything under data/ is ignored unless explicitly allowed below.
+#
+# This is an allowlist on purpose. A blocklist ("ignore data/raw/, ignore
+# *.jsonl") only blocks the filenames someone thought of in advance — drop a
+# real export in as data/my_export.jsonl or data/memories.json and it sails
+# straight into a public commit. Deny-by-default means a new file has to be
+# *deliberately* permitted before it can ever be published.
+#
+# Real KLEOS training data belongs in the separate PRIVATE repository and is
+# consumed by path, never copied here:
+#
+#     python scripts/train.py --config <config> --dataset /path/to/private/dataset
+#
+data/*
+
+# The three things that ARE safe to publish.
+# NOTE: comments must be on their own line. Git does not support trailing
+# comments in .gitignore — "!data/schema/  # note" is a literal pattern that
+# matches nothing, which silently un-ignores nothing at all.
+!data/README.md
+# JSON Schema: the data contract. Describes shape, contains no data.
+!data/schema/
+# Synthetic development fixtures. Generated, contain no real data.
+!data/examples/
+
+# Keep the empty working directories without admitting their contents.
+!data/raw/
+data/raw/*
+!data/raw/.gitkeep
+!data/processed/
+data/processed/*
+!data/processed/.gitkeep
+
+# Dataset artifacts anywhere else in the tree (a private export mounted or
+# copied in, a Colab download, a sibling `dataset/` directory).
+**/train.jsonl
+**/validation.jsonl
+**/test.jsonl
+!data/examples/*.jsonl
+!tests/fixtures/*.jsonl
+
+# --- Secrets ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+service-account*.json
+.hf_token
+.huggingface/
+
+# --- Training artifacts ----------------------------------------------------
+# `outputs/*` rather than `outputs/`: git cannot re-include a file whose parent
+# directory is excluded, so "outputs/" followed by "!outputs/.gitkeep" would
+# silently drop the .gitkeep and the directory would vanish from the repo.
+outputs/*
+!outputs/.gitkeep
+checkpoints/
+runs/
+wandb/
+reports/
+mlruns/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.gguf
+*.ckpt
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.python-version
+
+# --- Tooling ---------------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# --- Notebooks -------------------------------------------------------------
+.ipynb_checkpoints/
+
+# --- Editors / OS ----------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+#Mac OS
+.DS_Store
+
+# Local agent notes
+claude.md
+CLAUDE.md

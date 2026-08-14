@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# Base configuration shared by every KLEOS experiment.
+#
+# Other configs `extends: ../base.yaml` and override what they need. Values here
+# are conservative and safe rather than tuned.
+# ---------------------------------------------------------------------------
+
+name: kleos-experiment
+description: ""
+tags: []
+
+# Single top-level seed. Components inherit it unless they set their own, so a
+# run is reproducible from one number.
+seed: 42
+
+training:
+  output_dir: outputs
+  # Reporting integrations are opt-in. Empty means nothing is transmitted
+  # anywhere, which is the right default for a repo handling research data.
+  report_to: []
+
+evaluation:
+  arms:
+    - arm0_base
+  graders:
+    - exact_match
+  generation:
+    # Greedy decoding by default: evaluation must be deterministic so that a
+    # difference between arms is attributable to the model, not to sampling.
+    temperature: 0.0
+    do_sample: false
+    max_new_tokens: 512
+  seeds: [42]

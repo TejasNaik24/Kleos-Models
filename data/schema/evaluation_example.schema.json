@@ -1,0 +1,390 @@
+{
+  "$defs": {
+    "ExampleMetadata": {
+      "additionalProperties": true,
+      "description": "Provenance and grouping information.",
+      "properties": {
+        "author": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pipeline or role, never a person.",
+          "title": "Author"
+        },
+        "created_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created At"
+        },
+        "group_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Generic grouping key for splitting.",
+          "title": "Group Id"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "perturbation_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Perturbation Kind"
+        },
+        "perturbation_of": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Id of the example this one perturbs.",
+          "title": "Perturbation Of"
+        },
+        "quality_status": {
+          "default": "draft",
+          "title": "Quality Status",
+          "type": "string"
+        },
+        "scenario_family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Groups logically related examples. Used by scenario-family-held-out splitting and by consistency testing, which needs perturbations of one scenario to stay together.",
+          "title": "Scenario Family"
+        },
+        "source": {
+          "default": "synthetic",
+          "description": "Provenance. Raw real user data must never appear in this repo.",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "title": "ExampleMetadata",
+      "type": "object"
+    },
+    "Message": {
+      "additionalProperties": false,
+      "description": "One conversation turn.",
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tool name for role='tool'.",
+          "title": "Name"
+        },
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "content"
+      ],
+      "title": "Message",
+      "type": "object"
+    },
+    "VariationAxes": {
+      "additionalProperties": true,
+      "description": "Situation descriptors used for coverage reporting (spec section 10).\n\nExtra keys are permitted so new axes can be piloted in the private dataset\nbefore being promoted into :data:`kleos_models.constants.VARIATION_AXES`.\nUnknown axes are surfaced by the coverage report rather than silently kept.",
+      "properties": {
+        "ambiguity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ambiguity"
+        },
+        "conflicting_evidence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conflicting Evidence"
+        },
+        "context_length": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Length"
+        },
+        "deadlines": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Deadlines"
+        },
+        "difficulty": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Difficulty"
+        },
+        "domain": {
+          "description": "Life/work domain, e.g. 'career', 'research'.",
+          "title": "Domain",
+          "type": "string"
+        },
+        "entities": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "'seen' | 'unseen' | free-form entity-set label.",
+          "title": "Entities"
+        },
+        "evidence_quality": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Quality"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Format"
+        },
+        "presentation_order": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Presentation Order"
+        },
+        "source_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Type"
+        },
+        "urgency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Urgency"
+        },
+        "workspace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workspace"
+        }
+      },
+      "required": [
+        "domain"
+      ],
+      "title": "VariationAxes",
+      "type": "object"
+    }
+  },
+  "$id": "https://kleos.dev/schema/evaluation_example.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One benchmark item.\n\nUnlike a training example, the assistant turn is optional: what matters is\nthe *reference* \u2014 the decision the grader checks against.",
+  "properties": {
+    "grader": {
+      "default": "exact_match",
+      "description": "Grader id from evaluation.graders.",
+      "title": "Grader",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "messages": {
+      "items": {
+        "$ref": "#/$defs/Message"
+      },
+      "minItems": 1,
+      "title": "Messages",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ExampleMetadata"
+    },
+    "ood_shift": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OOD shift kind, when applicable.",
+      "title": "Ood Shift"
+    },
+    "reference": {
+      "additionalProperties": true,
+      "description": "Ground truth for graders: {'label': ...}, {'ranking': [...]}, {'text': ...}, {'required_points': [...]}, {'evidence_ids': [...]}.",
+      "title": "Reference",
+      "type": "object"
+    },
+    "split_tag": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "'in_distribution' | 'ood' | 'capability'. Drives separate reporting.",
+      "title": "Split Tag"
+    },
+    "task": {
+      "title": "Task",
+      "type": "string"
+    },
+    "variation_axes": {
+      "$ref": "#/$defs/VariationAxes"
+    },
+    "version": {
+      "default": "1.0",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "task",
+    "messages",
+    "variation_axes"
+  ],
+  "title": "EvaluationExample",
+  "type": "object"
+}
