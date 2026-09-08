@@ -171,11 +171,83 @@ class ConversationFormatter:
         self.template_kwargs = dict(template_kwargs or {})
         self.strip_reasoning = strip_reasoning
         self._warned_unstable_template = False
+        self._merge_system: bool | None = None
 
     # -- template helpers ---------------------------------------------------
 
-    def render(self, messages: Sequence[Message], *, add_generation_prompt: bool = False) -> str:
-        """Render messages to text using the tokenizer's chat template."""
+    def _template_drops_trailing_system(self) -> bool:
+        """Whether the template discards the system turn once an answer follows.
+
+        Mistral's template injects the system message into the *last* message of
+        the conversation. While generating, the last message is the user's, so
+        the system prompt appears. During training the last message is the
+        assistant's, so the system prompt is **silently dropped** — the model
+        would be trained without the very instructions it is being taught to
+        follow, and evaluated with them.
+
+        Probed against the live template rather than switched on the model family:
+        chat templates change between checkpoints and between transformers
+        versions, and a hardcoded family list goes stale without failing loudly.
+        """
+        if self._merge_system is not None:
+            return self._merge_system
+
+        sentinel = "KLEOS_SYSTEM_PROBE_SENTINEL"
+        probe = [
+            Message(role="system", content=sentinel),
+            Message(role="user", content="probe user turn"),
+            Message(role="assistant", content="probe assistant turn"),
+        ]
+        try:
+            rendered = self._apply_template(probe, add_generation_prompt=False)
+            self._merge_system = sentinel not in rendered
+        except Exception:  # pragma: no cover - a template that cannot render a probe
+            # Never let a probe failure decide masking silently.
+            logger.warning(
+                "Could not probe the chat template for system-prompt handling; "
+                "assuming it is preserved."
+            )
+            self._merge_system = False
+
+        if self._merge_system:
+            logger.warning(
+                "This chat template drops the system turn when the conversation "
+                "ends with an assistant message. Merging each system prompt into "
+                "the first user turn so that training text matches inference text "
+                "and the system prompt is not lost."
+            )
+        return self._merge_system
+
+    def _normalize(self, messages: Sequence[Message]) -> list[Message]:
+        """Fold the system turn into the first user turn when the template needs it.
+
+        This reproduces exactly what the template itself does at generation time
+        (``[INST]SYSTEM\\n\\nUSER[/INST]``), so the prompt the model trains on and
+        the prompt it is evaluated on are byte-identical.
+        """
+        result = list(messages)
+        if not result or result[0].role != "system":
+            return result
+        if not self._template_drops_trailing_system():
+            return result
+
+        system, rest = result[0], result[1:]
+        for index, message in enumerate(rest):
+            if message.role == "user":
+                merged = f"{system.content}\n\n{message.content}"
+                return [
+                    *rest[:index],
+                    message.model_copy(update={"content": merged}),
+                    *rest[index + 1 :],
+                ]
+        # No user turn to merge into; leave the conversation untouched rather
+        # than inventing one.
+        return result
+
+    def _apply_template(
+        self, messages: Sequence[Message], *, add_generation_prompt: bool = False
+    ) -> str:
+        """Call the tokenizer's chat template with no message normalization."""
         try:
             rendered = self.tokenizer.apply_chat_template(
                 messages_to_dicts(messages),
@@ -205,6 +277,16 @@ class ConversationFormatter:
                 details={"returned_type": type(rendered).__name__},
             )
         return rendered
+
+    def render(self, messages: Sequence[Message], *, add_generation_prompt: bool = False) -> str:
+        """Render messages to text using the tokenizer's chat template.
+
+        Every training and inference path goes through here, so the system-prompt
+        normalization applied below is guaranteed to be identical on both sides.
+        """
+        return self._apply_template(
+            self._normalize(messages), add_generation_prompt=add_generation_prompt
+        )
 
     def _encode(self, text: str) -> list[int]:
         # The chat template already inserts BOS/special tokens; adding them again
