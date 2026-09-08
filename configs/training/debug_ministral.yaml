@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Ministral-8B smoke test — "can the whole pipeline execute end to end?"
+#
+# This is NOT a research configuration. Ten steps prove the machinery runs,
+# checkpoints and resumes; the loss values mean nothing and must never be
+# reported. Run this before committing a GPU session to the real experiment.
+#
+#     python scripts/train.py --config configs/training/debug_ministral.yaml \
+#                             --dataset /path/to/kleos-policy-v0.0.6 \
+#                             --output-dir /path/to/persistent/outputs \
+#                             --experiment-id kleos-v006-smoke
+#
+# The KLEOS debug config that ships with the repo targets Qwen3-8B. KLEOS
+# training is Mistral-based, so the smoke test has to exercise the Mistral load
+# path — AutoModelForCausalLM on MistralForCausalLM, the Mistral chat template,
+# and MistralDenseAdapter's target-module resolution. Smoke-testing a different
+# family would prove nothing about the run that follows.
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/ministral_8b.yaml
+  dataset: ../datasets/kleos_policy_v006.yaml
+  evaluation: ../evaluation/kleos_policy_v006.yaml
+
+name: kleos-debug-ministral
+description: Tiny end-to-end pipeline check on Ministral-8B. Not a research run.
+tags: [debug, smoke, ministral, mistral]
+
+task: null
+
+model:
+  # Short sequences so a step takes seconds. The real run uses 1024.
+  max_seq_length: 512
+  lora:
+    r: 8
+    alpha: 16
+
+training:
+  # Ten steps is enough to prove the loop runs, checkpoints and saves.
+  max_steps: 10
+  num_train_epochs: 1
+  learning_rate: 2.0e-4
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 2
+  gradient_checkpointing: true
+
+  # Frequent logging and checkpointing: the point is to observe the machinery,
+  # and to have a checkpoint at step 5 to resume from.
+  logging_steps: 1
+  save_strategy: steps
+  save_steps: 5
+  save_total_limit: 2
+  eval_strategy: steps
+  eval_steps: 5
+
+  # Best-model selection needs the full eval cadence; irrelevant for 10 steps
+  # and it would only add checkpoint churn.
+  load_best_model_at_end: false
+
+  # Debug runs may be adjusted freely; nothing is being compared.
+  strict_config: false
+  allow_full_finetune: false
+
+evaluation:
+  # A handful of benchmark items, just to prove the eval path executes.
+  max_examples: 4

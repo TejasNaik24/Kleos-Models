@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# Evaluation for the KLEOS v0.0.6 format-holdout benchmark.
+#
+# Settings are held IDENTICAL across arms. If decoding, benchmark, graders or
+# seeds differed between the baseline and the fine-tuned model, a difference in
+# score would be uninterpretable.
+#
+# The benchmark is DERIVED from the sealed test split by
+# `scripts/build_benchmark.py`; the release itself is never modified. Build it
+# first:
+#
+#     python scripts/build_benchmark.py --dataset <sealed-release-dir>
+# ---------------------------------------------------------------------------
+
+evaluation:
+  benchmark_path: ${env:KLEOS_BENCHMARK_PATH:data/processed/kleos-policy-v0.0.6-benchmark/benchmark.jsonl}
+
+  # The full four-arm design. arm0 vs arm2 isolates fine-tuning; arm1 vs arm3
+  # isolates it again with orchestration held on; arm1 vs arm2 is the headline
+  # research comparison (prompt-engineered baseline vs behavioural fine-tune).
+  arms:
+    - arm0_base
+    - arm1_base_orchestrated
+    - arm2_finetuned
+    - arm3_finetuned_orchestrated
+
+  # Every benchmark row names kleos_policy itself; listing it here keeps the
+  # config self-describing.
+  graders:
+    - kleos_policy
+
+  metrics:
+    - accuracy
+    - macro_f1
+    - ndcg
+
+  generation:
+    # Greedy. Evaluation must be deterministic, so an arm difference is
+    # attributable to the model and not to sampling.
+    temperature: 0.0
+    top_p: 1.0
+    do_sample: false
+    # Ceiling, not a target: the longest reference target in v0.0.6 is ~144
+    # tokens. Generous headroom means a truncated answer is a real failure and
+    # not an artefact of the budget.
+    max_new_tokens: 512
+    repetition_penalty: 1.0
+
+  # One seed is correct under greedy decoding: further seeds reproduce the same
+  # output exactly. Add seeds only together with generation.do_sample: true.
+  seeds: [42]
+  batch_size: 1
+
+  consistency:
+    # v0.0.6 carries paraphrase / reorder / schema perturbations of the same
+    # scenario, so agreement across a family is measurable.
+    enabled: true
+    group_key: scenario_family
+    min_group_size: 2
+
+  ood:
+    # Every benchmark row is split_tag=ood (ood_shift=unseen_formats), so the
+    # OOD score is reported on its own. No in-distribution/OOD *gap* exists to
+    # compute here, and the runner says so explicitly rather than implying one.
+    enabled: true
+    report_separately: true
+
+  capability:
+    # Needs a fixed general-capability suite that stays CONSTANT across
+    # experiments. None exists yet; enabling it with an ad-hoc suite would make
+    # capability deltas incomparable between runs.
+    enabled: false

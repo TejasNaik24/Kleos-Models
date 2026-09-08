@@ -400,9 +400,25 @@ def run_evaluation(
             metric_name="score",
         )
         if not ood_report.measurable:
+            # State which side is missing. A pure held-out benchmark (every example
+            # OOD, as in a format_holdout release) is a legitimate design, and
+            # reporting it as "no OOD examples" would send the reader looking for
+            # a tagging bug that is not there.
+            if ood_report.ood.count == 0:
+                reason = (
+                    "the benchmark has no examples tagged split_tag='ood'"
+                    if ood_report.in_distribution.count
+                    else "the benchmark is empty"
+                )
+            else:
+                reason = (
+                    f"every example is out-of-distribution "
+                    f"(ood n={ood_report.ood.count}, in_distribution n=0), so there is no "
+                    f"in-distribution baseline to measure a gap against"
+                )
             warnings.append(
-                "OOD evaluation was requested but the benchmark has no examples tagged "
-                "split_tag='ood'. No generalization claim can be made from this run."
+                f"No generalization *gap* can be computed: {reason}. "
+                "The OOD score itself is still valid and is reported on its own."
             )
 
     # --- consistency --------------------------------------------------------

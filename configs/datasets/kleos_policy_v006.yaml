@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# KLEOS behavioural policy dataset, release v0.0.6 (sealed).
+#
+# This release ships PRE-SPLIT: train.jsonl / validation.jsonl / test.jsonl are
+# consumed directly and `load_dataset_bundle` never re-splits them. The `split`
+# block below therefore only RECORDS how the release was partitioned upstream,
+# so the manifest of any run carries the true provenance. Changing it does not
+# repartition anything.
+#
+#   strategy: format_holdout, holding out format=json
+#     train / validation : prose, bullets, slack_thread  (0 json)
+#     test               : json only                     (349)
+#
+# The test split is therefore a pure OUT-OF-DISTRIBUTION format-transfer probe.
+# It is held out completely: never trained on, never used to pick
+# hyperparameters. Model selection uses validation only.
+#
+# The directory lives OUTSIDE version control (data/processed/* is git-ignored).
+# On Colab, point --dataset at the copy on mounted Drive instead of this default.
+# ---------------------------------------------------------------------------
+
+dataset:
+  version: kleos-policy-v0.0.6
+  path: ${env:KLEOS_DATASET_PATH:data/processed/kleos-policy-v0.0.6}
+
+  filters:
+    # Every example in v0.0.6 is quality_status=reviewed, so this gate is a
+    # tripwire rather than a filter: if a future release smuggles in drafts,
+    # training stops instead of quietly learning from them.
+    quality_statuses:
+      - reviewed
+    min_messages: 2
+
+  split:
+    # Provenance only — the release is already split. See the header.
+    strategy: format_holdout
+    seed: 42
+    holdout_values:
+      - json
+    train_fraction: 0.607
+    validation_fraction: 0.134
+    test_fraction: 0.259
+
+  packing: false
+  shuffle: true
+  # A sealed release must be identifiable from the run manifest alone.
+  require_manifest: true
+  allow_unreviewed: false

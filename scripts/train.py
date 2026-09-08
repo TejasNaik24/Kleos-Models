@@ -60,6 +60,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Resume from a checkpoint path, or 'auto' for the newest valid one.",
     )
     parser.add_argument(
+        "--experiment-id",
+        metavar="ID",
+        help=(
+            "Pin the experiment id, and therefore the run directory. Generated "
+            "ids embed a timestamp, so a fresh invocation lands in a NEW empty "
+            "directory and '--resume-from-checkpoint auto' finds nothing there "
+            "and silently restarts from step 0. Pass the original id to resume "
+            "into the same run — required on a runtime that disconnects."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate config, dataset and feasibility, then stop before loading weights.",
@@ -135,12 +146,23 @@ def main(argv: list[str] | None = None) -> int:
     manifest = build_manifest(
         config,
         kind="training",
+        experiment_id=args.experiment_id,
         dataset_version=bundle.version,
         dataset_hash=bundle.dataset_hash(),
         dataset_counts=bundle.counts,
     )
     manifest.seeding = seeding
     print(f"\n  experiment id : {manifest.experiment_id}")
+    if args.resume_from_checkpoint == "auto" and not args.experiment_id:
+        # 'auto' searches this run's own output directory. Without a pinned id
+        # that directory is brand new, so 'auto' quietly finds no checkpoint and
+        # restarts from zero — the failure this warning exists to prevent.
+        print(
+            "  ! --resume-from-checkpoint auto with a generated experiment id: "
+            "this run has its own new directory, so 'auto' will find no "
+            "checkpoint and start from scratch.\n"
+            "    Pass --experiment-id <original-id> to resume into the previous run."
+        )
 
     from kleos_models.models.adapters import get_adapter
     from kleos_models.models.feasibility import assess_feasibility, enforce_feasibility

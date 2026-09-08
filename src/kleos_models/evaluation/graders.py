@@ -114,11 +114,36 @@ def extract_json(text: str) -> Any | None:
         return None
 
 
+def _name_in(line: str, candidates: list[str]) -> str | None:
+    """Return the candidate a line refers to, or ``None`` when it names none.
+
+    A list item is almost never the bare name — models write
+    ``"1. Copperline — in the active workspace"``. Comparing that whole string
+    against the reference measures prose style, not ordering, so the item has to
+    be resolved back to the candidate it names.
+    """
+    best: tuple[int, int, str] | None = None
+    for candidate in candidates:
+        match = re.search(rf"(?<!\w){re.escape(candidate)}(?!\w)", line, re.IGNORECASE)
+        if match is None:
+            continue
+        # Earliest mention wins. Length breaks ties so that a candidate which is
+        # a prefix of another ("Ash" vs "Ashgrove") cannot shadow the longer one.
+        key = (match.start(), -len(candidate), candidate)
+        if best is None or key < best:
+            best = key
+    return best[2] if best is not None else None
+
+
 def extract_ranking(text: str, *, candidates: list[str] | None = None) -> list[str]:
     """Extract an ordered list from a response.
 
     Tries JSON first, then a numbered or bulleted list, then — if candidates are
     known — the order in which they are first mentioned.
+
+    When candidates are known, list items are resolved back to the candidate they
+    name, so that the same ordering expressed as JSON, as a numbered list, or as
+    prose receives the same score. Formatting is not what this grader measures.
     """
     parsed = extract_json(text)
     if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
@@ -131,7 +156,17 @@ def extract_ranking(text: str, *, candidates: list[str] | None = None) -> list[s
 
     lines = _NUMBERED_LINE.findall(text)
     if len(lines) >= 2:
-        return [line.strip() for line in lines]
+        if not candidates:
+            return [line.strip() for line in lines]
+        resolved: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            named = _name_in(stripped, candidates)
+            # Keep the raw line when it names no candidate. Dropping it would
+            # shorten the predicted ranking and inflate nDCG for an answer that
+            # never mentioned the item at all.
+            resolved.append(named if named is not None else stripped)
+        return resolved
 
     if candidates:
         # Word-boundary matching, not a raw substring search: looking for the
@@ -526,6 +561,165 @@ class LLMJudgeGrader(Grader):
 
 
 # ---------------------------------------------------------------------------
+# KLEOS behavioural policy grader
+# ---------------------------------------------------------------------------
+
+#: "What decided it: scope." — the phrasing the non-JSON KLEOS formats use.
+_DECIDED_BY = re.compile(r"what\s+decided\s+it\s*[:\-—]\s*([A-Za-z_][A-Za-z_ ]*)", re.IGNORECASE)
+
+#: Markers of a deliberate refusal to commit, taken from the KLEOS corpus rather
+#: than invented: "I do not know which one you want", "before I pick, tell me
+#: what you actually need", "is Ashford still right?", "until you say otherwise".
+_ABSTENTION_MARKERS = (
+    re.compile(r"\bi (?:do not|don't) know\b", re.IGNORECASE),
+    re.compile(r"\b(?:tell|let) me\b", re.IGNORECASE),
+    re.compile(r"\bwhich one\b", re.IGNORECASE),
+    re.compile(r"\bdo you mean\b", re.IGNORECASE),
+    re.compile(r"\bclarif(?:y|ication)\b", re.IGNORECASE),
+    re.compile(r"\bconfirm\b", re.IGNORECASE),
+    re.compile(r"\b(?:cannot|can't|could not) (?:tell|say|decide|pick)\b", re.IGNORECASE),
+    re.compile(r"\bnot enough\b|\binsufficient\b|\bunderspecified\b|\bunclear\b", re.IGNORECASE),
+    re.compile(r"\bwould (?:just )?be a guess\b|\bcoin flip\b", re.IGNORECASE),
+    re.compile(r"\buntil you say otherwise\b", re.IGNORECASE),
+    re.compile(r"\bbefore i (?:pick|recommend|choose)\b", re.IGNORECASE),
+    re.compile(r"\bnot going to overwrite\b", re.IGNORECASE),
+)
+
+
+def response_is_json_object(text: str) -> bool:
+    """Whether the response is a JSON object, i.e. the requested output format.
+
+    Kept separate from every judgement signal on purpose. KLEOS trains on prose
+    and bullets and tests on JSON, so format compliance and judgement quality are
+    different questions and blending them would make a formatting failure
+    indistinguishable from a reasoning failure.
+    """
+    return isinstance(extract_json(text), dict)
+
+
+def extract_deciding_factor(text: str, *, allowed: list[str] | None = None) -> str:
+    """The factor the response says decided the ranking, in any KLEOS format."""
+    parsed = extract_json(text)
+    if isinstance(parsed, dict):
+        for key in ("deciding_factor", "decided_by", "factor"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    match = _DECIDED_BY.search(text)
+    if match:
+        return match.group(1).strip().rstrip(".").replace(" ", "_").lower()
+
+    if allowed:
+        hits = [
+            (position, label)
+            for label in allowed
+            for position in [text.lower().find(label.lower().replace("_", " "))]
+            if position >= 0
+        ]
+        hits += [
+            (position, label)
+            for label in allowed
+            for position in [text.lower().find(label.lower())]
+            if position >= 0
+        ]
+        if hits:
+            hits.sort()
+            return hits[0][1]
+    return ""
+
+
+def extract_confidence(text: str) -> tuple[bool, str]:
+    """Whether the response commits to an answer.
+
+    Returns ``(committed, method)``. ``method`` is ``"explicit"`` when the model
+    stated it in a ``confident`` field and ``"heuristic"`` when it had to be read
+    out of prose — the report separates the two, because the heuristic is an
+    approximation and should never be presented as if it were a measurement.
+    """
+    parsed = extract_json(text)
+    if isinstance(parsed, dict):
+        for key in ("confident", "is_confident", "confidence"):
+            value = parsed.get(key)
+            if isinstance(value, bool):
+                return value, "explicit"
+    return not any(marker.search(text) for marker in _ABSTENTION_MARKERS), "heuristic"
+
+
+class KleosPolicyGrader(Grader):
+    """The KLEOS behavioural target: ordering, stated reason, and commitment.
+
+    Reference keys: ``ranking`` (required), ``label`` (the deciding factor) and
+    ``confident``. Each is scored **format-agnostically** and reported as its own
+    sub-score, alongside ``format_valid``, which records whether the response was
+    JSON at all without contributing to the headline score.
+
+    That separation is the point. The KLEOS test split holds out ``format=json``
+    entirely, so a fine-tuned model may well answer correctly in the prose style
+    it was trained on. Folding format compliance into the score would report that
+    as a judgement failure.
+    """
+
+    name = "kleos_policy"
+
+    def __init__(self, *, ndcg_weight: float = 0.6) -> None:
+        self.ranking_grader = RankingGrader(ndcg_weight=ndcg_weight)
+
+    def grade(self, response: str, reference: dict[str, Any], **context: Any) -> GradeResult:
+        expected_ranking = [str(item) for item in reference.get("ranking", [])]
+        if not expected_ranking:
+            raise EvaluationError(
+                "KleosPolicyGrader requires a non-empty reference['ranking'].",
+                details={"reference_keys": sorted(reference)},
+            )
+
+        ranking_result = self.ranking_grader.grade(response, {"ranking": expected_ranking})
+
+        components: dict[str, float] = {"ranking": ranking_result.score}
+        details: dict[str, Any] = {
+            "predicted_ranking": ranking_result.details.get("predicted_ranking", []),
+            "expected_ranking": expected_ranking,
+        }
+
+        expected_label = reference.get("label")
+        if isinstance(expected_label, str) and expected_label:
+            allowed = [str(o) for o in reference.get("options", [])] or [expected_label]
+            predicted_label = extract_deciding_factor(response, allowed=allowed)
+            components["deciding_factor"] = float(
+                normalize_answer(predicted_label) == normalize_answer(expected_label)
+            )
+            details["predicted_label"] = predicted_label
+            details["expected_label"] = expected_label
+
+        expected_confident = reference.get("confident")
+        if isinstance(expected_confident, bool):
+            predicted_confident, method = extract_confidence(response)
+            components["confidence"] = float(predicted_confident == expected_confident)
+            details["predicted_confident"] = predicted_confident
+            details["expected_confident"] = expected_confident
+            details["confidence_method"] = method
+
+        judgment = sum(components.values()) / len(components)
+
+        sub_scores = {
+            "format_valid": float(response_is_json_object(response)),
+            "judgment": judgment,
+            "ranking_ndcg": ranking_result.sub_scores["ndcg"],
+            "ranking_top_1": ranking_result.sub_scores["top_1_accuracy"],
+            "ranking_kendall_tau": ranking_result.sub_scores["kendall_tau"],
+            **components,
+        }
+
+        return GradeResult(
+            score=judgment,
+            grader=self.name,
+            sub_scores=sub_scores,
+            details=details,
+            parse_failed=ranking_result.parse_failed,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -536,6 +730,7 @@ GRADER_REGISTRY: dict[str, type[Grader]] = {
     "ranking": RankingGrader,
     "heuristic_rubric": HeuristicRubricGrader,
     "llm_judge": LLMJudgeGrader,
+    "kleos_policy": KleosPolicyGrader,
 }
 
 
@@ -570,13 +765,17 @@ __all__ = [
     "GradeResult",
     "Grader",
     "HeuristicRubricGrader",
+    "KleosPolicyGrader",
     "LLMJudgeGrader",
     "RankingGrader",
     "SetMatchGrader",
     "classification_scores",
+    "extract_confidence",
+    "extract_deciding_factor",
     "extract_json",
     "extract_label",
     "extract_ranking",
     "get_grader",
     "register_grader",
+    "response_is_json_object",
 ]

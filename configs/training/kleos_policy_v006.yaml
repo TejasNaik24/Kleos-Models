@@ -1,0 +1,89 @@
+# ---------------------------------------------------------------------------
+# KLEOS v0.0.6 — first behavioural QLoRA experiment. Ministral-8B.
+#
+#   python scripts/train.py --config configs/training/kleos_policy_v006.yaml \
+#                           --dataset /path/to/kleos-policy-v0.0.6 \
+#                           --output-dir /path/to/persistent/outputs
+#
+# WHY MINISTRAL-8B AND NOT MISTRAL-SMALL-3.2-24B
+#   The 24B checkpoint is a vision-language model (Mistral3ForConditionalGeneration)
+#   and needs ~16.5GB in 4-bit at seq 1024 — it does NOT fit a 16GB T4. Ministral-8B
+#   is a plain MistralForCausalLM needing ~8.1GB, which trains on a free T4 with
+#   ~6.9GB spare. First runs buy a trustworthy pipeline, not parameter count.
+#   Check any change with:
+#       python scripts/plan_run.py --config configs/training/kleos_policy_v006.yaml
+#
+# HYPERPARAMETERS ARE THE REPOSITORY'S ENGINEERING DEFAULTS, NOT TUNED VALUES.
+# They are chosen to run reliably end to end. Do not present results from them
+# as tuned. (spec §47, §48)
+#
+# ACCESS: Ministral-8B is a GATED repository. Accept the licence on Hugging Face
+# and export HF_TOKEN before training. Never put the token in this file.
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/ministral_8b.yaml
+  dataset: ../datasets/kleos_policy_v006.yaml
+  evaluation: ../evaluation/kleos_policy_v006.yaml
+
+name: kleos-policy-v006-ministral8b
+description: >-
+  First KLEOS behavioural policy fine-tune. QLoRA adapter on Ministral-8B over
+  the sealed kleos-policy-v0.0.6 release. Engineering defaults, not tuned.
+tags: [kleos, policy, v0.0.6, qlora, ministral, mistral]
+
+# Deliberately null: v0.0.6 spans all seven tasks and this is a single
+# multi-task policy adapter. `task` is manifest metadata and does NOT filter
+# rows (filtering is dataset.filters.tasks), so naming one task here would make
+# the manifest claim a single-task run that never happened. Per-task results
+# still come out of the evaluation runner's per-task summaries.
+task: null
+
+model:
+  # The dataset's longest example is ~440 tokens; nothing in any split exceeds
+  # 1024. Halving the window from the config default frees roughly 0.9GB of
+  # activation memory and shortens every step, with zero truncation risk.
+  max_seq_length: 1024
+
+training:
+  num_train_epochs: 3.0
+  max_steps: -1
+
+  # Repository defaults, unchanged.
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  per_device_eval_batch_size: 1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  optim: paged_adamw_8bit
+  gradient_checkpointing: true
+  # auto → fp16 on a T4 (cc 7.5 has no bfloat16), bf16 on L4/A100.
+  precision: auto
+
+  # 820 examples at an effective batch of 8 is ~102 steps per epoch, ~307 total.
+  # Checkpointing every 25 steps gives ~12 recovery points instead of the ~6 a
+  # 50-step cadence would allow, which matters on a runtime that disconnects.
+  logging_steps: 5
+  save_strategy: steps
+  save_steps: 25
+  save_total_limit: 3
+  eval_strategy: steps
+  eval_steps: 25
+
+  # Keep the best checkpoint by VALIDATION loss. The test split plays no part in
+  # selection. Requires save_strategy == eval_strategy with matching steps.
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+
+  # Left false for the first run so a memory-driven fallback is RECORDED in the
+  # manifest rather than aborting the session. Set true for any run whose
+  # numbers will be compared against another.
+  strict_config: false
+
+  # QLoRA must stay QLoRA.
+  allow_full_finetune: false

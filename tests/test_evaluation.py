@@ -8,7 +8,9 @@ non-significant improvement must not be described as a win.
 
 from __future__ import annotations
 
+import json
 import math
+from typing import ClassVar
 
 import pytest
 
@@ -231,6 +233,176 @@ class TestResponseParsing:
     def test_ranking_falls_back_to_mention_order(self):
         result = extract_ranking("I would do beta then alpha.", candidates=["alpha", "beta"])
         assert result == ["beta", "alpha"]
+
+    def test_decorated_list_items_resolve_to_their_candidate(self):
+        # Models write "1. Copperline — because ...", not the bare name. Without
+        # resolution the whole line is compared to the reference and a correct
+        # ranking scores zero.
+        result = extract_ranking(
+            "1. Copperline — in the active workspace; due in 7 days.\n"
+            "2. Eldermoor — in the active workspace; due in 3 days.",
+            candidates=["Copperline", "Eldermoor"],
+        )
+        assert result == ["Copperline", "Eldermoor"]
+
+    def test_a_list_item_naming_no_candidate_is_kept_not_dropped(self):
+        # Dropping it would shorten the prediction and inflate nDCG for an answer
+        # that never mentioned the item.
+        result = extract_ranking(
+            "1. Copperline — first.\n2. Nonesuch — invented.",
+            candidates=["Copperline", "Eldermoor"],
+        )
+        assert result == ["Copperline", "Nonesuch — invented."]
+
+    def test_a_candidate_is_not_shadowed_by_a_shorter_prefix(self):
+        result = extract_ranking(
+            "1. Ashgrove — first.\n2. Ash — second.", candidates=["Ashgrove", "Ash"]
+        )
+        assert result == ["Ashgrove", "Ash"]
+
+
+class TestRankingIsFormatAgnostic:
+    """The same ordering must score the same however it is written.
+
+    KLEOS trains on prose/bullets/slack_thread and tests on JSON only
+    (``format_holdout``). If the grader scored formatting rather than ordering,
+    a fine-tuned model that kept its training format would score zero and the
+    experiment would report a judgment failure that never happened.
+    """
+
+    EXPECTED: ClassVar[list[str]] = ["Copperline", "Eldermoor", "Oakhurst", "Foxglove"]
+
+    RENDERINGS: ClassVar[dict[str, str]] = {
+        "json": '{"ranking": ["Copperline", "Eldermoor", "Oakhurst", "Foxglove"]}',
+        "numbered": (
+            "1. Copperline — in the active workspace; due in 7 days.\n"
+            "2. Eldermoor — in the active workspace; due in 3 days.\n"
+            "3. Oakhurst — in the active workspace; due in about 1 week.\n"
+            "4. Foxglove — in another workspace — flagged, not acted on.\n\n"
+            "What decided it: scope."
+        ),
+        "dashed": (
+            "- Copperline — first.\n- Eldermoor — second.\n"
+            "- Oakhurst — third.\n- Foxglove — fourth."
+        ),
+        "prose": (
+            "Start with Copperline — in the active workspace. Then Eldermoor, "
+            "then Oakhurst, then Foxglove."
+        ),
+    }
+
+    @pytest.mark.parametrize("rendering", sorted(RENDERINGS))
+    def test_every_rendering_of_a_correct_ranking_scores_perfectly(self, rendering):
+        grader = get_grader("ranking")
+        result = grader.grade(self.RENDERINGS[rendering], {"ranking": self.EXPECTED})
+        assert result.score == pytest.approx(1.0)
+        assert result.sub_scores["ndcg"] == pytest.approx(1.0)
+        assert result.sub_scores["top_1_accuracy"] == pytest.approx(1.0)
+
+    def test_all_renderings_agree_with_each_other(self):
+        grader = get_grader("ranking")
+        scores = {
+            name: grader.grade(text, {"ranking": self.EXPECTED}).score
+            for name, text in self.RENDERINGS.items()
+        }
+        assert len(set(scores.values())) == 1, scores
+
+    def test_a_wrong_order_still_loses_in_every_rendering(self):
+        # The fix must not turn the grader into a set-membership check.
+        grader = get_grader("ranking")
+        reversed_expected = list(reversed(self.EXPECTED))
+        as_json = grader.grade(
+            json.dumps({"ranking": reversed_expected}), {"ranking": self.EXPECTED}
+        )
+        as_list = grader.grade(
+            "\n".join(f"{i}. {name} — x." for i, name in enumerate(reversed_expected, 1)),
+            {"ranking": self.EXPECTED},
+        )
+        assert as_json.score == pytest.approx(as_list.score)
+        assert as_list.score < 0.6
+        assert as_list.sub_scores["top_1_accuracy"] == pytest.approx(0.0)
+
+    def test_a_hallucinated_ranking_scores_zero(self):
+        grader = get_grader("ranking")
+        result = grader.grade(
+            "1. Nonesuch — x.\n2. Bogus — x.\n3. Fake — x.\n4. Phantom — x.",
+            {"ranking": self.EXPECTED},
+        )
+        assert result.score == pytest.approx(0.0)
+
+
+class TestKleosPolicyGrader:
+    """Judgement and output format must be measured as two separate things."""
+
+    REFERENCE: ClassVar[dict[str, object]] = {
+        "ranking": ["Longmere", "Stonegate", "Copperline"],
+        "label": "stale_explicit_conflict",
+        "confident": False,
+    }
+
+    AS_JSON: ClassVar[str] = json.dumps(
+        {
+            "ranking": ["Longmere", "Stonegate", "Copperline"],
+            "deciding_factor": "stale_explicit_conflict",
+            "confident": False,
+            "next_step": "is Longmere still right?",
+        }
+    )
+
+    AS_PROSE: ClassVar[str] = (
+        "1. Longmere — stated outright, but recorded about 1 month ago.\n"
+        "2. Stonegate — inferred, corroborated by two sources.\n"
+        "3. Copperline — inferred, corroborated.\n\n"
+        "What decided it: stale_explicit_conflict. I am not going to overwrite "
+        "what you said on my own: is Longmere still right?"
+    )
+
+    def test_the_same_judgment_scores_the_same_in_either_format(self):
+        grader = get_grader("kleos_policy")
+        as_json = grader.grade(self.AS_JSON, self.REFERENCE)
+        as_prose = grader.grade(self.AS_PROSE, self.REFERENCE)
+        assert as_json.score == pytest.approx(1.0)
+        assert as_prose.score == pytest.approx(1.0)
+        for component in ("ranking", "deciding_factor", "confidence"):
+            assert as_json.sub_scores[component] == as_prose.sub_scores[component]
+
+    def test_format_validity_is_reported_and_excluded_from_the_score(self):
+        # The whole point: prose answers correctly and is still marked invalid
+        # format, so a format regression can never be read as a judgment one.
+        grader = get_grader("kleos_policy")
+        assert grader.grade(self.AS_JSON, self.REFERENCE).sub_scores["format_valid"] == 1.0
+        prose = grader.grade(self.AS_PROSE, self.REFERENCE)
+        assert prose.sub_scores["format_valid"] == 0.0
+        assert prose.sub_scores["judgment"] == pytest.approx(1.0)
+
+    def test_confidence_source_is_recorded(self):
+        grader = get_grader("kleos_policy")
+        assert grader.grade(self.AS_JSON, self.REFERENCE).details["confidence_method"] == "explicit"
+        assert (
+            grader.grade(self.AS_PROSE, self.REFERENCE).details["confidence_method"] == "heuristic"
+        )
+
+    def test_a_wrong_deciding_factor_is_penalised(self):
+        grader = get_grader("kleos_policy")
+        wrong = json.loads(self.AS_JSON)
+        wrong["deciding_factor"] = "impact"
+        result = grader.grade(json.dumps(wrong), self.REFERENCE)
+        assert result.sub_scores["deciding_factor"] == 0.0
+        assert result.score < 1.0
+
+    def test_overconfidence_is_penalised(self):
+        # Committing to an answer the reference says to abstain from is the
+        # false-positive behaviour this dataset exists to measure.
+        grader = get_grader("kleos_policy")
+        overconfident = json.loads(self.AS_JSON)
+        overconfident["confident"] = True
+        result = grader.grade(json.dumps(overconfident), self.REFERENCE)
+        assert result.sub_scores["confidence"] == 0.0
+
+    def test_an_empty_reference_ranking_is_rejected(self):
+        grader = get_grader("kleos_policy")
+        with pytest.raises(EvaluationError):
+            grader.grade(self.AS_JSON, {"ranking": []})
 
     def test_label_is_extracted_from_json(self):
         assert extract_label('{"decision": "memory_search"}') == "memory_search"
