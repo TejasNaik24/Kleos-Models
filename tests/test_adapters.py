@@ -56,6 +56,18 @@ class TestAdapterResolution:
         adapter = get_adapter(ModelConfig(name="x", family="", base_model="Qwen/Qwen3-8B"))
         assert isinstance(adapter, QwenDenseAdapter)
 
+    @pytest.mark.parametrize("model_type", ["mistral", "ministral"])
+    def test_both_mistral_model_types_resolve(self, model_type):
+        # transformers 4.x reports Ministral checkpoints as 'mistral' and 5.x as
+        # 'ministral'. The loader trusts whatever the checkpoint says, so a
+        # missing entry here breaks the same config on a version bump — which is
+        # exactly how it failed on Colab against transformers 5.16.
+        config = config_for("ministral_8b").model_copy(update={"model_type": model_type})
+        assert isinstance(get_adapter(config), MistralDenseAdapter)
+
+    def test_ministral_is_registered(self):
+        assert ADAPTER_REGISTRY["ministral"] is MistralDenseAdapter
+
     def test_moe_is_inferred_before_dense(self):
         adapter = get_adapter(
             ModelConfig(name="x", family="", base_model="Qwen/Qwen3-30B-A3B-Thinking-2507")

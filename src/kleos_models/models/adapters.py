@@ -504,9 +504,18 @@ class MistralDenseAdapter(ModelFamilyAdapter):
 
     This is the scale-matched counterpart to Qwen3-8B: comparing an 8B Qwen
     against a 24B multimodal Mistral confounds family with scale and modality.
+
+    ``ministral`` is registered alongside ``mistral`` because transformers gave
+    Ministral its own ``model_type`` (it uses interleaved sliding-window
+    attention, where classic Mistral does not). transformers 4.x reports these
+    checkpoints as ``mistral`` and 5.x reports ``ministral``, and the loader
+    trusts whatever the checkpoint says — so both have to resolve here or the
+    same config breaks on a version bump. The distinction does not affect
+    adapter placement: the projection names are identical, so the LoRA targets
+    below are correct for both.
     """
 
-    model_types = ("mistral",)
+    model_types = ("mistral", "ministral")
     family = "mistral"
 
     @property
