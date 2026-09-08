@@ -267,3 +267,125 @@ class TestSerialization:
         row = result.to_dict()
         assert set(row) == {"input_ids", "labels", "attention_mask"}
         assert len(row["input_ids"]) == len(row["labels"]) == len(row["attention_mask"])
+
+
+class MistralStyleTokenizer:
+    """Reproduces Mistral's ``loop.last`` system-prompt handling.
+
+    The real template injects the system message into the LAST message of the
+    conversation. Generating, that is the user turn, so the system prompt shows
+    up. Training, it is the assistant turn, so the system prompt is DROPPED —
+    verified against mistralai/Ministral-8B-Instruct-2410 under transformers
+    5.16:
+
+        [system, user]            -> '<s>[INST]SYSTEM\n\nUSER[/INST]'
+        [system, user, assistant] -> '<s>[INST]USER[/INST]ASSISTANT</s>'
+    """
+
+    def __init__(self) -> None:
+        self.pad_token_id = 0
+        self.eos_token_id = 1
+        self.pad_token = "<pad>"
+        self.eos_token = "</s>"
+        self.padding_side = "right"
+        self.chat_template = "mistral-like"
+        self._vocab: dict[str, int] = {"<pad>": 0, "</s>": 1}
+
+    def apply_chat_template(
+        self,
+        conversation: list[dict[str, str]],
+        *,
+        tokenize: bool = False,
+        add_generation_prompt: bool = False,
+        **kwargs: object,
+    ) -> str:
+        system = None
+        rest = list(conversation)
+        if rest and rest[0]["role"] == "system":
+            system = rest[0]["content"]
+            rest = rest[1:]
+
+        out = ["<s>"]
+        for index, message in enumerate(rest):
+            is_last = index == len(rest) - 1
+            if message["role"] == "user":
+                content = message["content"]
+                if is_last and system is not None:
+                    content = f"{system}\n\n{content}"
+                out.append(f"[INST] {content} [/INST]")
+            else:
+                out.append(f" {message['content']} </s>")
+        return " ".join(out)
+
+    def encode(self, text: str, *, add_special_tokens: bool = False) -> list[int]:
+        ids = []
+        for token in text.split():
+            if token not in self._vocab:
+                self._vocab[token] = len(self._vocab) + 100
+            ids.append(self._vocab[token])
+        return ids
+
+
+class TestSystemPromptSurvivesTemplate:
+    """A template that drops the system turn must not silently train without it.
+
+    Found on Colab against the real Ministral checkpoint: the policy instructions
+    that KLEOS exists to teach were being deleted from every training example,
+    while evaluation kept them.
+    """
+
+    @staticmethod
+    def _formatter() -> ConversationFormatter:
+        return ConversationFormatter(MistralStyleTokenizer(), max_seq_length=512)
+
+    def test_the_dropping_template_is_detected(self):
+        assert self._formatter()._template_drops_trailing_system() is True
+
+    def test_a_well_behaved_template_is_left_alone(self, fake_tokenizer):
+        formatter = ConversationFormatter(fake_tokenizer, max_seq_length=512)
+        assert formatter._template_drops_trailing_system() is False
+        messages = [
+            Message(role="system", content="POLICY"),
+            Message(role="user", content="Q"),
+            Message(role="assistant", content="A"),
+        ]
+        assert formatter._normalize(messages) == messages
+
+    def test_the_system_prompt_reaches_the_training_text(self):
+        formatter = self._formatter()
+        rendered = formatter.render(
+            [
+                Message(role="system", content="POLICY"),
+                Message(role="user", content="Q"),
+                Message(role="assistant", content="A"),
+            ]
+        )
+        assert "POLICY" in rendered, "system prompt was dropped from the training text"
+
+    def test_training_and_inference_prompts_are_identical(self):
+        # The whole point. If these diverge the model is trained on one prompt
+        # and evaluated on another.
+        formatter = self._formatter()
+        system = Message(role="system", content="POLICY")
+        user = Message(role="user", content="Q")
+        inference = formatter.render([system, user], add_generation_prompt=True)
+        training = formatter.render([system, user, Message(role="assistant", content="A")])
+        assert training.startswith(inference)
+
+    def test_only_the_assistant_turn_is_supervised(self):
+        formatter = self._formatter()
+        example = build(
+            system="POLICY",
+            user="Q",
+            assistant="ANSWER",
+        )
+        formatted = formatter.format_example(example)
+        assert formatted is not None
+        supervised = [
+            i
+            for i, label in zip(formatted.input_ids, formatted.labels, strict=True)
+            if label != IGNORE_INDEX
+        ]
+        # The answer plus its end-of-turn marker — not the whole sequence.
+        assert 0 < len(supervised) < len(formatted.input_ids) / 2
+        assert formatted.target_token_count == len(supervised)
