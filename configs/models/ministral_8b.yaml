@@ -23,7 +23,18 @@ model:
   revision: main
   trust_remote_code: false
 
-  model_type: mistral
+  # transformers 5.x gave Ministral its own model_type (interleaved
+  # sliding-window attention); 4.x reported these checkpoints as 'mistral'.
+  # Declared as the checkpoint currently reports it so the manifest records what
+  # actually loaded. Both values resolve to MistralDenseAdapter, and the loader
+  # trusts the checkpoint either way, so this is safe on both versions.
+  #
+  # architecture stays MistralForCausalLM: the checkpoint's config.json still
+  # declares that in `architectures`, even though transformers instantiates
+  # MinistralForCausalLM from the model_type. That mismatch is upstream's, and
+  # it is the source of the harmless "using a model of type mistral to
+  # instantiate a model of type ministral" warning during training.
+  model_type: ministral
   architecture: MistralForCausalLM
   parameter_count: 8.0e9
   is_moe: false

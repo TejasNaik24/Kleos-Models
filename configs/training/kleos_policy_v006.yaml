@@ -65,14 +65,22 @@ training:
   precision: auto
 
   # 820 examples at an effective batch of 8 is ~102 steps per epoch, ~307 total.
-  # Checkpointing every 25 steps gives ~12 recovery points instead of the ~6 a
-  # 50-step cadence would allow, which matters on a runtime that disconnects.
+  #
+  # Cadence measured on a T4 rather than guessed: a validation pass over the 181
+  # examples costs ~90-125s. Evaluating every 25 steps would spend ~35 minutes of
+  # a ~3 hour run inside eval. Every 50 steps costs ~17 minutes and still leaves
+  # 6 checkpoints, one roughly every 27 minutes.
+  #
+  # That is the better trade even on a runtime that disconnects: a disconnect
+  # costs on average half a save interval (~13 min), while the finer cadence
+  # costs ~17 min unconditionally. load_best_model_at_end requires the two
+  # cadences to be equal, so they move together.
   logging_steps: 5
   save_strategy: steps
-  save_steps: 25
+  save_steps: 50
   save_total_limit: 3
   eval_strategy: steps
-  eval_steps: 25
+  eval_steps: 50
 
   # Keep the best checkpoint by VALIDATION loss. The test split plays no part in
   # selection. Requires save_strategy == eval_strategy with matching steps.
