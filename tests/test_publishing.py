@@ -203,3 +203,71 @@ class TestModelCardTokenizerGuidance:
     def test_no_results_means_no_performance_claim(self):
         card = build_model_card(repo_id="user/kleos-adapter")
         assert "No evaluation results" in card
+
+
+class TestServingRevisionIsDistinctFromTrainingRevision:
+    """A run made against a moving pointer still needs an actionable base.
+
+    v0.0.6 was trained with ``revision: main`` and the commit it resolved to is
+    not recoverable. Reporting only that leaves a consumer with a warning and no
+    action; reporting only the serving pin would imply the adapter was trained
+    against it. The card states both, and says which is which.
+    """
+
+    @staticmethod
+    def _card(*, revision: str = "main", serving: str | None = None) -> str:
+        manifest = ExperimentManifest(experiment_id="kleos-v006-ministral8b-run1")
+        manifest.model = {"base_model": BASE_MODEL, "revision": revision}
+        return build_model_card(
+            repo_id="tejas/kleos-policy-v006-ministral8b",
+            manifest=manifest,
+            serving_revision=serving,
+        )
+
+    def test_the_card_distinguishes_the_two_revisions(self):
+        card = self._card(serving=PINNED_SHA)
+        assert "| Training revision | `main` |" in card
+        assert f"| Recommended serving revision | `{PINNED_SHA}` |" in card
+
+    def test_the_serving_revision_is_the_pinned_sha(self):
+        card = self._card(serving=PINNED_SHA)
+        assert f'REVISION = "{PINNED_SHA}"' in card
+
+    def test_the_historical_training_revision_is_preserved_as_main(self):
+        card = self._card(serving=PINNED_SHA)
+        assert "trained against `main`" in card
+        assert "not recoverable" in card
+
+    def test_the_card_does_not_claim_the_run_used_the_serving_sha(self):
+        # The whole point of F3: we pin going forward without rewriting history.
+        card = self._card(serving=PINNED_SHA)
+        assert "not** a claim that the original run used that commit" in card
+
+    def test_the_load_snippet_uses_the_serving_revision_for_base_and_tokenizer(self):
+        card = self._card(serving=PINNED_SHA)
+        assert "AutoModelForCausalLM.from_pretrained(BASE, revision=REVISION)" in card
+        assert "AutoTokenizer.from_pretrained(BASE, revision=REVISION)" in card
+        assert f"at revision `{PINNED_SHA}`" in card
+
+    def test_omitting_the_serving_revision_preserves_the_previous_behaviour(self):
+        card = self._card()
+        assert "| Revision | `main` |" in card
+        assert "Recommended serving revision" not in card
+        assert "moving pointer" in card
+
+    def test_a_serving_revision_equal_to_the_training_revision_adds_nothing(self):
+        # No spurious second row when there is only one fact to report.
+        card = self._card(revision=PINNED_SHA, serving=PINNED_SHA)
+        assert "Recommended serving revision" not in card
+        assert f"| Revision | `{PINNED_SHA}` |" in card
+
+    def test_an_already_pinned_run_still_reads_correctly(self):
+        card = self._card(revision=PINNED_SHA)
+        assert "pinned to" in card
+        assert "moving pointer" not in card
+
+    def test_no_tokenizer_artifact_is_referenced_as_shipped(self):
+        card = self._card(serving=PINNED_SHA)
+        assert "does **not** ship a tokenizer" in card
+        for artifact in TOKENIZER_ARTIFACTS:
+            assert f"`{artifact}`" not in card, f"card implies {artifact} is included"
