@@ -57,25 +57,57 @@ publishable.
 **What would falsify it:** no task improves with a CI excluding zero.
 
 **Result.** Ministral-8B QLoRA vs `arm1_base_orchestrated`, n=349, paired
-bootstrap. Six of seven tasks improved at p<0.05; none regressed.
+bootstrap. **All seven tasks improved at p<0.05; none regressed.**
+
+Figures below are the **corrected** scores, re-graded 2026-09-15 after audit
+finding F1 (unbounded nDCG). See "Correction" below for the superseded numbers.
 
 | Task | Baseline | Fine-tuned | Δ | Verdict |
 | --- | --- | --- | --- | --- |
-| mission_control_briefing | 0.5636 | 0.9708 | +0.4072 | improved (p<0.05) |
-| workspace_reasoning | 0.5865 | 0.9336 | +0.3471 | improved (p<0.05) |
-| context_prioritization | 0.5544 | 0.8924 | +0.3380 | improved (p<0.05), n=8 |
+| mission_control_briefing | 0.5323 | 0.9708 | +0.4385 | improved (p<0.05) |
+| workspace_reasoning | 0.5228 | 0.9336 | +0.4108 | improved (p<0.05) |
+| context_prioritization | 0.5054 | 0.8924 | +0.3870 | improved (p<0.05), n=8 |
+| memory_conflict_resolution | 0.4781 | 0.8192 | +0.3412 | improved (p<0.05) |
 | tool_routing | 0.3919 | 0.7181 | +0.3262 | improved (p<0.05) |
-| memory_conflict_resolution | 0.5291 | 0.8192 | +0.2901 | improved (p<0.05) |
-| notification_prioritization | 0.7064 | 0.8871 | +0.1807 | improved (p<0.05) |
-| recommendation_generation | 0.4158 | 0.4569 | +0.0411 | **not significant** |
+| notification_prioritization | 0.6253 | 0.8871 | +0.2617 | improved (p<0.05) |
+| recommendation_generation | 0.3285 | 0.4569 | +0.1284 | improved (p<0.05) |
 
-Overall 0.5231 (95% CI 0.4979–0.5483) → 0.8015 (0.7768–0.8262); the intervals do
-not overlap. Secondary: faithfulness 0.7297 → 0.8331, citation precision 0.4470 →
+Overall **0.4744 → 0.8015**, a gap of **+0.3271**. Secondary metrics are unchanged
+by the correction: faithfulness 0.7297 → 0.8331, citation precision 0.4470 →
 0.6676, fabricated citations 194 → 116 responses, parse failures 13 → 0.
 
-`recommendation_generation` is the one task that did not move, and the reason is
-known rather than mysterious — see D3. `context_prioritization` has n=8 and its
-interval should not be leaned on.
+`context_prioritization` has n=8 and its interval should not be leaned on.
+`recommendation_generation` remains the weakest task in absolute terms (0.4569)
+for the reasons in D3 and H3, even though its improvement is now significant.
+
+### Correction — F1 re-grade, 2026-09-15
+
+The first report was produced with an unbounded nDCG that credited repeated
+predicted items, letting a degenerate answer score above a perfect ranking. Both
+arms were re-graded **offline from their stored responses** — no inference re-run,
+no model loaded, source artifacts left byte-identical — using `scripts/rescore.py`.
+
+| | Reported | Corrected | Change |
+| --- | ---: | ---: | ---: |
+| `arm1_base_orchestrated` | 0.5231 | **0.4744** | −0.0487 |
+| `arm2_finetuned` | 0.8015 | **0.8015** | **0.0000** |
+| Gap | +0.2784 | **+0.3271** | +0.0487 |
+| Tasks significant | 6 / 7 | **7 / 7** | +1 |
+
+**210 of 349 baseline responses changed; zero fine-tuned responses changed.** The
+inflation existed only in the baseline, so the originally reported effect was
+*understated*. `recommendation_generation` crossed from "improved (not
+significant)" to p<0.05. No task changed direction and none regressed, so the H1
+conclusion holds and is strengthened rather than revised.
+
+That 210-vs-0 split is a finding in its own right: 60% of baseline answers
+contained a repeated item in their extracted ranking, and **not one** fine-tuned
+answer did. `tool_routing` was the only task whose baseline was untouched by the
+correction.
+
+Superseded artifacts are retained: `report_v006/` (original) alongside
+`report_v006_rescored/`, and `eval_arm{1,2}_full.json` alongside
+`…rescored.json`.
 
 ---
 
@@ -250,7 +282,7 @@ oversight, and no cross-family claim may be made until it is taken.
 | **Analysis** | (arm3 − arm2) vs (arm1 − arm0) |
 | **Status** | **Partially measured** — `arm1` and `arm2` complete on n=349 (2026-09-15); `arm0` and `arm3` outstanding |
 
-`arm1_base_orchestrated` = 0.5231 and `arm2_finetuned` = 0.8015 are already on
+`arm1_base_orchestrated` = 0.4744 and `arm2_finetuned` = 0.8015 are already on
 record from `kleos-v006-ministral8b-run1`. Completing this needs `arm0_base` and
 `arm3_finetuned_orchestrated` on the **same 349-example benchmark** — the
 comparison pairs by `example_id`, so the existing 20-example `arm0` probe
@@ -301,7 +333,7 @@ Append one row per completed experiment. **Include failed and negative runs.**
 
 | Date | Hypothesis | Model | Dataset | Config hash | Outcome | Report |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2026-09-15 | H1 | Ministral-8B-Instruct-2410 (QLoRA r=16) | kleos-policy-v0.0.6 (`3cc9a744…`) | `3fbb3f90ed9662ee` | **Supported.** 6/7 tasks improved at p<0.05, none regressed. Overall 0.5231 → 0.8015. | `outputs/report_v006/summary.md` |
+| 2026-09-15 | H1 | Ministral-8B-Instruct-2410 (QLoRA r=16) | kleos-policy-v0.0.6 (`3cc9a744…`) | `3fbb3f90ed9662ee` | **Supported.** 7/7 tasks improved at p<0.05, none regressed. Overall 0.4744 → 0.8015 (corrected; originally reported 0.5231 → 0.8015 with 6/7 significant, before the F1 nDCG re-grade). | `outputs/report_v006_rescored/summary.md` (original: `report_v006/`) |
 | 2026-09-15 | H2 | Ministral-8B-Instruct-2410 (QLoRA r=16) | kleos-policy-v0.0.6 (`3cc9a744…`) | `3fbb3f90ed9662ee` | **Not measurable.** Benchmark is 100% OOD; no in-distribution population, so no gap. | same run |
 | 2026-09-15 | H3 | Ministral-8B-Instruct-2410 (QLoRA r=16) | kleos-policy-v0.0.6 (`3cc9a744…`) | `3fbb3f90ed9662ee` | **Improved, still poor.** correct_agreement 0.000 → 0.333; 10/15 groups still flip. Abstention is a family-level shortcut. | same run |
 
@@ -316,9 +348,9 @@ test split by `scripts/build_benchmark.py` (reproducible; release unmodified).
 Artifact hashes, the adapter configuration, and an independent verification of the
 H1 numbers against the stored evaluation JSONs are recorded in
 [experiments/kleos-v006-ministral8b-run1-artifact-audit.md](experiments/kleos-v006-ministral8b-run1-artifact-audit.md).
-That audit also records three findings — most importantly that `ndcg` can exceed
-1.0 on degenerate rankings, which inflated the **baseline** arm and therefore makes
-the reported +0.2784 gap conservative rather than optimistic.
+Finding **F1 from that audit is now resolved**: nDCG is bounded, both arms were
+re-graded offline, and the corrected result is the one reported above. F2
+(tokenizer packaging) and F3 (unpinned base revision) remain open.
 
 ## Deviations log
 

@@ -6,7 +6,7 @@ models.
 
 > **Research status:** first result recorded, 2026-09-15. Ministral-8B QLoRA on
 > the private `kleos-policy-v0.0.6` release beat the prompt-engineered
-> orchestration baseline on 6 of 7 tasks at p<0.05 (overall 0.5231 → 0.8015,
+> orchestration baseline on **all 7 tasks** at p<0.05 (overall 0.4744 → 0.8015,
 > n=349, paired bootstrap). It is **one run, on one model, on one dataset**, with
 > three recorded deviations from the pre-registered protocol and 22% of the test
 > label space unlearnable from the training split. Read
