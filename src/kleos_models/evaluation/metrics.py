@@ -254,15 +254,32 @@ def ndcg(
     Relevance is assigned by position in the ideal ranking: the top item scores
     ``n``, the next ``n-1``, and so on. This rewards getting the most important
     item first, which is what prioritization tasks care about.
+
+    An item is credited **once**. A repeat occupies its rank position with zero
+    relevance rather than earning the item's gain a second time: the ideal DCG is
+    computed over distinct items, so crediting duplicates would let a response
+    that simply repeats its top answer score above a perfect ranking. That is not
+    hypothetical — it produced scores of 1.07 in the first KLEOS evaluation, and
+    1.34 in the degenerate case of one item repeated three times.
+
+    Repeats are scored as zero rather than dropped, because the repeat still
+    consumed a slot that a correct item could have occupied.
     """
     if not ideal_order:
         return 0.0
     relevance = {normalize_answer(item): len(ideal_order) - i for i, item in enumerate(ideal_order)}
     cutoff = k or len(ideal_order)
 
-    predicted_relevance = [
-        relevance.get(normalize_answer(item), 0.0) for item in predicted_order[:cutoff]
-    ]
+    credited: set[str] = set()
+    predicted_relevance: list[float] = []
+    for item in predicted_order[:cutoff]:
+        key = normalize_answer(item)
+        if key in credited:
+            predicted_relevance.append(0.0)
+            continue
+        credited.add(key)
+        predicted_relevance.append(relevance.get(key, 0.0))
+
     ideal_relevance = sorted(relevance.values(), reverse=True)[:cutoff]
 
     ideal_dcg = dcg(ideal_relevance)

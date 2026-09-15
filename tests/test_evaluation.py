@@ -140,6 +140,72 @@ class TestRankingMetrics:
     def test_ndcg_handles_an_empty_reference(self):
         assert ndcg(["a"], []) == 0.0
 
+    # -- duplicate handling (regression) ------------------------------------
+    #
+    # Each predicted item must be credited once. Crediting duplicates let a
+    # response that repeated its top answer score ABOVE a perfect ranking:
+    # arm1 of kleos-v006-ministral8b-run1 reported max 1.0685, and three
+    # repeats of one item scored 1.3425. Because the inflation hit the
+    # baseline arm, it made the reported effect look smaller than it was.
+
+    @pytest.mark.parametrize(
+        "predicted",
+        [
+            ["a", "a", "a"],
+            ["a", "a", "b"],
+            ["a", "b", "a"],
+            ["b", "b", "b"],
+            ["a", "a", "a", "a", "a"],
+        ],
+    )
+    def test_ndcg_never_exceeds_one_when_items_repeat(self, predicted):
+        assert ndcg(predicted, ["a", "b", "c"]) <= 1.0
+
+    def test_repeating_the_top_item_scores_below_a_perfect_ranking(self):
+        perfect = ndcg(["a", "b", "c"], ["a", "b", "c"])
+        repeated = ndcg(["a", "a", "a"], ["a", "b", "c"])
+        assert perfect == pytest.approx(1.0)
+        assert repeated < perfect
+
+    def test_a_repeat_occupies_its_slot_rather_than_being_dropped(self):
+        # ["a", "a", "b"] must not be scored as if it were ["a", "b"]: the
+        # duplicate consumed a rank position a correct item could have used.
+        assert ndcg(["a", "a", "b"], ["a", "b", "c"]) < ndcg(["a", "b"], ["a", "b", "c"])
+
+    def test_ndcg_is_bounded_over_every_short_sequence(self):
+        # Exhaustive over a small space, including a hallucinated item.
+        import itertools
+
+        ideal = ["a", "b", "c"]
+        pool = [*ideal, "zzz"]
+        for length in range(1, 5):
+            for predicted in itertools.product(pool, repeat=length):
+                assert 0.0 <= ndcg(list(predicted), ideal) <= 1.0, predicted
+
+    def test_ranking_grader_score_stays_bounded_on_duplicates(self):
+        grader = get_grader("ranking")
+        result = grader.grade(
+            '{"ranking": ["alpha", "alpha", "alpha"]}', {"ranking": ["alpha", "beta", "gamma"]}
+        )
+        assert 0.0 <= result.score <= 1.0
+        assert result.sub_scores["ndcg"] <= 1.0
+
+    def test_kleos_policy_score_stays_bounded_on_duplicates(self):
+        grader = get_grader("kleos_policy")
+        result = grader.grade(
+            json.dumps(
+                {
+                    "ranking": ["alpha", "alpha", "alpha"],
+                    "deciding_factor": "scope",
+                    "confident": True,
+                }
+            ),
+            {"ranking": ["alpha", "beta", "gamma"], "label": "scope", "confident": True},
+        )
+        assert result.score <= 1.0
+        for name, value in result.sub_scores.items():
+            assert value <= 1.0, f"{name} exceeded 1.0"
+
     def test_kendall_tau_is_one_for_identical_orderings(self):
         assert kendall_tau(["a", "b", "c"], ["a", "b", "c"]) == pytest.approx(1.0)
 
