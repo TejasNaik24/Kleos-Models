@@ -35,6 +35,34 @@ Read the Deviations log before quoting any number from here: the run departed
 from the pre-registered protocol in three ways, and 22% of the test label space
 turned out to be unlearnable from the training split.
 
+### Prepared, not yet run — KLEOS Hermes
+
+**`kleos-v006-mistralnemo12b-run1` is configured but has NOT been trained.** No
+weights downloaded, no adapter, no metrics, no results. Nothing below may be
+cited as an outcome.
+
+| | |
+| --- | --- |
+| KLEOS model | **Hermes** (the smaller/faster model; Logos is the larger one) |
+| Base | `mistralai/Mistral-Nemo-Instruct-2407` |
+| Revision | `04d8a90549d23fc6bd7f642064003592df51e9b3` (pinned, audited 2026-09-15) |
+| Licence | **Apache-2.0, ungated** |
+| Dataset | `kleos-policy-v0.0.6`, unchanged and read-only |
+| Config | [`configs/training/kleos_hermes_v006.yaml`](../configs/training/kleos_hermes_v006.yaml) |
+
+Hermes exists because Ministral-8B is under the Mistral Research Licence, which
+is non-commercial. That does not invalidate `kleos-v006-ministral8b-run1` — it
+remains sound research — but it cannot back a product-facing model. Mistral Nemo
+is Apache-2.0 and resolves to the same `MistralDenseAdapter` with no code
+changes.
+
+When it runs, it is a **separate experiment**, not a re-run: different base,
+different scale (12B vs 8B). Its numbers are **not** comparable to the Ministral
+run, and `assert_comparable` will block pooling them. The valid comparison is
+within the Hermes run — `arm1_base_orchestrated` vs `arm2_finetuned` on the same
+benchmark. The open question it answers is whether the KLEOS behavioural signal
+transfers across Mistral architectures.
+
 ---
 
 ## H1 — Primary hypothesis

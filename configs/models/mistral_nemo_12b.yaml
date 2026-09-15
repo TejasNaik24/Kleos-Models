@@ -1,0 +1,94 @@
+# ---------------------------------------------------------------------------
+# Mistral-Nemo-Instruct-2407 — base model for KLEOS Hermes.
+#
+# WHY THIS MODEL
+# Hermes is the smaller/faster/cheaper KLEOS model, and it is the first
+# KLEOS model intended to reach real users. That makes licensing a hard
+# requirement rather than a preference:
+#
+#   Apache-2.0, ungated. Commercial use, modification, fine-tuning,
+#   redistribution of derivative adapters, hosted inference and SaaS are all
+#   permitted. No licence acceptance, no HF_TOKEN needed to load.
+#
+# This is the difference from Ministral-8B, which is Mistral Research Licence
+# (non-commercial) and therefore cannot back a product-facing model. The
+# Ministral experiment remains valid research; it simply cannot ship.
+#
+# WHY NOT MISTRAL SMALL 3.2 FOR HERMES
+# Also Apache-2.0, but its repository ships only `tekken.json` — no
+# tokenizer.json, no tokenizer_config.json, no chat template. It targets
+# vLLM + mistral-common, not the transformers AutoTokenizer path this
+# pipeline uses, and `load_tokenizer` requires a chat template. Mistral Small
+# 3.2 stays a candidate for Logos once that is resolved.
+#
+# Verified against config.json at the pinned revision:
+#   architectures ["MistralForCausalLM"], model_type mistral,
+#   40 layers, hidden 5120, intermediate 14336, 32 heads / 8 KV heads (GQA),
+#   head_dim 128, vocab 131072, max_position_embeddings 131072,
+#   sliding_window null, tie_word_embeddings false.
+# ---------------------------------------------------------------------------
+
+model:
+  name: mistral_nemo_12b
+  family: mistral
+  base_model: mistralai/Mistral-Nemo-Instruct-2407
+  # Pinned to the revision audited 2026-09-15. A LoRA adapter is deltas against
+  # specific base weights: serving or resuming against a different revision
+  # pairs the adapter with weights it never saw, and nothing raises an error.
+  # Pinning also fixes the licence text that was reviewed.
+  revision: 04d8a90549d23fc6bd7f642064003592df51e9b3
+  trust_remote_code: false
+
+  # Plain dense causal LM — no vision tower, no MoE router, no reasoning mode.
+  # Resolves to MistralDenseAdapter, the adapter that trained v0.0.6, with no
+  # modification to the adapter required.
+  model_type: mistral
+  architecture: MistralForCausalLM
+  parameter_count: 12.248e9
+  is_moe: false
+  is_multimodal: false
+  context_limit: 131072
+
+  # 1024, not the 131072 the checkpoint supports. The KLEOS dataset's longest
+  # example is ~440 tokens, so nothing truncates, and activation memory is the
+  # binding constraint on a 16GB T4. Raise it only after re-running
+  # scripts/plan_run.py — this value is what keeps Hermes trainable on free
+  # Colab.
+  max_seq_length: 1024
+  dtype: auto
+  attn_implementation: sdpa
+  device_map: auto
+
+  reasoning:
+    # No reasoning mode. Requesting 'thinking' raises rather than faking it.
+    supported: false
+    default_mode: standard
+
+  quantization:
+    mode: nf4
+    # auto → float16 on a T4 (compute capability 7.5 cannot do bfloat16),
+    # bfloat16 on L4/A100.
+    compute_dtype: auto
+    double_quant: true
+
+  lora:
+    # 'auto' asks MistralDenseAdapter for the family defaults, which are then
+    # validated against the loaded model. Expect 40 layers x 7 projections =
+    # 280 matched modules (Ministral matched 252 across 36 layers).
+    # lm_head and embed_tokens stay excluded: tie_word_embeddings is false, so
+    # lm_head is a distinct matrix, and adapting embeddings would change token
+    # semantics the tokenizer does not expect.
+    target_modules: auto
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    task_type: CAUSAL_LM
+
+  notes: >-
+    Base model for KLEOS Hermes. Apache-2.0 and ungated, so unlike Ministral-8B
+    it can back a commercial product; attribution and a statement of
+    modification are required when redistributing a derivative. Ships a
+    complete Hugging Face tokenizer including a chat template with tool-call
+    support. Text-only dense Mistral at 12B, trainable in 4-bit on a free
+    Colab T4.

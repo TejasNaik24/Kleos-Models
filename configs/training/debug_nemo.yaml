@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# Mistral-Nemo smoke test — "can the whole Hermes pipeline execute end to end?"
+#
+# This is NOT a research configuration. Ten steps prove the machinery runs,
+# checkpoints and resumes; the loss values mean nothing and must never be
+# reported. Run this before committing a GPU session to the real Hermes run.
+#
+#     python scripts/train.py --config configs/training/debug_nemo.yaml \
+#                             --dataset /path/to/kleos-policy-v0.0.6 \
+#                             --output-dir /path/to/scratch \
+#                             --experiment-id kleos-hermes-smoke
+#
+# WHY THIS DIFFERS FROM debug_ministral.yaml
+# That config shrinks the model side too (seq 512, LoRA r=8) so a step takes
+# seconds. This one keeps the REAL Hermes model settings — seq 1024, r=16,
+# alpha 32 — and shortens only the step count.
+#
+# The reason is what this smoke test has to answer: whether Nemo-12B actually
+# fits a T4 under the configuration we intend to run. A smoke test at seq 512
+# with r=8 would under-report peak VRAM and could green-light a full run that
+# then OOMs. Ten steps at the real settings still finishes in a couple of
+# minutes, and the memory reading transfers directly to the full run.
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/mistral_nemo_12b.yaml
+  dataset: ../datasets/kleos_policy_v006.yaml
+  evaluation: ../evaluation/kleos_policy_v006.yaml
+
+name: kleos-debug-nemo
+description: Tiny end-to-end pipeline check on Mistral-Nemo-12B. Not a research run.
+tags: [debug, smoke, hermes, nemo, mistral]
+
+task: null
+
+# model: intentionally NOT overridden. seq 1024, LoRA r=16/alpha=32 and the
+# NF4 double-quant settings are inherited from mistral_nemo_12b.yaml exactly as
+# the real run will use them, so the measured VRAM is representative.
+
+training:
+  # Ten steps is enough to prove the loop runs, checkpoints and saves.
+  max_steps: 10
+  num_train_epochs: 1
+  learning_rate: 2.0e-4
+  per_device_train_batch_size: 1
+  # 2 rather than the real run's 8: accumulation changes how many micro-batches
+  # make a step, not peak activation memory, so this keeps the smoke test quick
+  # without affecting the VRAM reading.
+  gradient_accumulation_steps: 2
+  gradient_checkpointing: true
+
+  # Frequent logging and checkpointing: the point is to observe the machinery,
+  # and to have a checkpoint at step 5 to resume from.
+  logging_steps: 1
+  save_strategy: steps
+  save_steps: 5
+  save_total_limit: 2
+  eval_strategy: steps
+  eval_steps: 5
+
+  # Best-model selection needs the full eval cadence; irrelevant for 10 steps
+  # and it would only add checkpoint churn.
+  load_best_model_at_end: false
+
+  # Debug runs may be adjusted freely; nothing is being compared.
+  strict_config: false
+  allow_full_finetune: false
+
+evaluation:
+  # A handful of benchmark items, just to prove the eval path executes.
+  max_examples: 4
