@@ -313,6 +313,13 @@ transformers 5.16.1, peft 0.20.0, bitsandbytes 0.50.2, torch 2.11.0+cu128.
 Benchmark `benchmark.jsonl` sha256 `a11ffad75f5147f9…`, derived from the sealed
 test split by `scripts/build_benchmark.py` (reproducible; release unmodified).
 
+Artifact hashes, the adapter configuration, and an independent verification of the
+H1 numbers against the stored evaluation JSONs are recorded in
+[experiments/kleos-v006-ministral8b-run1-artifact-audit.md](experiments/kleos-v006-ministral8b-run1-artifact-audit.md).
+That audit also records three findings — most importantly that `ndcg` can exceed
+1.0 on degenerate rankings, which inflated the **baseline** arm and therefore makes
+the reported +0.2784 gap conservative rather than optimistic.
+
 ## Deviations log
 
 Record any departure from the protocol above, with the reason, at the time it
