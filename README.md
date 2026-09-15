@@ -4,10 +4,15 @@ Research engineering for KLEOS behavioural fine-tuning: dataset contracts, QLoRA
 training, and a controlled evaluation harness for Qwen and Mistral open-weight
 models.
 
-> **Research status:** infrastructure phase. No KLEOS fine-tuning result exists
-> yet. The examples shipped here are development fixtures, not the research
-> dataset, and this repository makes **no claim** that fine-tuning improves
-> anything. Determining that is the experiment.
+> **Research status:** first result recorded, 2026-09-15. Ministral-8B QLoRA on
+> the private `kleos-policy-v0.0.6` release beat the prompt-engineered
+> orchestration baseline on 6 of 7 tasks at p<0.05 (overall 0.5231 → 0.8015,
+> n=349, paired bootstrap). It is **one run, on one model, on one dataset**, with
+> three recorded deviations from the pre-registered protocol and 22% of the test
+> label space unlearnable from the training split. Read
+> [docs/experiments.md](docs/experiments.md) — including the deviations log —
+> before quoting any of it. The examples shipped *in this repository* are still
+> development fixtures, not the research dataset.
 
 ---
 
@@ -280,10 +285,16 @@ logging that records digests and counts rather than example text.
 
 Stated plainly, because the alternative is misleading:
 
-- **No GPU training has been executed in this repository yet.** The QLoRA path is
-  implemented for CUDA and is launched from Colab. Verification so far covers the
-  data, config, evaluation and training-setup layers, plus a real LoRA training
-  step on a tiny randomly-initialized model on CPU.
+- **One GPU training run has been executed** (Ministral-8B QLoRA, Colab T4,
+  2026-09-15). Results and their caveats live in
+  [docs/experiments.md](docs/experiments.md). One run on one model is not a
+  finding about fine-tuning in general, and the Qwen and 24B arms are untested,
+  so no cross-model or cross-family claim is available.
+- **Out-of-distribution generalization was not measurable** on that run. The
+  v0.0.6 benchmark is 100% out-of-distribution by construction, so there is no
+  in-distribution population to compute a gap against. Neither arm produced
+  valid JSON on any of the 349 examples: the decision policy crossed the format
+  boundary, the output format did not.
 - **The bundled dataset is synthetic development fixtures.** It exists to exercise
   the pipeline. Any number computed from it describes the plumbing, not KLEOS.
 - **Hyperparameters are engineering defaults, not tuned values.**
