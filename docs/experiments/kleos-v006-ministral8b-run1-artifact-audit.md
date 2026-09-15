@@ -92,8 +92,14 @@ documentation or session logs:
 | `arm2_finetuned` | 349 | **0.8015** | 0.7768 – 0.8262 | `benchmark.jsonl` |
 
 Both arms ran the same benchmark at the same n, and the intervals do not overlap.
-The figures in [`../experiments.md`](../experiments.md) match the stored artifacts
-exactly. **H1 is verified.**
+The figures documented at audit time match the stored artifacts exactly.
+**H1 is verified.**
+
+> **Superseded by the F1 re-grade.** The table above records what the *original*
+> artifacts contained, which is what this audit verified. F1 was subsequently
+> fixed and both arms re-graded: `arm1` is now **0.4744** and `arm2` is unchanged
+> at **0.8015**. The corrected figures live in
+> [`../experiments.md`](../experiments.md); the original artifacts are retained.
 
 ## 5. Private-data containment
 
@@ -117,7 +123,25 @@ none of them data.
 
 ## Findings
 
-### F1 — `ndcg` can exceed 1.0 on degenerate rankings *(affects the baseline only)*
+### F1 — `ndcg` can exceed 1.0 on degenerate rankings — **RESOLVED 2026-09-15**
+
+> **Outcome.** Fixed in `evaluation/metrics.py` (an item is credited once; a
+> repeat holds its slot at zero relevance), bounded-verified exhaustively and
+> randomly, and pinned by 10 regression tests. Both arms were re-graded offline
+> from stored responses via `scripts/rescore.py`; the frozen source artifacts were
+> re-hashed afterwards and are unchanged.
+>
+> **arm1 0.5231 → 0.4744 (210/349 examples changed). arm2 0.8015 → 0.8015 (0
+> changed).** The gap widened from +0.2784 to +0.3271 and
+> `recommendation_generation` crossed into significance, taking the result from
+> 6/7 to **7/7 tasks at p<0.05**. No task changed direction. The prediction below
+> — that the bias ran against the claim — held.
+>
+> Corrected figures are now the reported ones in
+> [`../experiments.md`](../experiments.md). The original artifacts are retained
+> alongside the re-scored ones.
+
+The original finding, as written at audit time:
 
 Scores are documented as bounded in [0, 1], but `arm1` reports `max: 1.0685`.
 Reproduced locally:
