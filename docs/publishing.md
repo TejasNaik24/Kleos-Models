@@ -29,14 +29,42 @@ artifact type cannot leak by default.
 | --- | --- |
 | `adapter_config.json` | any `*.jsonl` (datasets) |
 | `adapter_model.safetensors` | `.env` and `.env.*` |
-| tokenizer files | `checkpoint-*/` |
-| `config.yaml` (effective config) | `*.log`, `events.jsonl` |
-| `manifest.json` | key material |
-| `metrics.json` | anything failing the content scan |
-| generated `README.md` model card | |
+| `config.yaml` (effective config) | `checkpoint-*/` |
+| `manifest.json` | `*.log`, `events.jsonl` |
+| `metrics.json` | key material |
+| generated `README.md` model card | **all tokenizer files** (see below) |
+| | anything failing the content scan |
 
 Every eligible text file is additionally scanned for secrets before upload. A file
 that matches is refused with the reason printed.
+
+## Why no tokenizer is published
+
+**The adapter repository holds adapter artifacts. The tokenizer comes from the
+pinned base model.** This is deliberate, and it is all-or-nothing.
+
+A PEFT adapter is not self-contained — loading it requires the base model, so the
+base repository is *always* a dependency and its tokenizer is always at hand.
+KLEOS never adds tokens and never resizes embeddings (LoRA excludes
+`embed_tokens` and `lm_head`, visible in any run's `adapter_config.json`), so the
+tokenizer is byte-identical to the base model's. Shipping ~17MB of identical
+vocabulary alongside every adapter buys nothing.
+
+The all-or-nothing rule matters more than the size saving. `tokenizer.json` for
+Ministral-8B is ~17MB — above the 5MB content-scan cap — while
+`tokenizer_config.json` is a few hundred bytes. Admitting files individually
+produced a repository carrying tokenizer *config* with no vocabulary source:
+`AutoTokenizer.from_pretrained` on it fails. **A partial tokenizer bundle is
+worse than none**, because it looks complete.
+
+Two layers enforce this: the run's `tokenizer/` directory is never enumerated,
+and every tokenizer filename is refused by name even if one appears in the
+adapter directory. `tests/test_publishing.py` pins both.
+
+The scan cap was **not** raised to accommodate this. `_MAX_SCAN_BYTES` remains
+5MB and still applies to `manifest.json`, `config.yaml` and every other scanned
+text file — widening a general control to admit one known file is the wrong
+trade.
 
 ## Authentication
 

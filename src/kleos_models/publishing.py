@@ -35,16 +35,39 @@ ALLOWED_UPLOAD_NAMES: frozenset[str] = frozenset(
         "adapter_model.safetensors",
         "adapter_model.bin",
         "README.md",
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-        "tokenizer.model",
-        "vocab.json",
-        "merges.txt",
-        "chat_template.jinja",
         "config.yaml",
         "manifest.json",
         "metrics.json",
+    }
+)
+
+#: Tokenizer artifacts are deliberately NOT published with an adapter.
+#:
+#: A PEFT adapter is not self-contained — inference loads the base model, so the
+#: base repository is always a dependency and its tokenizer is always available.
+#: KLEOS never adds tokens or resizes embeddings (LoRA excludes ``embed_tokens``
+#: and ``lm_head``), so the tokenizer is byte-identical to the base model's and
+#: duplicating it buys nothing.
+#:
+#: The rule is all-or-nothing on purpose. Publishing ``tokenizer_config.json``
+#: without ``tokenizer.json`` yields a repository that looks like it carries a
+#: tokenizer but cannot build one — no vocabulary source — which is worse than
+#: shipping none. That partial bundle is exactly what the 5MB scan cap used to
+#: produce, since the vocabulary file is ~17MB and the config files are tiny.
+#:
+#: This is a packaging decision, not a security refusal, which is why these names
+#: live here rather than in FORBIDDEN_PATTERNS.
+TOKENIZER_ARTIFACTS: frozenset[str] = frozenset(
+    {
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "tokenizer.model",
+        "tokenizer.model.v3",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "vocab.json",
+        "merges.txt",
+        "chat_template.jinja",
     }
 )
 
@@ -115,14 +138,25 @@ def collect_upload_files(
             path = run_dir / name
             if path.exists():
                 candidates.append(path)
-        tokenizer_dir = run_dir / "tokenizer"
-        if tokenizer_dir.is_dir():
-            candidates.extend(sorted(p for p in tokenizer_dir.iterdir() if p.is_file()))
+        # The run's tokenizer/ directory is deliberately not enumerated. See
+        # TOKENIZER_ARTIFACTS: the tokenizer comes from the pinned base model,
+        # and a partial copy here would be worse than none.
 
     for path in candidates:
         forbidden = _is_forbidden(path.name)
         if forbidden:
             rejected.append((path, forbidden))
+            continue
+        if path.name in TOKENIZER_ARTIFACTS:
+            # Rejected with its own reason rather than a bare allowlist miss, so
+            # the log says "by design" instead of looking like a failure.
+            rejected.append(
+                (
+                    path,
+                    "tokenizer artifact — not duplicated; the tokenizer is loaded "
+                    "from the pinned base model (see docs/publishing.md)",
+                )
+            )
             continue
         if path.name not in ALLOWED_UPLOAD_NAMES:
             rejected.append((path, "not in the upload allowlist"))
@@ -482,6 +516,17 @@ def build_model_card(
             "```",
             "",
             _revision_note(revision),
+            "",
+            "### Tokenizer",
+            "",
+            f"This repository does **not** ship a tokenizer. Load it from `{base_model}` "
+            f"at revision `{revision}`, exactly as in the snippet above.",
+            "",
+            "That is not an omission. A LoRA adapter is not self-contained — inference "
+            "loads the base model regardless — and this adapter never modified the "
+            "vocabulary: LoRA excludes `embed_tokens` and `lm_head`, and no tokens were "
+            "added. The base tokenizer is therefore the correct one, and duplicating "
+            "~17MB of identical vocabulary here would add nothing.",
             "",
             "> If the base model is a vision-language checkpoint (for example",
             "> Mistral Small 3.2), use `AutoModelForImageTextToText` instead —",
