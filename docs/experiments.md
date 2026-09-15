@@ -196,12 +196,21 @@ must be reported as such.
 
 | | |
 | --- | --- |
-| **Arms** | `qwen3_8b` vs `qwen3_30b_a3b_thinking` |
-| **Status** | Not yet run — requires an A100-class GPU |
+| **Arms** | `ministral_8b` vs `mistral_small_3_2` |
+| **Status** | Not yet run — `mistral_small_3_2` needs an L4 (≥22.5GB) or A100 |
 
-**Confound to control:** Qwen3-30B-A3B is thinking-only and Qwen3-8B is
-configurable. Reasoning mode and scale therefore vary together unless Qwen3-8B is
-deliberately run in thinking mode. State which was done.
+**Re-scoped 2026-09-15.** This hypothesis previously named `qwen3_8b` vs
+`qwen3_30b_a3b_thinking`. Qwen is permanently excluded from KLEOS, so the scale
+comparison is now between the two Mistral candidates.
+
+**Confound to state, not to hide:** `mistral_small_3_2` is a 24B *vision-language*
+model (`Mistral3ForConditionalGeneration`). Comparing it against text-only
+Ministral-8B varies scale **and** modality together. There is no scale-matched
+text-only Mistral in the registry, so this confound cannot be designed away — it
+must be reported alongside any result.
+
+Feasibility (measured, `max_seq_length` 1024): Ministral-8B needs ~8.1GB and runs
+on a free T4; `mistral_small_3_2` needs ~16.5GB and does **not** fit a 16GB T4.
 
 ---
 
@@ -211,19 +220,22 @@ deliberately run in thinking mode. State which was done.
 
 | | |
 | --- | --- |
-| **Arms** | `qwen3_8b` vs `ministral_8b` |
-| **Status** | Not yet run |
+| **Arms** | ~~`qwen3_8b` vs `ministral_8b`~~ |
+| **Status** | **CLOSED — not testable under the current model policy (2026-09-15)** |
 
-**Why `ministral_8b` and not `mistral_small_3_2`:** Ministral-8B is a text-only
-dense model at the same scale as Qwen3-8B. Comparing Qwen3-8B against a 24B
-multimodal Mistral would confound family with scale *and* modality, and the result
-would be uninterpretable.
+**Why closed.** This hypothesis required a cross-family comparison, and the only
+scale-matched counterpart in the registry was `qwen3_8b`. Qwen is permanently
+excluded from KLEOS, so there is no second family to compare against: both
+remaining candidates (`ministral_8b`, `mistral_small_3_2`) are Mistral.
 
-Interpretation:
-- both improve → the policy is learnable across architectures
-- one improves → investigate architecture, tokenizer, template, or capacity
-- neither improves → examine data quality, policy learnability and evaluation
-  design before concluding anything about the models
+The Qwen configs and `QwenDenseAdapter` / `QwenMoEAdapter` remain in the
+repository — the family abstraction is what keeps the pipeline architecture-
+agnostic, and deleting them would not make the pipeline simpler. They are simply
+not used by KLEOS.
+
+Reopening this would require adding a non-Mistral, non-Qwen family (e.g. Llama or
+Gemma) with its own adapter. That is a deliberate scope decision, not an
+oversight, and no cross-family claim may be made until it is taken.
 
 ---
 
@@ -236,7 +248,16 @@ Interpretation:
 | --- | --- |
 | **Arms** | all four: `arm0`, `arm1`, `arm2`, `arm3` |
 | **Analysis** | (arm3 − arm2) vs (arm1 − arm0) |
-| **Status** | Not yet run |
+| **Status** | **Partially measured** — `arm1` and `arm2` complete on n=349 (2026-09-15); `arm0` and `arm3` outstanding |
+
+`arm1_base_orchestrated` = 0.5231 and `arm2_finetuned` = 0.8015 are already on
+record from `kleos-v006-ministral8b-run1`. Completing this needs `arm0_base` and
+`arm3_finetuned_orchestrated` on the **same 349-example benchmark** — the
+comparison pairs by `example_id`, so the existing 20-example `arm0` probe
+(0.5659) is a biased head-of-file slice and is **not** usable here.
+
+`arm3` reuses the adapter already trained, so it costs one evaluation pass
+(~90 min on a T4) and no further training.
 
 If orchestration helps the base model but not the fine-tuned one, the adapter has
 likely internalized what the scaffolding was supplying — an interesting and
