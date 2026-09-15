@@ -93,6 +93,46 @@ python scripts/export_adapter.py --run outputs/<experiment-id> --output exports/
 Same safety checks, writes to a local directory. Useful for review before
 publishing, or for sharing through another channel.
 
+## Base-model revision
+
+An adapter is deltas against **specific** base weights. Serving or reloading it
+against a different revision pairs it with weights it was never trained on, and
+nothing raises an error — the judgment just degrades.
+
+KLEOS pins the base revision in two places, and
+`tests/test_revision_pinning.py` asserts they stay equal:
+
+| File | Purpose |
+| --- | --- |
+| `configs/models/ministral_8b.yaml` | training and evaluation |
+| `configs/deployment/kleos_v006_ministral8b.yaml` | serving |
+
+Current pin: `2f494a194c5b980dfb9772cb92d26cbb671fce5a` (verified 2026-09-15).
+
+The generated card emits the revision in its load snippet:
+
+```python
+BASE = "mistralai/Ministral-8B-Instruct-2410"
+REVISION = "2f494a194c5b980dfb9772cb92d26cbb671fce5a"
+base = AutoModelForCausalLM.from_pretrained(BASE, revision=REVISION)
+model = PeftModel.from_pretrained(base, "<repo-id>")
+tokenizer = AutoTokenizer.from_pretrained(BASE, revision=REVISION)
+```
+
+If a run used a moving pointer, the card says so outright rather than implying
+reproducibility it cannot offer. The v0.0.6 adapter is in that category — it was
+trained with `revision: main` and its base commit is not recoverable. See
+`docs/experiments.md`.
+
+To resolve a new pin:
+
+```python
+from huggingface_hub import model_info
+model_info("mistralai/Ministral-8B-Instruct-2410", token=...).sha
+```
+
+A sha identifies one checkpoint. Never copy one config's pin into another.
+
 ## Licences
 
 The adapter derives from its base model and is generally subject to that model's
@@ -100,6 +140,12 @@ licence terms. Check them before redistributing. The KLEOS code is MIT.
 
 The generated card records the base model and sets `license: other`, so a reader
 knows to check.
+
+**Ministral-8B is under the Mistral Research Licence, which is non-commercial.**
+Commercial use — including offering KLEOS as a paid product or service — requires
+a separate agreement with Mistral. Licence terms attach to a revision, so pinning
+also fixes the terms that were accepted. The repository is gated: access is
+granted per Hugging Face account and needs `HF_TOKEN` at load time.
 
 ## Never publish
 

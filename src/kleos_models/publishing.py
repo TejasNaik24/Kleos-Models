@@ -137,6 +137,37 @@ def collect_upload_files(
     return allowed, rejected
 
 
+#: A 40-character hex string is a resolved git/Hub commit. Anything else
+#: (``main``, a tag, a branch) is a moving pointer.
+_PINNED_REVISION = re.compile(r"^[0-9a-f]{40}$")
+
+
+def is_pinned_revision(revision: str | None) -> bool:
+    """Whether a revision identifies one immutable commit."""
+    return bool(revision) and bool(_PINNED_REVISION.match(str(revision)))
+
+
+def _revision_note(revision: str) -> str:
+    """Say plainly whether the base weights this adapter needs are pinned.
+
+    A LoRA adapter is deltas against specific base weights. If the recorded
+    revision is a moving pointer, a reader cannot know which weights it was
+    trained against, and the card must not imply otherwise.
+    """
+    if is_pinned_revision(revision):
+        return (
+            f"> The base revision is pinned to `{revision}`. Loading any other "
+            "revision pairs this adapter with weights it was not trained "
+            "against; the failure is silent."
+        )
+    return (
+        f"> **The base revision is `{revision}`, which is a moving pointer, not a "
+        "pinned commit.** The exact base weights this adapter was trained "
+        "against are therefore not recoverable from this release, and results "
+        "may not reproduce if the base repository has since changed."
+    )
+
+
 def _describe_results(results: dict[str, Any] | None) -> str:
     """Render evaluation results, or say clearly that there are none."""
     if not results:
@@ -258,6 +289,7 @@ def build_model_card(
     lora = manifest.lora.get("lora_config", manifest.lora) if manifest else {}
     training = (manifest.effective_config.get("training", {}) if manifest else {}) or {}
     base_model = model.get("base_model", "unknown")
+    revision = str(model.get("revision") or "main")
 
     front_matter = [
         "---",
@@ -441,10 +473,15 @@ def build_model_card(
             "from peft import PeftModel",
             "from transformers import AutoModelForCausalLM, AutoTokenizer",
             "",
-            f'base = AutoModelForCausalLM.from_pretrained("{base_model}")',
+            f'BASE = "{base_model}"',
+            f'REVISION = "{revision}"',
+            "",
+            "base = AutoModelForCausalLM.from_pretrained(BASE, revision=REVISION)",
             f'model = PeftModel.from_pretrained(base, "{repo_id}")',
-            f'tokenizer = AutoTokenizer.from_pretrained("{base_model}")',
+            "tokenizer = AutoTokenizer.from_pretrained(BASE, revision=REVISION)",
             "```",
+            "",
+            _revision_note(revision),
             "",
             "> If the base model is a vision-language checkpoint (for example",
             "> Mistral Small 3.2), use `AutoModelForImageTextToText` instead —",

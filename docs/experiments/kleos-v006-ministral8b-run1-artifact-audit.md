@@ -175,17 +175,36 @@ tokenizer from the base model repository are unaffected; a self-contained export
 would be incomplete. Must be resolved before `export_adapter.py` or
 `publish_adapter.py` is used for real. Out of scope for this audit.
 
-### F3 — Base-model revision is not pinned
+### F3 — Base-model revision is not pinned — **RESOLVED FOR FUTURE RUNS 2026-09-15**
+
+> **Outcome.** `configs/models/ministral_8b.yaml` and a new
+> `configs/deployment/kleos_v006_ministral8b.yaml` are both pinned to
+> `2f494a194c5b980dfb9772cb92d26cbb671fce5a`, verified 2026-09-15.
+> `tests/test_revision_pinning.py` (16 tests) asserts the pin holds and that the
+> training and serving pins cannot drift apart. The model card now emits the
+> revision in its load snippet and warns explicitly when a release was built
+> from a moving pointer.
+>
+> **The historical run was deliberately NOT backfilled.** The commit v0.0.6
+> trained against is not recoverable from the preserved artifacts, and the
+> verified sha is *not* claimed to be it. Recorded as deviation D7.
+>
+> `mistral_small_3_2.yaml` was left unpinned on purpose — the verified sha
+> belongs to a different checkpoint and must not be copied across. A test
+> asserts no other model config carries it.
+
+The original finding, as written at audit time:
 
 `configs/models/ministral_8b.yaml` and the manifest both record `revision: main`,
 a moving pointer; `adapter_config.json` records `revision: null`. If upstream
 republishes the checkpoint, this adapter cannot be reproduced against the exact
 base weights it was trained on.
 
-The config file already warns: *"Pin a commit sha for a real research run so the
-checkpoint cannot move."* That was not done. Not corrected here because changing a
-config alters `config_hash` and would no longer describe the run that happened.
-Pin it for the **next** run.
+*(Correction to the audit as first written: the "Pin a commit sha for a real
+research run" comment is in `qwen3_8b.yaml:16`, not in `ministral_8b.yaml` — the
+guidance existed in the repo but not on the config actually used.)* Not corrected
+at audit time because changing a config alters `config_hash` and would no longer
+describe the run that happened.
 
 ---
 
