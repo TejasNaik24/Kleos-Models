@@ -349,8 +349,10 @@ Artifact hashes, the adapter configuration, and an independent verification of t
 H1 numbers against the stored evaluation JSONs are recorded in
 [experiments/kleos-v006-ministral8b-run1-artifact-audit.md](experiments/kleos-v006-ministral8b-run1-artifact-audit.md).
 Finding **F1 from that audit is now resolved**: nDCG is bounded, both arms were
-re-graded offline, and the corrected result is the one reported above. F2
-(tokenizer packaging) and F3 (unpinned base revision) remain open.
+re-graded offline, and the corrected result is the one reported above. **F3 is
+resolved for future runs** — see "Base-model revision" below; the historical run
+remains unpinned and is not backfilled. **F2** (tokenizer packaging) remains
+open.
 
 ## Deviations log
 
@@ -365,6 +367,51 @@ happens.
 | 2026-09-15 | **D4.** `extract_ranking` was corrected before the run: it returned whole prose lines instead of resolving them to candidate names. | Measurement instrument, changed *before* any result was produced, so no reported number is affected. Without it every prose answer scored 0.0 and the run would have reported fine-tuning as catastrophic — a false negative caused by the grader measuring formatting instead of ordering. |
 | 2026-09-15 | **D5.** `ConversationFormatter` now folds the system prompt into the first user turn when the chat template drops it. | Mistral's template injects the system message into the *last* message, so during training (which ends on the assistant turn) the system prompt was silently discarded, while evaluation kept it. Every example would have trained without its policy instructions. Fixed before the run; detected by probing the live template rather than branching on model family. |
 | 2026-09-15 | **D6.** A composite `kleos_policy` grader was added; it was not in the original protocol. | The benchmark needs ranking, deciding factor and abstention scored together, with `format_valid` reported **separately and excluded from the score**. Without that separation a format failure is indistinguishable from a judgment failure — which, given D2, is the difference between a real result and a wrong one. |
+| 2026-09-15 | **D7.** The v0.0.6 run used `revision: main` for the base model. The commit it resolved to is **not recoverable** from the preserved artifacts. | Nothing in the pipeline resolved or recorded a Hub commit sha — every code path echoes back the requested pointer. The Colab HF cache that held it was wiped. See "Base-model revision" below. Future runs are pinned; the historical record is **not** backfilled. |
+
+---
+
+## Base-model revision
+
+**v0.0.6 was trained with `revision: main`, an unmoored pointer.**
+
+The manifest records `"revision": "main"` because that is what was *requested*.
+Every recording path — `_describe_model_from_config`, `ModelFamilyAdapter.describe()`,
+`models/loading.py` — echoes the configured value; nothing ever asked the Hub
+what `main` resolved to. The only place the resolved sha existed was the Colab
+HF cache, and that runtime is long gone (evidenced by the full 16GB re-download
+on every later session).
+
+**The exact commit used by the v0.0.6 run is therefore not provable, and we do
+not claim one.** In particular:
+
+> `2f494a194c5b980dfb9772cb92d26cbb671fce5a` is the revision verified on
+> **2026-09-15**. It is **not** asserted to be the commit v0.0.6 trained
+> against. It may be the same commit; nothing in the preserved artifacts can
+> establish that either way, so no claim is made.
+
+What the artifacts *do* establish is architectural compatibility — `MistralForCausalLM`,
+`model_type: ministral`, 252 adapted modules (36 layers × 7 projections), and an
+adapter file size that arithmetically confirms 43,646,976 fp32 parameters. None
+of that identifies a commit: an upstream re-upload that changed weights without
+changing shapes would be invisible to all of it.
+
+**Future training and deployment are pinned** to
+`2f494a194c5b980dfb9772cb92d26cbb671fce5a`, in
+[`configs/models/ministral_8b.yaml`](../configs/models/ministral_8b.yaml) and
+[`configs/deployment/kleos_v006_ministral8b.yaml`](../configs/deployment/kleos_v006_ministral8b.yaml).
+`tests/test_revision_pinning.py` asserts both, and asserts they cannot drift
+apart.
+
+**The historical config was deliberately not edited.** `model.revision`
+participates in `config_hash`, so inserting the sha would change it from the
+recorded `3fbb3f90ed9662ee…` and the manifest would describe a configuration
+that never ran. The run's manifest records `git.commit: 2ad7c9ae` with
+`git.dirty: false`, so `git checkout 2ad7c9ae` reconstructs the exact historical
+config — git preserves the record, and pinning at HEAD costs nothing.
+
+The honest statement about v0.0.6 reproducibility: **reproducible modulo upstream
+not having moved.** That caveat cannot be retroactively removed.
 
 ---
 

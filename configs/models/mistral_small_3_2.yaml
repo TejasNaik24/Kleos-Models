@@ -35,6 +35,12 @@ model:
   name: mistral_small_3_2
   family: mistral
   base_model: mistralai/Mistral-Small-3.2-24B-Instruct-2506
+  # DELIBERATELY UNPINNED. Ministral-8B is pinned to a verified SHA; that SHA is
+  # for a *different checkpoint* and must never be copied here. Resolve this
+  # repository's own commit before the first real run:
+  #     from huggingface_hub import model_info
+  #     model_info("mistralai/Mistral-Small-3.2-24B-Instruct-2506").sha
+  # This model has not been trained yet, so nothing depends on it today.
   revision: main
   trust_remote_code: false
 

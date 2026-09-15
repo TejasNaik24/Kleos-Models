@@ -20,7 +20,17 @@ model:
   name: ministral_8b
   family: mistral
   base_model: mistralai/Ministral-8B-Instruct-2410
-  revision: main
+  # Pinned 2026-09-15. `main` is a moving pointer: a LoRA adapter is trained
+  # against specific base weights, so if upstream re-uploads, the adapter is
+  # silently paired with weights it never saw. There is no error — the outputs
+  # just get worse. Pinning also fixes the licence text that was accepted, since
+  # a repository can change its terms on a later revision.
+  #
+  # This pin applies to FUTURE runs only. kleos-policy-v0.0.6 was trained with
+  # `revision: main` and the commit it resolved to is NOT recoverable from the
+  # preserved artifacts — see docs/experiments.md. Do not backfill this SHA into
+  # the historical record.
+  revision: 2f494a194c5b980dfb9772cb92d26cbb671fce5a
   trust_remote_code: false
 
   # transformers 5.x gave Ministral its own model_type (interleaved
