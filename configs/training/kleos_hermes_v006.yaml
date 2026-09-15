@@ -1,0 +1,106 @@
+# ---------------------------------------------------------------------------
+# KLEOS HERMES — first product-oriented KLEOS fine-tune. NOT YET TRAINED.
+#
+#   python scripts/train.py --config configs/training/kleos_hermes_v006.yaml \
+#                           --dataset /path/to/kleos-policy-v0.0.6 \
+#                           --output-dir /path/to/persistent/outputs \
+#                           --experiment-id kleos-v006-mistralnemo12b-run1
+#
+# Hermes is the smaller/faster/cheaper KLEOS model. It is the first KLEOS model
+# intended to reach real users, which is why the base is Apache-2.0
+# Mistral-Nemo-Instruct-2407 rather than Ministral-8B: the Ministral derivative
+# is sound research but sits under the Mistral Research Licence and cannot ship.
+#
+# RELATIONSHIP TO THE EXISTING EXPERIMENT
+# This is a SEPARATE experiment from kleos-v006-ministral8b-run1, which stays
+# untouched. Same sealed dataset, same benchmark, same graders — different base
+# model. The scientific question is whether the KLEOS behavioural signal
+# transfers across Mistral architectures.
+#
+# It is NOT directly comparable to the Ministral numbers: different base,
+# different scale (12B vs 8B), different checkpoint. `assert_comparable` exists
+# to block pooling incompatible runs. The valid comparison is within this run —
+# arm1_base_orchestrated vs arm2_finetuned on the same benchmark.
+#
+# HYPERPARAMETERS ARE CARRIED OVER UNCHANGED from the validated v0.0.6 run.
+# They are the repository's engineering defaults, not tuned values, and results
+# from them must not be presented as tuned.
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/mistral_nemo_12b.yaml
+  # The sealed release, referenced not copied. Read-only; never regenerated.
+  dataset: ../datasets/kleos_policy_v006.yaml
+  evaluation: ../evaluation/kleos_policy_v006.yaml
+
+name: kleos-hermes-v006-mistralnemo12b
+description: >-
+  KLEOS Hermes. QLoRA adapter on Mistral-Nemo-Instruct-2407 (Apache-2.0) over
+  the sealed kleos-policy-v0.0.6 release. First product-oriented KLEOS model.
+  Engineering defaults, not tuned hyperparameters. NOT YET TRAINED.
+tags: [kleos, hermes, policy, v0.0.6, qlora, mistral, nemo, apache-2.0]
+
+# Deliberately null, as in the Ministral run: v0.0.6 spans all seven tasks and
+# this is a single multi-task policy adapter. `task` is manifest metadata and
+# does NOT filter rows, so naming one task here would make the manifest claim a
+# single-task run that never happened. Per-task results still come from the
+# evaluation runner's per-task summaries.
+task: null
+
+model:
+  # Restated explicitly rather than inherited silently: this value is what keeps
+  # Hermes trainable on a free T4, and the dataset's longest example is ~440
+  # tokens, so nothing truncates.
+  max_seq_length: 1024
+
+training:
+  num_train_epochs: 3.0
+  max_steps: -1
+
+  # Carried over unchanged from the validated v0.0.6 configuration.
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  per_device_eval_batch_size: 1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  optim: paged_adamw_8bit
+  gradient_checkpointing: true
+  # auto → fp16 on a T4 (cc 7.5 has no bfloat16), bf16 on L4/A100.
+  precision: auto
+
+  # 820 examples at an effective batch of 8 is ~102 steps per epoch, ~307 total.
+  #
+  # 50, matching the v0.0.6 run as it was actually executed. An earlier draft of
+  # that run used 25; it was widened to 50 after measuring a validation pass at
+  # ~90-125s on a T4, where a 25-step cadence spent ~35 minutes of a ~3 hour run
+  # inside eval. That argument is stronger here, not weaker: Nemo is ~50% larger
+  # than Ministral, so both steps and eval passes cost more.
+  #
+  # load_best_model_at_end requires save_strategy == eval_strategy with equal
+  # step counts, so these move together.
+  logging_steps: 5
+  save_strategy: steps
+  save_steps: 50
+  save_total_limit: 3
+  eval_strategy: steps
+  eval_steps: 50
+
+  # Best checkpoint by VALIDATION loss. The test split plays no part in
+  # selection. On the Ministral run this mattered: validation loss bottomed at
+  # epoch 1.95 and rose through epoch 3, so the saved adapter was the epoch-2
+  # one.
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+
+  # Left false for the first Hermes run so a memory-driven fallback is RECORDED
+  # in the manifest rather than aborting the session. Set true for any run whose
+  # numbers will be compared against another.
+  strict_config: false
+
+  # QLoRA must stay QLoRA.
+  allow_full_finetune: false
