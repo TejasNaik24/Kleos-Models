@@ -181,13 +181,33 @@ def is_pinned_revision(revision: str | None) -> bool:
     return bool(revision) and bool(_PINNED_REVISION.match(str(revision)))
 
 
-def _revision_note(revision: str) -> str:
+def _revision_note(revision: str, serving_revision: str | None = None) -> str:
     """Say plainly whether the base weights this adapter needs are pinned.
 
     A LoRA adapter is deltas against specific base weights. If the recorded
     revision is a moving pointer, a reader cannot know which weights it was
     trained against, and the card must not imply otherwise.
+
+    ``serving_revision`` covers the case where those are two different facts: the
+    run happened against an unpinned pointer whose commit is no longer
+    recoverable, but a specific revision is nonetheless recommended for serving.
+    Reporting only the training revision leaves a consumer with a warning and no
+    action; reporting only the serving revision would imply the adapter was
+    trained against it. Both are stated.
     """
+    if serving_revision and serving_revision != revision:
+        trained = (
+            f"trained against `{revision}`, a moving pointer whose exact commit "
+            "is **not recoverable** from this release"
+            if not is_pinned_revision(revision)
+            else f"trained against `{revision}`"
+        )
+        return (
+            f"> **Load revision `{serving_revision}`.** This adapter was {trained}. "
+            f"`{serving_revision}` is the pinned revision KLEOS trains and serves "
+            "against today, and is the recommended base for this adapter — but it "
+            "is **not** a claim that the original run used that commit."
+        )
     if is_pinned_revision(revision):
         return (
             f"> The base revision is pinned to `{revision}`. Loading any other "
@@ -310,12 +330,22 @@ def build_model_card(
     manifest: ExperimentManifest | None = None,
     results: dict[str, Any] | None = None,
     comparison: dict[str, Any] | None = None,
+    serving_revision: str | None = None,
 ) -> str:
     """Generate a model card (spec §35).
 
     Includes model name, base model, method, dataset description and privacy
     statement, tasks, hyperparameters, hardware, evaluation methodology, results,
     limitations, intended and prohibited uses, licence and reproducibility info.
+
+    Args:
+        serving_revision: Base revision consumers should load, when that differs
+            from the revision the run recorded. A run made against an unpinned
+            pointer cannot say which commit it used, but a specific revision can
+            still be recommended for serving. Both are then reported, and the
+            card states explicitly that the serving pin is a recommendation
+            rather than a claim about the original run. Omit it and the card
+            behaves exactly as before, reporting only the recorded revision.
 
     Deliberately does not claim superiority unless ``comparison`` demonstrates it.
     """
@@ -324,6 +354,9 @@ def build_model_card(
     training = (manifest.effective_config.get("training", {}) if manifest else {}) or {}
     base_model = model.get("base_model", "unknown")
     revision = str(model.get("revision") or "main")
+    # What a consumer should actually load. Falls back to the recorded revision,
+    # so omitting serving_revision reproduces the previous card exactly.
+    load_revision = serving_revision or revision
 
     front_matter = [
         "---",
@@ -353,7 +386,16 @@ def build_model_card(
         "| Field | Value |",
         "| --- | --- |",
         f"| Base model | `{base_model}` |",
-        f"| Revision | `{model.get('revision', 'unknown')}` |",
+        (
+            f"| Training revision | `{revision}` |"
+            if serving_revision and serving_revision != revision
+            else f"| Revision | `{model.get('revision', 'unknown')}` |"
+        ),
+        *(
+            [f"| Recommended serving revision | `{serving_revision}` |"]
+            if serving_revision and serving_revision != revision
+            else []
+        ),
         f"| Model family | {model.get('family', 'unknown')} |",
         f"| Architecture | `{model.get('architecture', 'unknown')}` |",
         f"| Parameters | {model.get('parameter_count', 'unknown')} |",
@@ -508,19 +550,19 @@ def build_model_card(
             "from transformers import AutoModelForCausalLM, AutoTokenizer",
             "",
             f'BASE = "{base_model}"',
-            f'REVISION = "{revision}"',
+            f'REVISION = "{load_revision}"',
             "",
             "base = AutoModelForCausalLM.from_pretrained(BASE, revision=REVISION)",
             f'model = PeftModel.from_pretrained(base, "{repo_id}")',
             "tokenizer = AutoTokenizer.from_pretrained(BASE, revision=REVISION)",
             "```",
             "",
-            _revision_note(revision),
+            _revision_note(revision, serving_revision),
             "",
             "### Tokenizer",
             "",
             f"This repository does **not** ship a tokenizer. Load it from `{base_model}` "
-            f"at revision `{revision}`, exactly as in the snippet above.",
+            f"at revision `{load_revision}`, exactly as in the snippet above.",
             "",
             "That is not an omission. A LoRA adapter is not self-contained — inference "
             "loads the base model regardless — and this adapter never modified the "

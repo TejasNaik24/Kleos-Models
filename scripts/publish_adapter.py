@@ -51,6 +51,13 @@ def main(argv: list[str] | None = None) -> int:
         "--repo-id", required=True, help="Target repo, e.g. username/kleos-qwen3-8b."
     )
     parser.add_argument("--results", type=Path, help="Evaluation results JSON to cite in the card.")
+    parser.add_argument(
+        "--serving-revision",
+        help=(
+            "Base revision consumers should load, when the run recorded an "
+            "unpinned pointer. Reported alongside the training revision."
+        ),
+    )
     parser.add_argument("--comparison", type=Path, help="Comparison JSON from compare.py.")
     parser.add_argument("--private", action="store_true", help="Create the repo as private.")
     parser.add_argument("--commit-message", default="Publish KLEOS adapter")
@@ -115,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest=manifest,
         results=results,
         comparison=comparison,
+        serving_revision=args.serving_revision,
     )
     card_path = run_dir / "README.model_card.md"
     card_path.write_text(card, encoding="utf-8")

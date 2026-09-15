@@ -35,6 +35,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--repo-id", default="local/kleos-adapter", help="Name used in the model card."
     )
+    parser.add_argument(
+        "--serving-revision",
+        help=(
+            "Base revision consumers should load, when the run recorded an "
+            "unpinned pointer. Reported alongside the training revision, not "
+            "instead of it."
+        ),
+    )
     parser.add_argument("--force", action="store_true", help="Overwrite an existing export.")
     add_common_arguments(parser)
     args = parser.parse_args(argv)
@@ -70,7 +78,9 @@ def main(argv: list[str] | None = None) -> int:
     for path, reason in rejected:
         print(f"    - {path.name}: {reason}")
 
-    card = build_model_card(repo_id=args.repo_id, manifest=manifest)
+    card = build_model_card(
+        repo_id=args.repo_id, manifest=manifest, serving_revision=args.serving_revision
+    )
     (args.output / "README.md").write_text(card, encoding="utf-8")
 
     print(f"\n✓ Exported {len(files)} file(s) to {args.output}")
