@@ -282,13 +282,19 @@ version of the same copy. The frontend should use the copy above.
 
 ## Capacity and latency
 
-**ESTIMATED** until `scripts/zerogpu_smoke.py` runs on the real Space; see
-[deployment.md](deployment.md#what-that-means-for-kleos). On free ZeroGPU,
-every KLEOS request made with one `HERMES_HF_TOKEN` shares that account's 5 GPU
-minutes a day: on the order of 5–20 Hermes answers. A warm answer takes about
-5–40 s, and a waking Space several minutes. Plan the product around Hermes
-being usually unavailable on the free tier, with the default model carrying
-the load.
+Observed on the live Space, 2026-09-23 (10 calls; see
+[deployment.md](deployment.md#what-that-means-for-kleos)):
+
+- A ~100-token answer takes a median **7.9 s** when the GPU worker is warm, and
+  **12.9 s** when it is cold. One call in ten took 34 s, waiting for a GPU.
+- Generation runs at ~12 tokens/s, so a long answer (512 tokens) takes ~45 s.
+- Each answer used 7–13 GPU seconds of the calling account's 300 a day.
+
+Every KLEOS request made with one `HERMES_HF_TOKEN` shares that account's 5 GPU
+minutes a day: roughly 20–30 answers at that length (ESTIMATED). A sleeping
+Space takes a minute or two to wake. Plan the product around Hermes being
+unavailable for much of the day on the free tier, with the default model
+carrying the load.
 
 ---
 

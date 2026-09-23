@@ -19,6 +19,7 @@ from pathlib import Path
 
 import gradio as gr
 
+from kleos_models.logging_utils import configure_logging
 from kleos_models.serving.zerogpu import (
     ZeroGPUService,
     ZeroGPUSettings,
@@ -26,6 +27,10 @@ from kleos_models.serving.zerogpu import (
     load_space_deployment,
     run_gpu_step,
 )
+
+# INFO for this package only: the startup report (load time, memory, versions)
+# and one line per request (ids, counts, timings; never prompt or response text).
+configure_logging()
 
 # Both fail closed. Without HERMES_API_KEY, or with a package that is not the
 # frozen artifact this record describes, the Space does not start.

@@ -601,6 +601,9 @@ unchanged.** The deployment work below happened separately, on a *copy*; see
    This is a reproducibility check on the artifact, not a new score; the numbers
    in this report stand as they are. Details in
    [../deployment.md](../deployment.md#verification-record--hermes-v006).
+   The same held on Hugging Face ZeroGPU, on an RTX PRO 6000 Blackwell, on
+   2026-09-23: **9/9 byte for byte**, with prompt token counts equal
+   ([../deployment.md](../deployment.md#verification-record--zerogpu)).
 
 4. **Abstention and consistency** are not fixed by a larger base, and are not
    addressed by any of the above. They need the next dataset revision:
