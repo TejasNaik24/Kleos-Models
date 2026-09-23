@@ -487,6 +487,12 @@ def load_space_deployment(
             # One device, explicitly. Under emulation 'auto' has nothing to
             # balance, and a fixed placement is easier to reason about.
             device_map="cuda:0",
+            # Read the adapter file on the CPU. Left to itself PEFT sees the
+            # emulated CUDA and reads straight onto it, which needs a real GPU
+            # and failed the first ZeroGPU start ("No CUDA GPUs are
+            # available"). The weights are then copied into the emulated model
+            # like the rest of it; their values are the same either way.
+            adapter_device="cpu",
         )
     except KleosError:
         logger.error("Hermes package failed verification or load; refusing to serve.")

@@ -424,6 +424,7 @@ def load_adapter_model(
     reasoning_mode: ReasoningMode | None = None,
     merge: bool = False,
     fix_mistral_regex: bool | None = None,
+    adapter_device: str | None = None,
 ) -> LoadedModel:
     """Load a base model and attach a trained LoRA adapter.
 
@@ -435,6 +436,12 @@ def load_adapter_model(
             base; the request is refused rather than silently ignored.
         fix_mistral_regex: Pin tokenizer regex behaviour explicitly. Serving
             passes the value recorded in the deployment manifest.
+        adapter_device: Device PEFT reads the adapter file onto before copying
+            it into the model. ``None`` lets PEFT choose (CUDA when available),
+            which is what every research run did. ZeroGPU passes ``"cpu"``: its
+            startup process emulates CUDA with no GPU attached, and reading the
+            file straight onto CUDA fails there. The attached weights are
+            identical either way; only where the file is read changes.
     """
     try:
         from peft import PeftModel
@@ -459,7 +466,10 @@ def load_adapter_model(
         for_training=False,
         fix_mistral_regex=fix_mistral_regex,
     )
-    loaded.model = PeftModel.from_pretrained(loaded.model, str(path), is_trainable=False)
+    placement = {"torch_device": adapter_device} if adapter_device else {}
+    loaded.model = PeftModel.from_pretrained(
+        loaded.model, str(path), is_trainable=False, **placement
+    )
     loaded.load_metadata["adapter_path"] = str(path)
 
     if merge:

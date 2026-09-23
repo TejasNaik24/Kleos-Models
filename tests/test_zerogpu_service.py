@@ -648,6 +648,9 @@ class TestStartup:
         (load,) = loads
         assert load["verify"] is True
         assert load["device_map"] == "cuda:0"
+        # PEFT must read the adapter file on the CPU: under ZeroGPU's startup
+        # emulation there is no GPU to read it onto (first Space start failed).
+        assert load["adapter_device"] == "cpu"
         expected = load["expected_identity"]
         assert expected["base_revision"] == PINNED
         assert expected["runtime"]["compute_dtype"] == "float16"

@@ -241,6 +241,7 @@ def load_deployment(
     require_remote_revision: bool = False,
     device_map: str | None = None,
     expected_identity: dict[str, Any] | None = None,
+    adapter_device: str | None = None,
 ) -> LoadedDeployment:
     """Verify a deployment package and load the model it describes.
 
@@ -255,6 +256,9 @@ def load_deployment(
             :func:`kleos_models.serving.manifest.load_expected_identity`). When
             given, a package that is intact but *different* is refused. Checked
             before anything is downloaded.
+        adapter_device: Where PEFT reads the adapter file before attaching it
+            (see :func:`kleos_models.models.loading.load_adapter_model`).
+            ``None`` keeps PEFT's own choice; ZeroGPU passes ``"cpu"``.
 
     Raises:
         ConfigError: the package does not match its manifest, contradicts
@@ -295,6 +299,7 @@ def load_deployment(
         adapter_path=adapter_dir,
         name=f"{manifest.model_name}-{manifest.model_version}",
         fix_mistral_regex=manifest.tokenizer.fix_mistral_regex,
+        adapter_device=adapter_device,
     )
 
     check_loaded_tokenizer(backend.loaded.tokenizer, manifest)

@@ -700,9 +700,8 @@ changed per request.
   package, nothing else. KLEOS's `HERMES_HF_TOKEN` opens a private Space and is
   the account ZeroGPU charges. Neither is ever sent to a browser.
 - **Private Space preferred.** A private Space is visible only to its owner and
-  callable only with a token that can read it. Whether a free account can run a
-  **private** ZeroGPU Space is **NOT VERIFIED**: the documentation lists
-  visibility options without saying. Create it private if the form allows.
+  callable only with a token that can read it. A free account **can** run a
+  private ZeroGPU Space: `Tejas-Naik/hermes-v006` is one (verified 2026-09-23).
 - **If it must be public** (a free-tier restriction), then anyone can see the
   Space's four files and the API's parameter names. They are the same files
   that are public in this repository, and none holds a secret, weight or
@@ -830,12 +829,14 @@ instead. The evidence for either is in the smoke output.
 | Package upload refuses unlisted files and checks remote bytes | **VERIFIED** by unit tests; never run against the Hub |
 | Free-tier facts above | **VERIFIED** against the HF documentation and `spaces` source, 2026-09-23 |
 | Latency, throughput, capacity, VRAM, startup RAM | **ESTIMATED** |
-| The Space builds with these requirements | **NOT TESTED** |
-| Startup fits the host's CPU RAM | **NOT TESTED**; estimated peak 13–16 GB |
-| NF4 quantization under CUDA emulation, then generation on Blackwell | **NOT TESTED** |
+| The Space builds with these requirements | **VERIFIED** 2026-09-23, second attempt. The first failed on the platform's pydantic cap (see above) |
+| Startup fits the host's CPU RAM | **VERIFIED** in part: the 12B base loaded and quantized to NF4 on the CPU (363 weights in 41 s) without running out of memory. Peak not yet recorded |
+| NF4 quantization under CUDA emulation | **VERIFIED** on the Space |
+| Attaching the adapter under emulation | **VERIFIED** locally under `spaces` 0.51.3's emulation with a tiny stand-in model, after a fix. The first Space start failed when PEFT read the adapter file straight onto the emulated GPU ("No CUDA GPUs are available"); the Space path now reads it on the CPU. On the Space: **NOT TESTED** yet |
+| Generation on Blackwell | **NOT TESTED** |
 | 9/9 exact match on ZeroGPU | **NOT TESTED** |
 | `X-Hermes-Key` reaches the app through Hugging Face's proxy | **NOT TESTED** |
-| A free account may run a private ZeroGPU Space | **NOT VERIFIED** |
+| A free account may run a private ZeroGPU Space | **VERIFIED**: `Tejas-Naik/hermes-v006` |
 
 ---
 
