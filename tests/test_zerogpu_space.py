@@ -51,6 +51,22 @@ PINNED = "04d8a90549d23fc6bd7f642064003592df51e9b3"
 #: 2026-09-23). A version outside this list may not be patched for emulation.
 ZEROGPU_TORCH = {"2.8.0", "2.9.1", "2.10.0", "2.11.0", "2.12.1", "2.13.0"}
 
+#: The only pins allowed to differ from the Docker image, each because the
+#: Space platform forces it, and none of them part of the model runtime.
+#: pydantic: the platform installs gradio[oauth,mcp]==6.28.0, whose `mcp` extra
+#: requires pydantic<=2.12.5 (first Space build failed on 2.13.5, 2026-09-23).
+PLATFORM_CONSTRAINED = {"pydantic": "2.12.5"}
+MODEL_RUNTIME = {
+    "transformers",
+    "peft",
+    "accelerate",
+    "bitsandbytes",
+    "tokenizers",
+    "jinja2",
+    "markupsafe",
+    "safetensors",
+}
+
 
 def record() -> dict:
     return yaml.safe_load(RECORD.read_text(encoding="utf-8"))["deployment"]
@@ -125,9 +141,11 @@ class TestSpaceRuntimePins:
         space = pins(template)
         assert space, "no pins found"
         for name, version in space.items():
-            assert docker.get(name) == version, (
-                f"{name}: Space {version}, Docker {docker.get(name)}"
-            )
+            expected = PLATFORM_CONSTRAINED.get(name, docker.get(name))
+            assert version == expected, f"{name}: Space {version}, expected {expected}"
+
+    def test_platform_exceptions_never_touch_the_model_runtime(self):
+        assert not set(PLATFORM_CONSTRAINED) & MODEL_RUNTIME
 
     def test_the_output_deciding_packages_are_all_pinned(self, template):
         space = pins(template)

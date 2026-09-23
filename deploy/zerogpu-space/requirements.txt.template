@@ -34,8 +34,12 @@ safetensors==0.8.0
 huggingface_hub==1.32.0
 regex==2026.9.10
 
-# kleos-models core dependencies, at the Docker image's versions.
-pydantic==2.13.5
+# kleos-models core dependencies, at the Docker image's versions except one.
+# pydantic is 2.12.5 here, not 2.13.5: Hugging Face installs
+# gradio[oauth,mcp]==6.28.0 alongside this file, and its `mcp` extra requires
+# pydantic>=2.11.10,<=2.12.5. pydantic validates configs and requests; it has
+# no part in tokenization or generation. The full test suite passes on it.
+pydantic==2.12.5
 PyYAML==6.0.3
 jsonschema==4.26.0
 numpy==2.5.2
