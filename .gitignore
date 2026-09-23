@@ -75,6 +75,11 @@ runs/
 wandb/
 reports/
 mlruns/
+# Deployment packages built by scripts/build_deployment_package.py. They belong
+# on the serving host or in an artifact store, never in git: `*.safetensors`
+# below already blocks the weights, this also keeps the 17MB tokenizer out.
+packages/
+exports/
 *.safetensors
 *.bin
 *.pt

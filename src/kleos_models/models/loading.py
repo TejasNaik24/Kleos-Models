@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kleos_models.compat import dtype_kwarg, require_transformers
+from kleos_models.compat import dtype_kwarg, mistral_regex_kwarg, require_transformers
 from kleos_models.config import DType, ModelConfig, ReasoningMode
 from kleos_models.errors import ModelCompatibilityError
 from kleos_models.logging_utils import get_logger
@@ -128,14 +128,35 @@ def load_hf_config(config: ModelConfig) -> Any:
         ) from exc
 
 
-def load_tokenizer(config: ModelConfig, adapter: ModelFamilyAdapter | None = None) -> Any:
+def load_tokenizer(
+    config: ModelConfig,
+    adapter: ModelFamilyAdapter | None = None,
+    *,
+    fix_mistral_regex: bool | None = None,
+) -> Any:
     """Load the tokenizer and validate it can format conversations.
 
     A tokenizer with no chat template cannot produce correct training targets, so
     that is an error rather than a silent fallback to a generic format.
+
+    Args:
+        fix_mistral_regex: Pin the Mistral pre-tokenizer regex behaviour
+            explicitly. ``None`` (the default) passes nothing and takes whatever
+            the installed transformers does, which is what every research run so
+            far used. Serving passes the recorded value so a library default can
+            never move tokenization underneath a frozen adapter — see
+            ``kleos_models.serving`` and docs/deployment.md.
+
+            This is a function argument and deliberately **not** a ``ModelConfig``
+            field: every config field is part of ``config_hash``, and adding one
+            would change the hash of runs that are already frozen.
     """
     transformers = require_transformers()
     adapter = adapter or get_adapter(config)
+
+    kwargs: dict[str, Any] = {}
+    if fix_mistral_regex is not None:
+        kwargs = mistral_regex_kwarg(fix_mistral_regex)
 
     try:
         tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -144,6 +165,7 @@ def load_tokenizer(config: ModelConfig, adapter: ModelFamilyAdapter | None = Non
             trust_remote_code=config.trust_remote_code,
             token=_hf_token(),
             use_fast=True,
+            **kwargs,
         )
     except Exception as exc:
         raise ModelCompatibilityError(
@@ -195,6 +217,7 @@ def load_model(
     reasoning_mode: ReasoningMode | None = None,
     for_training: bool = True,
     device_map: str | dict[str, Any] | None = None,
+    fix_mistral_regex: bool | None = None,
 ) -> LoadedModel:
     """Load a base model with the correct auto class and quantization.
 
@@ -203,6 +226,8 @@ def load_model(
         reasoning_mode: Requested mode; validated against real capability.
         for_training: Disable the KV cache and enable input grads for checkpointing.
         device_map: Override the config's device map.
+        fix_mistral_regex: Passed to :func:`load_tokenizer`; ``None`` keeps the
+            installed library's default, which is what research runs used.
 
     Raises:
         ModelCompatibilityError: on an architecture/auto-class mismatch, a gated
@@ -309,7 +334,7 @@ def load_model(
             model.generation_config, "pad_token_id", None
         )
 
-    tokenizer = load_tokenizer(resolved_config, adapter)
+    tokenizer = load_tokenizer(resolved_config, adapter, fix_mistral_regex=fix_mistral_regex)
 
     load_metadata = {
         "auto_class": auto_class.__name__,
@@ -398,6 +423,7 @@ def load_adapter_model(
     *,
     reasoning_mode: ReasoningMode | None = None,
     merge: bool = False,
+    fix_mistral_regex: bool | None = None,
 ) -> LoadedModel:
     """Load a base model and attach a trained LoRA adapter.
 
@@ -407,6 +433,8 @@ def load_adapter_model(
     Args:
         merge: Merge adapter weights into the base. Not possible for a quantized
             base; the request is refused rather than silently ignored.
+        fix_mistral_regex: Pin tokenizer regex behaviour explicitly. Serving
+            passes the value recorded in the deployment manifest.
     """
     try:
         from peft import PeftModel
@@ -425,7 +453,12 @@ def load_adapter_model(
             ],
         )
 
-    loaded = load_model(config, reasoning_mode=reasoning_mode, for_training=False)
+    loaded = load_model(
+        config,
+        reasoning_mode=reasoning_mode,
+        for_training=False,
+        fix_mistral_regex=fix_mistral_regex,
+    )
     loaded.model = PeftModel.from_pretrained(loaded.model, str(path), is_trainable=False)
     loaded.load_metadata["adapter_path"] = str(path)
 

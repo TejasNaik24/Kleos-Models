@@ -84,6 +84,17 @@ privacy: ## Scan the repository for secrets / private data
 configs: ## Validate every YAML config resolves and type-checks
 	$(BIN)/python scripts/validate_configs.py
 
+# --- deployment -----------------------------------------------------------
+
+.PHONY: install-serve
+install-serve: $(BIN)/python ## Install the inference service deps (fastapi, uvicorn)
+	$(BIN)/pip install -e ".[serve,dev]"
+
+.PHONY: verify-package
+verify-package: ## Verify a deployment package: make verify-package PACKAGE=/path
+	@test -n "$(PACKAGE)" || (echo "Set PACKAGE=/path/to/hermes-v0.0.6" && exit 1)
+	$(BIN)/python scripts/verify_deployment_package.py --package $(PACKAGE)
+
 .PHONY: clean
 clean: ## Remove caches and build artifacts
 	rm -rf .pytest_cache .mypy_cache .ruff_cache build dist *.egg-info

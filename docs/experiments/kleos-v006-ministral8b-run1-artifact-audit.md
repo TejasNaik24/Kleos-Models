@@ -164,7 +164,30 @@ invalidate the comparison unless both arms were re-scored. Both evaluation JSONs
 retain model responses, so re-grading is possible offline with no GPU. That is the
 correct remedy and it belongs in its own change.
 
-### F2 — `tokenizer.json` (17.1 MB) refused by the 5 MB scan cap
+### F2 — `tokenizer.json` (17.1 MB) refused by the 5 MB scan cap — **RESOLVED 2026-09-15**
+
+> **Outcome** (commit `f759aac`). The scan cap was not the right lever, so it was
+> left at 5 MB. Instead the decision was made explicit: `TOKENIZER_ARTIFACTS` in
+> `kleos_models.publishing` names the nine tokenizer filenames, and
+> `collect_upload_files` rejects them **by name, with their own reason**, rather
+> than letting them fall through the size check and read as a failure. The run's
+> `tokenizer/` directory is no longer enumerated for upload at all.
+>
+> The rule is all-or-nothing on purpose: publishing `tokenizer_config.json`
+> without the 17 MB `tokenizer.json` produces a repository that looks like it
+> carries a tokenizer but has no vocabulary source — worse than shipping none,
+> and exactly what the cap used to produce. A PEFT adapter is not self-contained;
+> inference loads the base model, so its tokenizer is always available.
+> `tests/test_publishing.py` asserts it.
+>
+> **For serving, Hermes v0.0.6 does the opposite, deliberately.** Its deployment
+> package *does* carry the tokenizer, because transformers ≥ 5 can change Mistral
+> tokenization through `fix_mistral_regex` and a pinned copy removes that
+> variable. That is a serving decision, not a publishing one, and the two do not
+> conflict: publishing avoids an incomplete duplicate, serving pins a complete
+> one. See [../deployment.md](../deployment.md).
+
+The original finding, as written at audit time:
 
 `_MAX_SCAN_BYTES` is 5 MB; files above it are refused rather than skipped — a
 deliberate and correct safety posture. But Ministral's legitimate fast tokenizer

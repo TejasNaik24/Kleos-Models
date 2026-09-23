@@ -113,6 +113,7 @@ class HuggingFaceBackend(BaseBackend):
         adapter_path: Path | str | None = None,
         reasoning_mode: ReasoningMode | None = None,
         name: str | None = None,
+        fix_mistral_regex: bool | None = None,
     ) -> None:
         from kleos_models.models.loading import load_adapter_model, load_model
 
@@ -122,11 +123,17 @@ class HuggingFaceBackend(BaseBackend):
 
         if self.adapter_path is not None:
             self.loaded = load_adapter_model(
-                model_config, self.adapter_path, reasoning_mode=reasoning_mode
+                model_config,
+                self.adapter_path,
+                reasoning_mode=reasoning_mode,
+                fix_mistral_regex=fix_mistral_regex,
             )
         else:
             self.loaded = load_model(
-                model_config, reasoning_mode=reasoning_mode, for_training=False
+                model_config,
+                reasoning_mode=reasoning_mode,
+                for_training=False,
+                fix_mistral_regex=fix_mistral_regex,
             )
         self.loaded.model.eval()
 
