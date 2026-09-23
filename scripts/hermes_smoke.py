@@ -31,60 +31,13 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _cli import add_common_arguments, print_header, run, setup_logging
 from kleos_models.data.loaders import load_evaluation_examples
-from kleos_models.errors import KleosError
-
-#: Task families the suite must cover. Named rather than derived so a benchmark
-#: that silently loses a family is caught instead of quietly skipped.
-REQUIRED_TASKS = (
-    "workspace_reasoning",
-    "memory_conflict_resolution",
-    "tool_routing",
-    "recommendation_generation",
-    "mission_control_briefing",
-    "notification_prioritization",
-    "context_prioritization",
-)
-
-
-def select_suite(examples: list[Any], *, per_task: int, abstention: int) -> list[Any]:
-    """Pick a small, deterministic, representative set.
-
-    Sorted by example id, so the same benchmark always yields the same suite and
-    a passing run today is comparable with one next month. Abstention cases are
-    added explicitly because they are the behaviour most likely to reveal a
-    tokenizer or prompt-assembly difference.
-    """
-    by_task: dict[str, list[Any]] = defaultdict(list)
-    for example in sorted(examples, key=lambda e: str(e.id)):
-        by_task[str(example.task)].append(example)
-
-    selected: dict[str, Any] = {}
-    for task in sorted(by_task):
-        for example in by_task[task][:per_task]:
-            selected[str(example.id)] = example
-
-    declines = [
-        e
-        for e in sorted(examples, key=lambda e: str(e.id))
-        if (e.reference or {}).get("confident") is False
-    ]
-    for example in declines[:abstention]:
-        selected[str(example.id)] = example
-
-    missing = [task for task in REQUIRED_TASKS if task not in by_task]
-    if missing:
-        raise KleosError(
-            f"The benchmark is missing required task families: {missing}",
-            suggestions=["Rebuild it with scripts/build_benchmark.py from the sealed release."],
-        )
-    return [selected[key] for key in sorted(selected)]
+from kleos_models.serving.smoke import select_suite
 
 
 def main(argv: list[str] | None = None) -> int:

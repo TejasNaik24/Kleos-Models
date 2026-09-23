@@ -29,20 +29,18 @@ from kleos_models.logging_utils import get_logger
 from kleos_models.publishing import is_pinned_revision
 from kleos_models.serving.manifest import (
     ADAPTER_DIRNAME,
-    DEPLOYMENT_DIRNAME,
+    PACKAGED_MODEL_CONFIG,
     TOKENIZER_DIRNAME,
     DeploymentManifest,
+    verify_identity,
     verify_package,
 )
+from kleos_models.serving.status import finish_reason
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from kleos_models.inference.backends import GenerationOutput
+    from kleos_models.inference.backends import GenerationOutput, PreparedPrompt
 
 logger = get_logger(__name__)
-
-#: The model config travels inside the package, so a deployment does not depend
-#: on this repository being checked out next to it.
-PACKAGED_MODEL_CONFIG = f"{DEPLOYMENT_DIRNAME}/model_config.yaml"
 
 
 @dataclass
@@ -65,13 +63,8 @@ class LoadedDeployment:
             repetition_penalty=generation.repetition_penalty,
         )
 
-    def generate(
-        self,
-        messages: list[Message],
-        *,
-        max_new_tokens: int | None = None,
-    ) -> GenerationOutput:
-        """Generate one response under the frozen decoding contract.
+    def generation_config(self, max_new_tokens: int | None = None) -> GenerationConfig:
+        """The frozen decoding contract, with an optional *lower* token budget.
 
         ``max_new_tokens`` may be lowered by a caller but never raised above the
         manifest's limit: a request must not be able to widen the contract the
@@ -81,7 +74,32 @@ class LoadedDeployment:
         if max_new_tokens is not None:
             ceiling = self.manifest.limits.max_new_tokens
             config = config.model_copy(update={"max_new_tokens": min(max_new_tokens, ceiling)})
-        return self.backend.generate(messages, config)
+        return config
+
+    def generate(
+        self,
+        messages: list[Message],
+        *,
+        max_new_tokens: int | None = None,
+    ) -> GenerationOutput:
+        """Generate one response under the frozen decoding contract."""
+        config = self.generation_config(max_new_tokens)
+        output = self.backend.generate(messages, config)
+        # The backend always reports "stop"; a truncated answer must say so.
+        output.finish_reason = finish_reason(output.completion_tokens, config.max_new_tokens)
+        return output
+
+    # The three steps of generate(), exposed for hosts that bill GPU time
+    # (ZeroGPU): only generate_ids needs the GPU. Same backend, same order.
+
+    def prepare(self, messages: list[Message]) -> PreparedPrompt:
+        return self.backend.prepare(messages)
+
+    def generate_ids(self, prepared: PreparedPrompt, config: GenerationConfig) -> list[int]:
+        return self.backend.generate_ids(prepared, config)
+
+    def finish(self, prepared: PreparedPrompt, completion_ids: list[int]) -> GenerationOutput:
+        return self.backend.finish(prepared, completion_ids)
 
     def describe(self) -> dict[str, Any]:
         """Identity of what is loaded. Safe to expose on a readiness endpoint."""
@@ -97,6 +115,7 @@ class LoadedDeployment:
             "dataset_version": self.manifest.dataset.version,
             "training_config_hash": self.manifest.training_config_hash,
             "tokenizer_fix_mistral_regex": self.manifest.tokenizer.fix_mistral_regex,
+            "runtime": self.manifest.runtime.model_dump(mode="json"),
             "generation": self.manifest.generation.model_dump(mode="json"),
         }
 
@@ -128,6 +147,19 @@ def check_config_matches_manifest(config: ModelConfig, manifest: DeploymentManif
             f"packaged model config revision is {config.revision!r}, "
             f"manifest says {manifest.base_revision!r}"
         )
+    runtime = manifest.runtime
+    loaded = {
+        "quantization_mode": config.quantization.mode.value,
+        "double_quant": config.quantization.double_quant,
+        "compute_dtype": config.quantization.compute_dtype.value,
+        "attn_implementation": config.attn_implementation,
+        "max_seq_length": config.max_seq_length,
+    }
+    for key, want in runtime.model_dump().items():
+        if loaded[key] != want:
+            problems.append(
+                f"packaged model config {key} is {loaded[key]!r}, manifest says {want!r}"
+            )
     if problems:
         raise ConfigError(
             "The deployment package contradicts itself about which base weights to load.",
@@ -208,6 +240,7 @@ def load_deployment(
     verify: bool = True,
     require_remote_revision: bool = False,
     device_map: str | None = None,
+    expected_identity: dict[str, Any] | None = None,
 ) -> LoadedDeployment:
     """Verify a deployment package and load the model it describes.
 
@@ -218,13 +251,20 @@ def load_deployment(
         require_remote_revision: Confirm the base commit with the Hub rather
             than relying on the load-time pin alone.
         device_map: Override the packaged device map (e.g. ``"cuda:0"``).
+        expected_identity: The identity this deployment was built to serve (see
+            :func:`kleos_models.serving.manifest.load_expected_identity`). When
+            given, a package that is intact but *different* is refused. Checked
+            before anything is downloaded.
 
     Raises:
-        ConfigError: the package does not match its manifest, or contradicts itself.
+        ConfigError: the package does not match its manifest, contradicts
+            itself, or is not the expected artifact.
         ModelCompatibilityError: the artifacts do not load.
     """
     root = Path(package_dir)
     manifest = verify_package(root) if verify else DeploymentManifest.load(root)
+    if expected_identity is not None:
+        verify_identity(manifest, expected_identity)
 
     config = load_packaged_model_config(root)
     check_config_matches_manifest(config, manifest)

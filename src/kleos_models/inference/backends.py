@@ -55,6 +55,18 @@ class GenerationOutput:
         }
 
 
+@dataclass
+class PreparedPrompt:
+    """A rendered, tokenized prompt, ready for the model.
+
+    Plain CPU tensors and an int, so it pickles — ZeroGPU runs the model in a
+    forked worker and ships arguments to it.
+    """
+
+    inputs: dict[str, Any]
+    prompt_length: int
+
+
 @runtime_checkable
 class Backend(Protocol):
     """What the evaluation runner needs from anything that generates text."""
@@ -148,13 +160,29 @@ class HuggingFaceBackend(BaseBackend):
     def generate(
         self, messages: Sequence[Message], config: GenerationConfig, **kwargs: Any
     ) -> GenerationOutput:
-        import torch
+        prepared = self.prepare(messages)
+        return self.finish(prepared, self.generate_ids(prepared, config))
 
+    # Generation is split in three so a host that bills GPU time (ZeroGPU) can
+    # run only the middle step on the GPU. generate() composes them in the same
+    # order with the same arguments, so every existing caller — evaluation, the
+    # Docker service — behaves exactly as before.
+
+    def prepare(self, messages: Sequence[Message]) -> PreparedPrompt:
+        """Render the chat template and tokenize. CPU only; tensors stay on the CPU."""
         prompt = self.formatter.render_prompt(messages)
         inputs = self.loaded.tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
+        return PreparedPrompt(
+            inputs=dict(inputs.items()),
+            prompt_length=int(inputs["input_ids"].shape[-1]),
+        )
+
+    def generate_ids(self, prepared: PreparedPrompt, config: GenerationConfig) -> list[int]:
+        """Run the model and return only the completion's token ids. Needs the GPU."""
+        import torch
+
         device = next(self.loaded.model.parameters()).device
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        prompt_length = int(inputs["input_ids"].shape[-1])
+        inputs = {k: v.to(device) for k, v in prepared.inputs.items()}
 
         generate_kwargs: dict[str, Any] = {
             "max_new_tokens": config.max_new_tokens,
@@ -172,8 +200,11 @@ class HuggingFaceBackend(BaseBackend):
         with torch.no_grad():
             output_ids = self.loaded.model.generate(**inputs, **generate_kwargs)
 
-        completion_ids = output_ids[0][prompt_length:]
-        text = self.loaded.tokenizer.decode(completion_ids, skip_special_tokens=True)
+        return [int(token) for token in output_ids[0][prepared.prompt_length :].tolist()]
+
+    def finish(self, prepared: PreparedPrompt, completion_ids: Sequence[int]) -> GenerationOutput:
+        """Decode the completion and separate any reasoning span. CPU only."""
+        text = self.loaded.tokenizer.decode(list(completion_ids), skip_special_tokens=True)
 
         # Reasoning models emit a thinking span. Separate it from the answer:
         # graders score the decision and its justification, not hidden
@@ -188,8 +219,8 @@ class HuggingFaceBackend(BaseBackend):
         return GenerationOutput(
             text=answer,
             reasoning=reasoning,
-            prompt_tokens=prompt_length,
-            completion_tokens=int(completion_ids.shape[-1]),
+            prompt_tokens=prepared.prompt_length,
+            completion_tokens=len(completion_ids),
             metadata={"backend": self.name, "reasoning_mode": self.loaded.reasoning_mode.value},
         )
 

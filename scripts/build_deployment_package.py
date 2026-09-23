@@ -52,8 +52,11 @@ from kleos_models.serving.manifest import (
     REQUIRED_TOKENIZER_FILES,
     TOKENIZER_DIRNAME,
     GenerationDefaults,
+    RuntimeContract,
     ServingLimits,
     build_deployment_manifest,
+    load_expected_identity,
+    verify_identity,
     verify_package,
 )
 
@@ -254,17 +257,34 @@ def main(argv: list[str] | None = None) -> int:
     # package stays relocatable.
     packaged_model = model_config.model_dump(mode="json")
     packaged_model["tokenizer"] = None
-    quantization = spec.get("quantization") or {}
+
+    # The runtime contract decides how the base is instantiated, and it overrides
+    # the training config where they differ: the training config says
+    # `compute_dtype: auto`, which is only safe on the GPU it trained on. The
+    # contract states what that resolved to.
+    runtime = RuntimeContract(**(spec.get("runtime") or {}))
     packaged_model["quantization"].update(
-        {k: v for k, v in quantization.items() if k in packaged_model["quantization"]}
+        {
+            "mode": runtime.quantization_mode,
+            "double_quant": runtime.double_quant,
+            "compute_dtype": runtime.compute_dtype,
+        }
     )
+    packaged_model["attn_implementation"] = runtime.attn_implementation
+    packaged_model["max_seq_length"] = runtime.max_seq_length
+
     model_config_path = package / DEPLOYMENT_DIRNAME / "model_config.yaml"
     model_config_path.parent.mkdir(parents=True, exist_ok=True)
     model_config_path.write_text(
         yaml.safe_dump({"model": packaged_model}, sort_keys=True, default_flow_style=False),
         encoding="utf-8",
     )
-    print(f"    + {DEPLOYMENT_DIRNAME}/model_config.yaml")
+    # Validate it as a ModelConfig now, not at serving time.
+    load_model_config(model_config_path)
+    print(
+        f"    + {DEPLOYMENT_DIRNAME}/model_config.yaml "
+        f"(compute_dtype {runtime.compute_dtype}, {runtime.quantization_mode})"
+    )
 
     tokenizer_spec = spec.get("tokenizer") or {}
     generation = GenerationDefaults(**(spec.get("generation") or {}))
@@ -284,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
         training_config_hash=spec["training_config_hash"],
         adapter_config=pinned["config"],
         fix_mistral_regex=bool(tokenizer_spec.get("fix_mistral_regex", False)),
+        runtime=runtime,
         tokenizer_padding_side=tokenizer_spec.get("padding_side", "right"),
         tokenizer_pad_token=tokenizer_spec.get("pad_token"),
         split_strategy=spec.get("split_strategy"),
@@ -323,7 +344,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"    + {DEPLOYMENT_DIRNAME}/README.md")
 
-    verify_package(package)
+    # Fail closed at build time, not first at serving time: the package must be
+    # intact AND exactly the artifact the serving record describes.
+    verify_identity(verify_package(package), load_expected_identity(args.deployment_config))
     print(f"\n✓ Package built and verified: {package}")
     print(f"  {manifest.model_name} {manifest.model_version}")
     print(f"  base    : {manifest.base_model}@{manifest.base_revision[:12]}…")

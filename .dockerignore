@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------------------
+# Build context for docker/hermes.Dockerfile.
+#
+# An ALLOWLIST, not a blocklist. This repository sits next to things that must
+# never reach a Docker daemon: a real HF token in .env, the private sealed
+# dataset under data/, and training runs under outputs/. With a blocklist, a new
+# private file is included until someone remembers to exclude it; here nothing
+# is included unless it is named below. Same posture as the upload allowlist in
+# kleos_models.publishing.
+#
+# tests/test_container.py checks this file against every COPY in the
+# Dockerfile, and checks that the private paths stay out.
+# ---------------------------------------------------------------------------
+
+# Exclude everything...
+*
+
+# ...then re-include exactly what the image needs.
+!pyproject.toml
+!README.md
+!LICENSE
+!src
+!scripts/_cli.py
+!scripts/serve_hermes.py
+!scripts/verify_deployment_package.py
+!scripts/hermes_smoke.py
+!configs/deployment/kleos_hermes_v006.yaml
+!docker/requirements-hermes.txt
+
+# Never, even inside a re-included directory.
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+**/*.safetensors
+**/*.bin
+**/*.pt
+**/*.pth
+**/*.gguf
+**/*.jsonl
+**/.env
+**/.env.*

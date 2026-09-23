@@ -15,12 +15,14 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from kleos_models.errors import ConfigError
 from kleos_models.serving.manifest import (
     DEPLOYMENT_ARTIFACT_VERSION,
     DeploymentManifest,
     FileRecord,
+    RuntimeContract,
     TokenizerContract,
     build_deployment_manifest,
     verify_package,
@@ -42,11 +44,53 @@ ADAPTER_CONFIG = {
 }
 
 
-def build_package(tmp_path: Path, *, revision: str = PINNED, adapter_config=None) -> Path:
-    """A miniature but structurally real deployment package."""
+#: The runtime contract the real Hermes record pins: NF4, float16 compute.
+RUNTIME = RuntimeContract(
+    quantization_mode="nf4",
+    double_quant=True,
+    compute_dtype="float16",
+    attn_implementation="sdpa",
+    max_seq_length=1024,
+)
+
+
+def packaged_model_config(runtime: RuntimeContract = RUNTIME, revision: str = PINNED) -> dict:
+    """The packaged model config, as build_deployment_package.py writes it."""
+    return {
+        "model": {
+            "name": "mistral_nemo_12b",
+            "family": "mistral",
+            "base_model": "mistralai/Mistral-Nemo-Instruct-2407",
+            "revision": revision,
+            "max_seq_length": runtime.max_seq_length,
+            "attn_implementation": runtime.attn_implementation,
+            "quantization": {
+                "mode": runtime.quantization_mode,
+                "double_quant": runtime.double_quant,
+                "compute_dtype": runtime.compute_dtype,
+            },
+        }
+    }
+
+
+def build_package(
+    tmp_path: Path,
+    *,
+    revision: str = PINNED,
+    adapter_config=None,
+    extra_files: dict[str, bytes] | None = None,
+) -> Path:
+    """A miniature but structurally real deployment package.
+
+    ``extra_files`` (relative path -> bytes) are written before the manifest
+    is built, so they are recorded in it like any other package file.
+    """
     package = tmp_path / "hermes-test"
     (package / "adapter").mkdir(parents=True)
     (package / "tokenizer").mkdir(parents=True)
+    (package / "deployment").mkdir(parents=True)
+    for relative, content in (extra_files or {}).items():
+        (package / relative).write_bytes(content)
 
     (package / "adapter" / "adapter_model.safetensors").write_bytes(b"fake weights" * 8)
     config = dict(ADAPTER_CONFIG if adapter_config is None else adapter_config)
@@ -54,6 +98,9 @@ def build_package(tmp_path: Path, *, revision: str = PINNED, adapter_config=None
     (package / "adapter" / "adapter_config.json").write_text(json.dumps(config), encoding="utf-8")
     (package / "tokenizer" / "tokenizer.json").write_text('{"model": {}}', encoding="utf-8")
     (package / "tokenizer" / "tokenizer_config.json").write_text("{}", encoding="utf-8")
+    (package / "deployment" / "model_config.yaml").write_text(
+        yaml.safe_dump(packaged_model_config(revision=revision)), encoding="utf-8"
+    )
 
     manifest = build_deployment_manifest(
         package,
@@ -69,6 +116,7 @@ def build_package(tmp_path: Path, *, revision: str = PINNED, adapter_config=None
         training_config_hash="b" * 64,
         adapter_config=config,
         fix_mistral_regex=False,
+        runtime=RUNTIME,
     )
     manifest.save(package)
     return package
@@ -250,3 +298,55 @@ class TestGenerationContract:
         assert manifest.limits.max_new_tokens > 0
         assert manifest.limits.max_input_chars > 0
         assert manifest.limits.request_timeout_seconds > 0
+
+
+class TestRuntimeContract:
+    """Schema v2: how the base is instantiated is part of the identity.
+
+    v0.0.6 was evaluated with 4-bit matmuls in float16. `auto` would resolve to
+    bfloat16 on any GPU newer than the T4 it trained on — including the ZeroGPU
+    Blackwell — and nothing would raise.
+    """
+
+    @pytest.mark.parametrize("dtype", ["auto", "AUTO", "default", ""])
+    def test_a_hardware_dependent_dtype_is_not_a_contract(self, dtype):
+        with pytest.raises(Exception, match="compute_dtype"):
+            RuntimeContract(
+                quantization_mode="nf4",
+                double_quant=True,
+                compute_dtype=dtype,
+                attn_implementation="sdpa",
+                max_seq_length=1024,
+            )
+
+    def test_the_contract_is_recorded(self, tmp_path):
+        manifest = verify_package(build_package(tmp_path))
+        assert manifest.runtime.compute_dtype == "float16"
+        assert manifest.runtime.quantization_mode == "nf4"
+        assert "deployment/model_config.yaml" in {r.path for r in manifest.all_files()}
+
+    def test_an_edited_model_config_is_caught_by_hash_and_by_content(self, tmp_path):
+        package = build_package(tmp_path)
+        edited = packaged_model_config(RUNTIME.model_copy(update={"compute_dtype": "bfloat16"}))
+        (package / "deployment" / "model_config.yaml").write_text(yaml.safe_dump(edited))
+        with pytest.raises(ConfigError) as error:
+            verify_package(package)
+        problems = " ".join(error.value.details["problems"])
+        assert "deployment/model_config.yaml" in problems
+        assert "compute_dtype is 'bfloat16'" in problems
+
+    def test_a_package_without_a_model_config_is_refused(self, tmp_path):
+        package = build_package(tmp_path)
+        (package / "deployment" / "model_config.yaml").unlink()
+        with pytest.raises(ConfigError):
+            verify_package(package)
+
+    def test_a_version_one_package_is_refused(self, tmp_path):
+        # v1 packages never pinned the compute dtype; serving one would reopen
+        # exactly the drift schema v2 closes.
+        package = build_package(tmp_path)
+        payload = json.loads((package / "manifest.json").read_text())
+        payload["deployment_artifact_version"] = 1
+        (package / "manifest.json").write_text(json.dumps(payload))
+        with pytest.raises(ConfigError, match="schema"):
+            DeploymentManifest.load(package)

@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# Python dependencies for the Hermes v0.0.6 ZeroGPU Space.
+#
+# Rendered by scripts/stage_zerogpu_space.py, which fills in the kleos-models
+# commit. Do not hand-edit the rendered requirements.txt.
+#
+# gradio and spaces are NOT listed: Hugging Face installs gradio at the
+# sdk_version in README.md, and spaces alongside it on ZeroGPU hardware.
+#
+# MODEL RUNTIME — identical to docker/requirements-hermes.txt, and to the
+# versions recorded in the kleos-v006-mistralnemo12b-run1 manifest. These
+# decide tokenization, quantized arithmetic and generation, i.e. whether the
+# served model is the model that was measured. Do not float them.
+#
+# torch is the exact CUDA 12.8 wheel the research run and the Docker image use,
+# by URL and hash rather than through an extra index, so every other package
+# still resolves from PyPI. It needs Python 3.12 on x86_64 (README.md sets
+# python_version). bitsandbytes 0.50.2 loads its CUDA 12.8 library, which
+# includes Blackwell (sm_120) kernels.
+# ---------------------------------------------------------------------------
+
+torch @ https://download.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=d252cf975fb18c94a85336323ad425f473df56dab35a44b00399bd70c7a3b997
+transformers==5.16.1
+peft==0.20.0
+accelerate==1.14.0
+bitsandbytes==0.50.2
+
+# Also decide outputs: tokenizers pre-tokenizes, Jinja2 renders the chat
+# template into the prompt, safetensors reads the weights.
+tokenizers==0.23.2
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+safetensors==0.8.0
+huggingface_hub==1.32.0
+regex==2026.9.10
+
+# kleos-models core dependencies, at the Docker image's versions.
+pydantic==2.13.5
+PyYAML==6.0.3
+jsonschema==4.26.0
+numpy==2.5.2
+
+# The serving code, at the exact commit whose tests passed. Pinned by sha, so
+# the Space cannot pick up a later change to this repository by accident.
+kleos-models @ git+https://github.com/TejasNaik24/Kleos-Models.git@{{KLEOS_MODELS_COMMIT}}

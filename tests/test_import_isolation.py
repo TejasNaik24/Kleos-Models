@@ -54,6 +54,19 @@ LIGHT_MODULES = [
     # before any GPU is touched and before the weights are downloaded.
     "kleos_models.serving",
     "kleos_models.serving.manifest",
+    # The container entrypoint's preflight must run before torch is touched:
+    # it is what refuses a bad package before the 24.5 GB download.
+    "kleos_models.serving.startup",
+    # The status contract and the reference client are what KLEOS imports; a
+    # web backend must not need torch to call Hermes or to fall back from it.
+    "kleos_models.serving.status",
+    "kleos_models.serving.client",
+    # The ZeroGPU request path and the Space/package tooling: torch only inside
+    # the GPU step, so a Space starts, and a package uploads, without importing
+    # it at module scope.
+    "kleos_models.serving.zerogpu",
+    "kleos_models.serving.smoke",
+    "kleos_models.serving.space",
 ]
 
 #: The heavy layer may not import torch at module scope either — it imports

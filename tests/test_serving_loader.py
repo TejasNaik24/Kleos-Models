@@ -15,8 +15,9 @@ import pytest
 from tests.conftest import CONFIGS_DIR
 from tests.test_serving_api import build_manifest
 
-from kleos_models.config import GenerationConfig, load_model_config
+from kleos_models.config import DType, GenerationConfig, load_model_config
 from kleos_models.errors import ConfigError
+from kleos_models.inference.backends import GenerationOutput
 from kleos_models.serving.loader import (
     LoadedDeployment,
     check_config_matches_manifest,
@@ -39,7 +40,7 @@ class RecordingBackend:
 
     def generate(self, messages, config):
         self.seen.append(config)
-        return object()
+        return GenerationOutput(text="", completion_tokens=len(self.seen))
 
 
 def build_loaded(manifest=None) -> tuple[LoadedDeployment, RecordingBackend]:
@@ -84,8 +85,20 @@ class TestPackageSelfConsistency:
         with pytest.raises(ConfigError, match="contradicts itself"):
             check_config_matches_manifest(config, manifest)
 
-    def test_the_shipped_model_config_matches_the_shipped_manifest_values(self):
+    def test_the_raw_training_config_is_not_accepted_as_the_served_model(self):
+        # The training config says compute_dtype: auto, which resolved to
+        # float16 on the T4 that trained Hermes and would resolve to bfloat16 on
+        # any newer GPU. Served as-is it would not be the measured model.
         config = load_model_config(CONFIGS_DIR / "models" / "mistral_nemo_12b.yaml")
+        with pytest.raises(ConfigError, match="contradicts itself") as error:
+            check_config_matches_manifest(config, build_manifest())
+        assert "compute_dtype is 'auto'" in " ".join(error.value.details["problems"])
+
+    def test_the_training_config_with_the_runtime_contract_applied_is_accepted(self):
+        # What build_deployment_package.py packages: same base and revision,
+        # with the runtime contract stated.
+        config = load_model_config(CONFIGS_DIR / "models" / "mistral_nemo_12b.yaml")
+        config.quantization.compute_dtype = DType.FLOAT16
         check_config_matches_manifest(config, build_manifest())
 
     def test_a_package_without_a_model_config_is_refused(self, tmp_path):
@@ -118,6 +131,12 @@ class TestGenerationContractIsEnforcedByTheLoader:
         loaded, backend = build_loaded()
         loaded.generate([])
         assert backend.seen[-1].max_new_tokens == 512
+
+    def test_a_completion_that_fills_the_budget_is_reported_as_truncated(self):
+        loaded, _ = build_loaded()
+        # RecordingBackend returns one completion token per call so far.
+        assert loaded.generate([], max_new_tokens=1).finish_reason == "length"
+        assert loaded.generate([], max_new_tokens=512).finish_reason == "stop"
 
     def test_describe_reports_identity_without_secrets_or_paths(self):
         loaded, _ = build_loaded()

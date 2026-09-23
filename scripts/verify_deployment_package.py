@@ -32,6 +32,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also confirm the base commit with the model registry (needs network).",
     )
+    parser.add_argument(
+        "--expect-deployment-config",
+        type=Path,
+        help=(
+            "Serving record the package must match (e.g. "
+            "configs/deployment/kleos_hermes_v006.yaml). Without it, only internal "
+            "consistency is checked: a different, intact package would also pass."
+        ),
+    )
     add_common_arguments(parser)
     args = parser.parse_args(argv)
     setup_logging(args)
@@ -63,6 +72,23 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n  ✓ every recorded file matches its hash")
     print("  ✓ adapter_config.json pins the manifest's base revision")
+
+    if args.expect_deployment_config:
+        from kleos_models.serving.manifest import load_expected_identity
+
+        mismatches = manifest.check_expected_identity(
+            load_expected_identity(args.expect_deployment_config)
+        )
+        if mismatches:
+            print(
+                f"\n✗ This is not the artifact {args.expect_deployment_config} describes "
+                f"({len(mismatches)} mismatch(es)). DO NOT SERVE THIS PACKAGE.\n"
+            )
+            for problem in mismatches:
+                print(f"    - {problem}")
+            print()
+            return 1
+        print(f"  ✓ identity matches {args.expect_deployment_config}")
 
     if args.check_base_revision:
         from kleos_models.serving.loader import verify_base_revision

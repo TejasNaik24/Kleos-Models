@@ -123,6 +123,9 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]
 "scripts/*" = ["E402"]
+# `import spaces` must come before anything that can import torch: ZeroGPU
+# patches CUDA at import time. isort order would put it after the stdlib.
+"deploy/zerogpu-space/app.py" = ["I001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["kleos_models"]
