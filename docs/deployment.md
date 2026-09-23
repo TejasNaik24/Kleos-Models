@@ -582,6 +582,14 @@ The model runtime in the Space is the Docker image's, pin for pin:
 `peft 0.20.0`, `accelerate 1.14.0`, `bitsandbytes 0.50.2`, `tokenizers 0.23.2`,
 `Jinja2 3.1.6`. `tests/test_zerogpu_space.py` fails if any of them drift apart.
 
+One non-model pin differs: `pydantic 2.12.5`, not 2.13.5. Hugging Face installs
+`gradio[oauth,mcp]==6.28.0` next to the Space's requirements, and its `mcp` extra
+caps pydantic at 2.12.5. The first build, on 2026-09-23, failed on exactly that
+conflict. pydantic only validates configs and requests, and the full test suite
+passes on 2.12.5 under Python 3.12. To check a requirements change before pushing
+it, dry-run the install in the platform's base image (`python:3.12.12`), adding
+`gradio[oauth,mcp]==6.28.0 spaces==0.51.3 "torch<=2.13.0"` as the build log shows.
+
 ### Lifecycle
 
 From the `spaces` 0.51.3 source, not assumed:
