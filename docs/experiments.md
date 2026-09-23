@@ -83,7 +83,8 @@ edited to match it — its `adapter_config.json` still records `revision: null`,
 and the deployment package records both the pin and that original absence. No
 number above is affected. On 2026-09-23 the package, loaded through the serving
 path, reproduced the frozen evaluation's responses 9/9 byte for byte — a
-reproducibility check on the artifact, not a new score. See
+reproducibility check on the artifact, not a new score. It did again the same
+day on a free Hugging Face ZeroGPU Space (Blackwell GPU), also 9/9. See
 [deployment.md](deployment.md).
 
 ---

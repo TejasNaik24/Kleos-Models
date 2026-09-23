@@ -548,10 +548,12 @@ as the Docker service. The only difference is that generation is split, so the
 GPU is held for the one step that needs it. The Docker path above stays the
 canonical, portable deployment.
 
-**Status, 2026-09-23: implemented and tested locally; not deployed.** Nothing
-has been uploaded to Hugging Face, no Space exists, and Hermes has not yet run
-on ZeroGPU. See the [verification record](#verification-record--zerogpu) for
-exactly what is verified, what is estimated, and what is not tested.
+**Status, 2026-09-23: deployed and verified.** The private Space
+`Tejas-Naik/hermes-v006` serves the frozen artifact from the private package
+repository `Tejas-Naik/hermes-v006-package` (commit `5d179599…`). It reproduces
+the frozen evaluation's responses **9/9, byte for byte**, on an RTX PRO 6000
+Blackwell, at $0. See the [verification record](#verification-record--zerogpu)
+for what is verified, what is estimated, and what is not tested.
 
 ### How it fits together
 
@@ -634,30 +636,41 @@ source of `spaces` 0.51.3:
 
 ### What that means for KLEOS
 
-All estimates below are **ESTIMATED**: no Hermes request has run on ZeroGPU yet.
-`scripts/zerogpu_smoke.py` replaces them with observed measurements.
+The figures below are **observed ZeroGPU smoke-test measurements** from 10
+calls on 2026-09-23: the nine frozen prompts and one repeat. Answers were 69–128
+tokens long. Ten calls describe this deployment, not the platform in general.
+
+| | Observed |
+| --- | --- |
+| GPU | NVIDIA RTX PRO 6000 Blackwell Server Edition, MIG 2g.48gb slice (sm 12.0), CUDA 12.8 |
+| Peak VRAM | 8.34 GiB of 48 |
+| Generation speed | ~12 tokens/s, cold and warm alike (NF4, float16 compute, batch 1) |
+| Warm call | median 7.9 s end to end; 0.15 s to get the GPU |
+| Cold call (new GPU worker) | median 12.9 s end to end; 4.1 s to get the GPU and move the weights onto it |
+| Slowest call | 34 s end to end, most of it waiting for a GPU |
+| Cold vs warm | 7 of 10 calls got a new worker, even seconds apart. A cold call costs only about 4 s more |
+| GPU time for the run | 73–131 s of the 300-second daily quota: 7–13 s per call |
+| Space start | Package download 2 s, base load and NF4 quantization 41 s, packing 8.54 GB for the GPU workers 3 s, plus container start (not timed) |
 
 **Capacity is small.** If KLEOS calls with one service account's token, every
-KLEOS user shares that account's 5 minutes a day. A Hermes response is roughly
-100–400 tokens. At an estimated 10–30 tokens/s on half a Blackwell with NF4, that
-is about 5–40 s of GPU per call, or on the order of **5–20 generations per day**.
-This host suits a beta or a demo, not production traffic. KLEOS must treat
-Hermes as opportunistic and fall back every time it is not `ready`.
+KLEOS user shares that account's 5 minutes a day. At the observed 7–13 GPU
+seconds per ~100-token answer, and with the admission rule reserving the last
+80 s (below), that is roughly **20–30 answers a day** (ESTIMATED from the
+observed usage). Longer answers cost more: at 12 tokens/s a 512-token answer
+takes about 43 s. This host suits a beta or a demo, not production traffic.
+KLEOS must treat Hermes as opportunistic and fall back every time it is not
+`ready`.
 
 **Requested duration matters.** Each call requests
 `ceil(10 + max_new_tokens / HERMES_GPU_TOKENS_PER_SECOND)` seconds, clamped to
-15–60 s. The throughput default of 12 tokens/s is deliberately T4-conservative:
-a 512-token budget requests 53 s and needs 80 s of quota remaining to be
-admitted. After the smoke test, set `HERMES_GPU_TOKENS_PER_SECOND` to the
-measured warm throughput, so the last minute or so of each day's quota is not
-refused needlessly.
+15–60 s. The default of 12 tokens/s turned out to be the measured speed, so it
+stays: a 512-token budget requests 53 s and needs 80 s of quota remaining to be
+admitted. A lower `HERMES_MAX_OUTPUT_TOKENS` in KLEOS lowers that threshold,
+at the risk of answers being cut off (`finish_reason: "length"`).
 
-| Latency | Estimate | Why |
-| --- | --- | --- |
-| Space start (after a build, a restart or sleep) | 3–10 min | Download the package, read 24.5 GB of shards, quantize 12B parameters to NF4 on the CPU |
-| First call in a new GPU worker (cold) | +5–30 s | Fork a worker and move ~8 GB of quantized weights onto the GPU |
-| Warm call | 5–40 s | Generation only: the worker and its weights are reused while it stays assigned |
-| Waiting for a GPU | up to 60 s | Then `queue_unavailable` |
+After starting, ZeroGPU deletes the base model's cached files from disk ("Cleaned
+22.81GB of tensor files … after packing"). The packed copy is what the GPU
+workers use; a restart restores the files from the Space image.
 
 **When something is unavailable,** KLEOS gets a status and falls back. Never an
 error:
@@ -788,10 +801,14 @@ any screen asks for payment details, stop and report it. Do not proceed.**
    refusal and keeps what it measured.
 9. **Calibrate.** Set `HERMES_GPU_TOKENS_PER_SECOND` (a Space variable, not a
    secret) to the smoke test's warm `median_tokens_per_second`, rounded down.
+   For Hermes v0.0.6 the measured value, 12, is already the default.
 
 ### If the outputs differ: stop
 
-Exact reproduction on ZeroGPU is **uncertain in advance**. Three things differ
+On 2026-09-23 the outputs did **not** differ: 9/9 matched. This section stays
+for any future change to the runtime.
+
+Exact reproduction on ZeroGPU was **uncertain in advance**. Three things differ
 from the T4 that produced the frozen outputs, none of them a model change:
 
 - the GPU architecture (Blackwell, not Turing), so different fp16 matmul and
@@ -826,16 +843,18 @@ instead. The evidence for either is in the smoke output.
 | Auth, validation, bounds, error → status mapping, no content in logs | **VERIFIED** by unit tests with a fake GPU call; ZeroGPU errors use the exact `spaces` 0.51.3 messages |
 | Reference client never raises; sleeping Space → `starting` | **VERIFIED** by unit tests with fake transports |
 | Space files: pins equal Docker's, correct preload, no secrets or data | **VERIFIED** by static tests |
-| Package upload refuses unlisted files and checks remote bytes | **VERIFIED** by unit tests; never run against the Hub |
+| Package upload refuses unlisted files and checks remote bytes | **VERIFIED** by unit tests, and on the Hub on 2026-09-23: 9 files, every size and hash checked remotely |
 | Free-tier facts above | **VERIFIED** against the HF documentation and `spaces` source, 2026-09-23 |
-| Latency, throughput, capacity, VRAM, startup RAM | **ESTIMATED** |
+| Latency, throughput, VRAM | **Observed ZeroGPU smoke-test measurements** (10 calls; table above) |
+| Daily capacity | **ESTIMATED** from the observed GPU time per call |
+| Peak CPU RAM at startup | **Not recorded.** The first deployment did not log the startup report; see the next build's `Hermes ready:` line |
 | The Space builds with these requirements | **VERIFIED** 2026-09-23, second attempt. The first failed on the platform's pydantic cap (see above) |
-| Startup fits the host's CPU RAM | **VERIFIED** in part: the 12B base loaded and quantized to NF4 on the CPU (363 weights in 41 s) without running out of memory. Peak not yet recorded |
+| Startup fits the host's CPU RAM | **VERIFIED**: the 12B base loads and quantizes to NF4 on the CPU (363 weights in 41 s) and the Space starts |
 | NF4 quantization under CUDA emulation | **VERIFIED** on the Space |
-| Attaching the adapter under emulation | **VERIFIED** locally under `spaces` 0.51.3's emulation with a tiny stand-in model, after a fix. The first Space start failed when PEFT read the adapter file straight onto the emulated GPU ("No CUDA GPUs are available"); the Space path now reads it on the CPU. On the Space: **NOT TESTED** yet |
-| Generation on Blackwell | **NOT TESTED** |
-| 9/9 exact match on ZeroGPU | **NOT TESTED** |
-| `X-Hermes-Key` reaches the app through Hugging Face's proxy | **NOT TESTED** |
+| Attaching the adapter under emulation | **VERIFIED** on the Space, after a fix. The first start failed when PEFT read the adapter file straight onto the emulated GPU ("No CUDA GPUs are available"). The Space path now reads it on the CPU, a fix proven first under `spaces` 0.51.3's emulation with a tiny stand-in model |
+| Generation on Blackwell | **VERIFIED** |
+| 9/9 exact match on ZeroGPU | **VERIFIED** 2026-09-23: 9/9 byte-identical to the frozen evaluation, 9/9 prompt token counts equal, 9/9 decisions agree, and a repeated call identical |
+| `X-Hermes-Key` reaches the app through Hugging Face's proxy | **VERIFIED**: every smoke-test call authenticated with it |
 | A free account may run a private ZeroGPU Space | **VERIFIED**: `Tejas-Naik/hermes-v006` |
 
 ---

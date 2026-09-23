@@ -216,6 +216,11 @@ class TestSpaceApp:
         assert "share=True" not in source
         assert "demo.queue(max_size=" in source
 
+    def test_logging_is_on_before_the_model_loads(self, source):
+        # Without it the startup report (load time, memory, versions) is
+        # dropped: the first deployment's log had no `Hermes ready:` line.
+        assert 0 < source.index("configure_logging()") < source.index("load_space_deployment(Path")
+
     def test_it_reads_no_secret_itself(self, source):
         # Secrets reach the shared, tested code through the environment.
         assert "os.environ" not in source and "getenv" not in source
