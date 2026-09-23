@@ -50,6 +50,10 @@ LIGHT_MODULES = [
     "kleos_models.experiments.manifest",
     "kleos_models.experiments.registry",
     "kleos_models.experiments.environment",
+    # Verifying a deployment artifact must work on the host about to serve it,
+    # before any GPU is touched and before the weights are downloaded.
+    "kleos_models.serving",
+    "kleos_models.serving.manifest",
 ]
 
 #: The heavy layer may not import torch at module scope either — it imports
@@ -70,6 +74,11 @@ LAZY_HEAVY_MODULES = [
     "kleos_models.inference",
     "kleos_models.inference.backends",
     "kleos_models.inference.generate",
+    # The serving layer imports torch through the loader and fastapi through
+    # create_app, both inside functions, so the package stays importable on a
+    # machine that only needs to verify an artifact.
+    "kleos_models.serving.loader",
+    "kleos_models.serving.app",
 ]
 
 BLOCKED = ("torch", "transformers", "peft", "bitsandbytes", "accelerate", "datasets")

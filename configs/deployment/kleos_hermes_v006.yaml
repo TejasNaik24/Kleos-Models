@@ -1,0 +1,111 @@
+# ---------------------------------------------------------------------------
+# Serving configuration for KLEOS Hermes v0.0.6.
+#
+# This file is a DECLARATIVE RECORD. This repository trains and evaluates; it
+# does not host. `scripts/build_deployment_package.py` reads these values into a
+# deployment package, and the package's manifest.json is what a server verifies
+# at startup. Nothing here starts a process.
+#
+# THE BASE REVISION MUST MATCH configs/models/mistral_nemo_12b.yaml.
+# A LoRA adapter encodes deltas against specific base weights. Serving a
+# different revision pairs the adapter with weights it never saw, and the
+# failure is silent — no error, just degraded judgment.
+# tests/test_revision_pinning.py asserts the two files agree.
+#
+# The adapter itself is NOT in this repository. It lives on private storage and
+# its path is supplied by the deployment environment.
+#
+# RESEARCH vs DEPLOYMENT
+# The research artifact is frozen and is never edited. Its adapter_config.json
+# records `revision: null` (finding H-F1) and stays that way as historical
+# evidence. The deployment package is a SEPARATE artifact built from it, with
+# the revision pinned. Both are recorded; neither is rewritten to look like the
+# other. See docs/deployment.md.
+# ---------------------------------------------------------------------------
+
+deployment:
+  name: kleos-hermes
+  version: v0.0.6
+  experiment_id: kleos-v006-mistralnemo12b-run1
+
+  base_model: mistralai/Mistral-Nemo-Instruct-2407
+  # Pinned 2026-09-15, trained against 2026-09-17/18; identical to the training
+  # config by construction.
+  revision: 04d8a90549d23fc6bd7f642064003592df51e9b3
+  auto_class: AutoModelForCausalLM
+
+  # Supplied by the environment. Never commit a path into private storage, and
+  # never commit the weights themselves.
+  adapter_path: ${env:KLEOS_ADAPTER_PATH:}
+
+  # The checkpoint best-model selection chose, on validation loss.
+  source_checkpoint: checkpoint-200
+  selection_metric: eval_loss
+  selection_value: 0.04343021661043167
+  adapter_sha256: dc121fa36ce1409ca142e8da61a809f9386e32d0ef09c4214efa271d5b857b32
+  trainable_parameters: 57016320
+
+  dataset_version: kleos-policy-v0.0.6
+  dataset_sha256: c7340f1d9cb31b1d1d7f0ade65d83740159a887f5d6cb4955820065076ffa875
+  split_strategy: format_holdout
+  training_config_hash: b2328857c6026dd7c904a6acadd00ec55a6ce5289bf6210e743615fce6d8d3e8
+
+  # UNLIKE the Ministral deployment, the tokenizer is packaged rather than
+  # resolved from the base repository.
+  #
+  # Reason: transformers>=5 can patch the Mistral pre-tokenizer Split regex via
+  # `fix_mistral_regex`, which changes how roughly 1% of tokens split. v0.0.6
+  # trained and evaluated with the flag absent, i.e. False. Taking the tokenizer
+  # from the Hub would leave that behaviour at the mercy of a library default,
+  # and a change would be silent. Packaging the exact files and stating the flag
+  # removes both risks. See docs/deployment.md.
+  tokenizer:
+    source: frozen_package
+    fix_mistral_regex: false
+    padding_side: right
+    pad_token: "</s>"
+
+  quantization:
+    # Matches training and evaluation, so the served model is the model that was
+    # measured. Serving unquantized is valid and will differ slightly; that is a
+    # change worth measuring rather than assuming.
+    mode: nf4
+    double_quant: true
+    compute_dtype: auto
+
+  generation:
+    # Greedy, matching the conditions the reported scores came from. Sampling
+    # will not reproduce those numbers.
+    temperature: 0.0
+    top_p: 1.0
+    do_sample: false
+    max_new_tokens: 512
+    repetition_penalty: 1.0
+
+  limits:
+    # Bounds the service enforces. A request may lower max_new_tokens but never
+    # raise it. max_input_chars is generous against the dataset (the longest
+    # v0.0.6 example is ~440 tokens) and exists to bound memory, not to shape
+    # behaviour.
+    max_new_tokens: 512
+    max_input_chars: 24000
+    max_messages: 64
+    request_timeout_seconds: 120
+
+  # KNOWN LIMITATIONS — measured on the held-out split, not hypothetical.
+  # See docs/experiments/kleos-v006-mistralnemo12b-run1-report.md.
+  notes:
+    - "Outputs prose/bullets, NOT JSON. format_valid was 0.0000 on all 349
+       held-out examples, in both arms. Any consumer expecting structured output
+       must parse prose — kleos_models.evaluation.graders has tested extractors."
+    - "Abstains by scenario family, not by evidence. On the 78 held-out cases
+       where the reference declines, it declined 50: all of the two families
+       that always decline in training, and none of the 28 where declining
+       depends on the evidence. It never wrongly abstains, so the error is
+       one-sided overconfidence."
+    - "Unstable under rephrasing: 10 of 15 scenario groups changed decision
+       under a logically irrelevant perturbation (correct agreement 0.333)."
+    - "Fabricated a citation in 98 of 349 responses under text-level heuristics."
+    - "Base model is Apache-2.0, so unlike the Ministral adapter this one may be
+       deployed commercially. Attribution and a statement of modification are
+       required when redistributing a derivative."

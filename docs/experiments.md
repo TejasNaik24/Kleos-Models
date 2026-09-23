@@ -23,23 +23,25 @@ becoming a prompt to go looking for a different metric.
 
 ## Status
 
-**One run completed: `kleos-v006-ministral8b-run1` (2026-09-15).** Ministral-8B
-QLoRA on `kleos-policy-v0.0.6`, evaluated against the prompt-engineered
-orchestration baseline on the 349-example held-out split.
+**Two runs completed**, both QLoRA on `kleos-policy-v0.0.6`, both evaluated
+against the prompt-engineered orchestration baseline on the same 349-example
+held-out split:
 
-H1 is supported, with deviations recorded below. H3 is supported directionally
-but the absolute consistency number stays poor. H2 is **not measurable** on this
-benchmark. H4–H7 remain untested.
+- `kleos-v006-ministral8b-run1` (2026-09-15) — Ministral-8B. Research only: the
+  base is under the Mistral Research Licence.
+- `kleos-v006-mistralnemo12b-run1` (2026-09-22) — **KLEOS Hermes**, on
+  Apache-2.0 Mistral-Nemo-12B.
+
+H1 is supported in both, with deviations recorded below. H3 is supported
+directionally in both, but the absolute consistency number stays poor — and is
+identical across the two base models. H2 is **not measurable** on this benchmark.
+H4–H7 remain untested; H7 is half-measured in each run.
 
 Read the Deviations log before quoting any number from here: the run departed
 from the pre-registered protocol in three ways, and 22% of the test label space
 turned out to be unlearnable from the training split.
 
-### Prepared, not yet run — KLEOS Hermes
-
-**`kleos-v006-mistralnemo12b-run1` is configured but has NOT been trained.** No
-weights downloaded, no adapter, no metrics, no results. Nothing below may be
-cited as an outcome.
+### KLEOS Hermes — `kleos-v006-mistralnemo12b-run1`, completed 2026-09-22
 
 | | |
 | --- | --- |
@@ -49,6 +51,8 @@ cited as an outcome.
 | Licence | **Apache-2.0, ungated** |
 | Dataset | `kleos-policy-v0.0.6`, unchanged and read-only |
 | Config | [`configs/training/kleos_hermes_v006.yaml`](../configs/training/kleos_hermes_v006.yaml) |
+| Result | `arm1_base_orchestrated` **0.4755 → `arm2_finetuned` 0.8051**, +0.3295 (95% CI 0.3068–0.3521); 7/7 tasks significant at p < 0.001, none regressed |
+| Full report | [experiments/kleos-v006-mistralnemo12b-run1-report.md](experiments/kleos-v006-mistralnemo12b-run1-report.md) |
 
 Hermes exists because Ministral-8B is under the Mistral Research Licence, which
 is non-commercial. That does not invalidate `kleos-v006-ministral8b-run1` — it
@@ -56,12 +60,28 @@ remains sound research — but it cannot back a product-facing model. Mistral Ne
 is Apache-2.0 and resolves to the same `MistralDenseAdapter` with no code
 changes.
 
-When it runs, it is a **separate experiment**, not a re-run: different base,
-different scale (12B vs 8B). Its numbers are **not** comparable to the Ministral
-run, and `assert_comparable` will block pooling them. The valid comparison is
-within the Hermes run — `arm1_base_orchestrated` vs `arm2_finetuned` on the same
-benchmark. The open question it answers is whether the KLEOS behavioural signal
-transfers across Mistral architectures.
+It is a **separate experiment**, not a re-run: different base, different scale
+(12B vs 8B). The valid comparison is within the Hermes run —
+`arm1_base_orchestrated` vs `arm2_finetuned` on the same benchmark — and that is
+the result above. Set beside the Ministral run it is descriptive only: scale,
+architecture and pretraining are confounded, so no difference between the two may
+be attributed to scale. *(Correction: this section previously said
+`assert_comparable` would block pooling the two runs. It does not — it compares
+dataset, task and model family, and both runs are family `mistral`, so it passes
+them without a warning. Recorded as finding H-F6 in the report.)*
+
+Read beside Ministral, the answer to the open question is yes: the behavioural
+signal transferred across Mistral base checkpoints, landing within 0.004 of
+Ministral on both arms. So did every limitation — consistency, the abstention
+shortcut and the output-format failure reproduce exactly (see H3).
+
+**The research artifact is frozen.** Hermes was subsequently prepared for
+serving, which produced a *separate* deployment artifact: a package with the base
+revision pinned, the tokenizer files frozen and hashed, and a manifest that a
+loader verifies before answering any request. The research artifact was not
+edited to match it — its `adapter_config.json` still records `revision: null`,
+and the deployment package records both the pin and that original absence. No
+number above is affected. See [deployment.md](deployment.md).
 
 ---
 
@@ -77,7 +97,7 @@ transfers across Mistral architectures.
 | **Split** | `entity_holdout` — generalization to unseen entities |
 | **Decision rule** | Improvement counts only if the paired bootstrap 95% CI excludes zero |
 | **Reported per task** | Yes. No blended aggregate. |
-| **Status** | **SUPPORTED** — `kleos-v006-ministral8b-run1`, 2026-09-15 (see deviations D1, D2) |
+| **Status** | **SUPPORTED** — `kleos-v006-ministral8b-run1`, 2026-09-15 (see deviations D1, D2); **replicated** by `kleos-v006-mistralnemo12b-run1` (KLEOS Hermes), 2026-09-22 |
 
 **Prediction:** unknown. A negative result is a genuinely likely outcome and is
 publishable.
@@ -137,6 +157,33 @@ Superseded artifacts are retained: `report_v006/` (original) alongside
 `report_v006_rescored/`, and `eval_arm{1,2}_full.json` alongside
 `…rescored.json`.
 
+### Replication — KLEOS Hermes, 2026-09-22
+
+`kleos-v006-mistralnemo12b-run1` repeated the test on Mistral-Nemo-12B with the
+same data, benchmark, graders, decoding and hyperparameters, graded with the
+corrected nDCG from the start.
+
+| Task | arm1 | arm2 | Δ | |
+| --- | ---: | ---: | ---: | --- |
+| workspace_reasoning | 0.5190 | 0.9512 | +0.4323 | improved (p<0.001) |
+| context_prioritization | 0.5935 | 1.0000 | +0.4065 | improved (p<0.001), n=8 |
+| mission_control_briefing | 0.5681 | 0.9716 | +0.4035 | improved (p<0.001) |
+| memory_conflict_resolution | 0.4756 | 0.8553 | +0.3798 | improved (p<0.001) |
+| tool_routing | 0.3929 | 0.6679 | +0.2750 | improved (p<0.001) |
+| recommendation_generation | 0.2974 | 0.4946 | +0.1971 | improved (p<0.001) |
+| notification_prioritization | 0.6201 | 0.8105 | +0.1904 | improved (p<0.001) |
+
+Overall **0.4755 → 0.8051**, a gap of **+0.3295** (95% CI 0.3068–0.3521). **H1 is
+supported again: 7/7 improved, 7/7 significant, none regressed.** `compare.py`
+prints these p-values as `p=0.0`; with 2,000 two-sided resamples that means no
+resample crossed zero, i.e. p < 0.001. Faithfulness 0.7513 → 0.8531, citation
+precision 0.5938 → 0.7192, fabricated citations 147 → 98 responses, parse
+failures 0 → 0.
+
+Beside Ministral this is descriptive, not a tested comparison: both arms land
+within 0.004 of the Ministral figures on a different base model. Details, hashes
+and findings: [experiments/kleos-v006-mistralnemo12b-run1-report.md](experiments/kleos-v006-mistralnemo12b-run1-report.md).
+
 ---
 
 ## H2 — Does any gain generalize out of distribution?
@@ -186,7 +233,7 @@ grader had to be made format-agnostic first (D4).
 | **Primary metric** | `correct_agreement_rate` (agrees **and** is right) |
 | **Secondary** | `agreement_rate`, flips attributed per perturbation kind |
 | **Decision rule** | Consistency improves if the delta CI excludes zero |
-| **Status** | **IMPROVED, STILL POOR** — `kleos-v006-ministral8b-run1`, 2026-09-15 |
+| **Status** | **IMPROVED, STILL POOR** — `kleos-v006-ministral8b-run1`, 2026-09-15; reproduced exactly by `kleos-v006-mistralnemo12b-run1`, 2026-09-22 |
 
 Reported as two numbers on purpose. A model that is *consistently wrong* scores
 1.0 on agreement and 0.0 on correct agreement — collapsing them would hide that.
@@ -228,6 +275,22 @@ error is one-sided overconfidence.
 That is the clearest evidence in this run that what transferred is a family-level
 shortcut rather than the intended policy, and it is the finding most worth acting
 on in the next dataset revision.
+
+**Replication — KLEOS Hermes, 2026-09-22.** On Mistral-Nemo-12B every number above
+reproduced exactly:
+
+| Metric | Hermes arm1 | Hermes arm2 |
+| --- | --- | --- |
+| `agreement_rate` | 0.133 | 0.333 |
+| `correct_agreement_rate` | **0.000** | 0.333 |
+| Groups flipping under an irrelevant perturbation | 13 / 15 | 10 / 15 |
+
+The abstention table is identical case for case: 20/20 and 30/30 on the two
+unconditional families, 0/25 and 0/3 on the two conditional ones, 271/271 where
+committing is correct. A base with 50% more parameters did not move consistency or
+abstention at all. That makes it very likely the shortcut lives in the v0.0.6 data
+and recipe rather than in the base model — and that the fix is a dataset revision,
+not a larger model. `format_valid` was again 0.0000 in both arms.
 
 ---
 
@@ -272,6 +335,13 @@ must be reported alongside any result.
 Feasibility (measured, `max_seq_length` 1024): Ministral-8B needs ~8.1GB and runs
 on a free T4; `mistral_small_3_2` needs ~16.5GB and does **not** fit a 16GB T4.
 
+**Exploratory, not a test of H5 (2026-09-22).** The Hermes run puts a 12B Mistral
+beside the 8B one on identical data and protocol: fine-tuning gaps of +0.3295 and
++0.3271, with identical consistency and abstention. These are not H5's
+pre-registered arms, and the two bases differ in architecture and pretraining as
+well as size, so this observation cannot support or refute H5. It is recorded so
+it is not later mistaken for one.
+
 ---
 
 ## H6 — Does KLEOS policy learning transfer across model families?
@@ -308,7 +378,7 @@ oversight, and no cross-family claim may be made until it is taken.
 | --- | --- |
 | **Arms** | all four: `arm0`, `arm1`, `arm2`, `arm3` |
 | **Analysis** | (arm3 − arm2) vs (arm1 − arm0) |
-| **Status** | **Partially measured** — `arm1` and `arm2` complete on n=349 (2026-09-15); `arm0` and `arm3` outstanding |
+| **Status** | **Partially measured** — `arm1` and `arm2` complete on n=349 for Ministral (2026-09-15) and for Hermes (2026-09-22); `arm0` and `arm3` outstanding in both |
 
 `arm1_base_orchestrated` = 0.4744 and `arm2_finetuned` = 0.8015 are already on
 record from `kleos-v006-ministral8b-run1`. Completing this needs `arm0_base` and
@@ -364,6 +434,9 @@ Append one row per completed experiment. **Include failed and negative runs.**
 | 2026-09-15 | H1 | Ministral-8B-Instruct-2410 (QLoRA r=16) | kleos-policy-v0.0.6 (`3cc9a744…`) | `3fbb3f90ed9662ee` | **Supported.** 7/7 tasks improved at p<0.05, none regressed. Overall 0.4744 → 0.8015 (corrected; originally reported 0.5231 → 0.8015 with 6/7 significant, before the F1 nDCG re-grade). | `outputs/report_v006_rescored/summary.md` (original: `report_v006/`) |
 | 2026-09-15 | H2 | Ministral-8B-Instruct-2410 (QLoRA r=16) | kleos-policy-v0.0.6 (`3cc9a744…`) | `3fbb3f90ed9662ee` | **Not measurable.** Benchmark is 100% OOD; no in-distribution population, so no gap. | same run |
 | 2026-09-15 | H3 | Ministral-8B-Instruct-2410 (QLoRA r=16) | kleos-policy-v0.0.6 (`3cc9a744…`) | `3fbb3f90ed9662ee` | **Improved, still poor.** correct_agreement 0.000 → 0.333; 10/15 groups still flip. Abstention is a family-level shortcut. | same run |
+| 2026-09-22 | H1 | Mistral-Nemo-Instruct-2407 (QLoRA r=16) — **KLEOS Hermes** | kleos-policy-v0.0.6 (`3cc9a744…`) | `b2328857c6026dd7` | **Supported (replicated).** 7/7 tasks improved at p<0.001, none regressed. Overall 0.4755 → 0.8051 (+0.3295, 95% CI 0.3068–0.3521). | `outputs/kleos-v006-mistralnemo12b-run1/report_hermes_v006/summary.md`; [report](experiments/kleos-v006-mistralnemo12b-run1-report.md) |
+| 2026-09-22 | H2 | Mistral-Nemo-Instruct-2407 (QLoRA r=16) — **KLEOS Hermes** | kleos-policy-v0.0.6 (`3cc9a744…`) | `b2328857c6026dd7` | **Not measurable.** Same benchmark, 100% OOD. | same run |
+| 2026-09-22 | H3 | Mistral-Nemo-Instruct-2407 (QLoRA r=16) — **KLEOS Hermes** | kleos-policy-v0.0.6 (`3cc9a744…`) | `b2328857c6026dd7` | **Improved, still poor — identical to Ministral.** correct_agreement 0.000 → 0.333; 10/15 groups still flip; abstention table identical case for case. | same run |
 
 Run provenance: experiment id `kleos-v006-ministral8b-run1`, seed 42, 3 epochs
 (309 steps, effective batch 8, `max_seq_length` 1024), best checkpoint selected
@@ -379,8 +452,22 @@ H1 numbers against the stored evaluation JSONs are recorded in
 Finding **F1 from that audit is now resolved**: nDCG is bounded, both arms were
 re-graded offline, and the corrected result is the one reported above. **F3 is
 resolved for future runs** — see "Base-model revision" below; the historical run
-remains unpinned and is not backfilled. **F2** (tokenizer packaging) remains
-open.
+remains unpinned and is not backfilled. **F2** (tokenizer packaging) is **also
+resolved** — commit `f759aac` made the exclusion explicit by name rather than an
+accident of the scan cap; the marker in the audit was added late, on 2026-09-22.
+
+Hermes run provenance: experiment id `kleos-v006-mistralnemo12b-run1`, seed 42,
+3 epochs (309 steps, effective batch 8, `max_seq_length` 1024), base pinned to
+`04d8a90549d23fc6bd7f642064003592df51e9b3`, git `4cd76c42` (clean). Best
+checkpoint selected on validation loss at **step 200 / epoch 1.95** (`eval_loss`
+0.04343; 0.04515 by the end of epoch 3) — the same step as Ministral. The exported
+adapter is byte-identical to `checkpoint-200` (SHA-256 `dc121fa3…5b857b32`).
+Training took 11,396 s across two sessions with an 18-hour interruption (D8);
+peak VRAM 13.09 GB of 14.56 GB, no OOM, 4 fp16-skipped optimizer steps. Tesla T4,
+fp16, NF4 double-quant, `paged_adamw_8bit`; same library versions as above. Same
+benchmark (`a11ffad75f5147f9…`), rebuilt and verified in each evaluation session.
+Hashes, the full training record and ten findings (H-F1–H-F10) are in
+[experiments/kleos-v006-mistralnemo12b-run1-report.md](experiments/kleos-v006-mistralnemo12b-run1-report.md).
 
 ## Deviations log
 
@@ -396,6 +483,7 @@ happens.
 | 2026-09-15 | **D5.** `ConversationFormatter` now folds the system prompt into the first user turn when the chat template drops it. | Mistral's template injects the system message into the *last* message, so during training (which ends on the assistant turn) the system prompt was silently discarded, while evaluation kept it. Every example would have trained without its policy instructions. Fixed before the run; detected by probing the live template rather than branching on model family. |
 | 2026-09-15 | **D6.** A composite `kleos_policy` grader was added; it was not in the original protocol. | The benchmark needs ranking, deciding factor and abstention scored together, with `format_valid` reported **separately and excluded from the score**. Without that separation a format failure is indistinguishable from a judgment failure — which, given D2, is the difference between a real result and a wrong one. |
 | 2026-09-15 | **D7.** The v0.0.6 run used `revision: main` for the base model. The commit it resolved to is **not recoverable** from the preserved artifacts. | Nothing in the pipeline resolved or recorded a Hub commit sha — every code path echoes back the requested pointer. The Colab HF cache that held it was wiped. See "Base-model revision" below. Future runs are pinned; the historical record is **not** backfilled. |
+| 2026-09-18 | **D8.** Hermes training was interrupted after step 250 and resumed from `checkpoint-250` eighteen hours later, on a different T4 instance. Steps 251–309 ran in the second session. | The Colab runtime died mid-save; `validate_checkpoint` rejected the half-written `checkpoint-300`. Resume state was verified faithful: gradient-check loss bit-identical across sessions, scheduler lag carried over, and the two independent evaluations of step 300 agree to 1.4 × 10⁻⁵. **No effect on the result:** the selected adapter (`checkpoint-200`) was written before the interruption. D1–D6 apply to the Hermes run unchanged; D7 does not (its base is pinned). |
 
 ---
 

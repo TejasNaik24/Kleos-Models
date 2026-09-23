@@ -311,6 +311,60 @@ def supports_field(name: str) -> bool:
     return name in training_argument_names()
 
 
+#: First transformers version that can patch the Mistral pre-tokenizer regex.
+#: Before this, no patch exists, so the behaviour is unconditionally the
+#: unpatched one — equivalent to ``fix_mistral_regex=False``.
+_MISTRAL_REGEX_FLAG_SINCE = (5, 0, 0)
+
+
+def supports_mistral_regex_flag() -> bool:
+    """Whether ``from_pretrained`` understands ``fix_mistral_regex``.
+
+    The flag is consumed from ``**kwargs``, so it cannot be discovered by
+    inspecting a signature; the version is the only reliable signal.
+    """
+    version = transformers_version()
+    return version is not None and version >= _MISTRAL_REGEX_FLAG_SINCE
+
+
+def mistral_regex_kwarg(fix_mistral_regex: bool) -> dict[str, Any]:
+    """Return the tokenizer keyword that pins Mistral regex behaviour.
+
+    transformers>=5 can replace the Mistral pre-tokenizer ``Split`` pattern with
+    the one ``mistral-common`` uses. The flag defaults to ``False``, and the
+    difference is small but real (it changes how roughly 1% of tokens split,
+    e.g. ``'The'`` becoming ``["'", "T", "he", "'"]`` rather than
+    ``["'", "The", "'"]``).
+
+    Small is not the same as safe: a served model that tokenizes differently
+    from the model that was trained is train/serve skew, and it fails silently.
+    So serving states the value rather than inheriting a default.
+
+    On versions predating the flag there is nothing to pass — the behaviour is
+    already the unpatched one. Asking for ``True`` there is refused rather than
+    silently downgraded, because the caller would get behaviour it did not ask
+    for.
+    """
+    if supports_mistral_regex_flag():
+        return {"fix_mistral_regex": fix_mistral_regex}
+
+    if fix_mistral_regex:
+        raise ConfigError(
+            "fix_mistral_regex=True was requested, but the installed transformers "
+            f"({package_version('transformers')}) predates the flag.",
+            suggestions=[
+                "Upgrade to transformers>=5 to use the patched Mistral regex.",
+                "Or pin fix_mistral_regex=False, which is what this version does.",
+            ],
+        )
+    logger.debug(
+        "transformers %s predates fix_mistral_regex; the unpatched regex is already "
+        "in effect, so nothing is passed.",
+        package_version("transformers"),
+    )
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # Environment summary
 # ---------------------------------------------------------------------------

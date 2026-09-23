@@ -25,9 +25,21 @@ PINNED_SHA = "2f494a194c5b980dfb9772cb92d26cbb671fce5a"
 MINISTRAL_CONFIG = CONFIGS_DIR / "models" / "ministral_8b.yaml"
 DEPLOYMENT_CONFIG = CONFIGS_DIR / "deployment" / "kleos_v006_ministral8b.yaml"
 
+#: The base revision KLEOS Hermes trains and serves against, verified 2026-09-15.
+HERMES_PINNED_SHA = "04d8a90549d23fc6bd7f642064003592df51e9b3"
+#: The frozen Hermes adapter. Byte-identical to checkpoint-200 of the run.
+HERMES_ADAPTER_SHA = "dc121fa36ce1409ca142e8da61a809f9386e32d0ef09c4214efa271d5b857b32"
+
+NEMO_CONFIG = CONFIGS_DIR / "models" / "mistral_nemo_12b.yaml"
+HERMES_DEPLOYMENT_CONFIG = CONFIGS_DIR / "deployment" / "kleos_hermes_v006.yaml"
+
 
 def _deployment() -> dict:
     return yaml.safe_load(DEPLOYMENT_CONFIG.read_text(encoding="utf-8"))["deployment"]
+
+
+def _hermes() -> dict:
+    return yaml.safe_load(HERMES_DEPLOYMENT_CONFIG.read_text(encoding="utf-8"))["deployment"]
 
 
 class TestIsPinnedRevision:
@@ -94,8 +106,87 @@ class TestDeploymentMatchesTraining:
         assert _deployment()["adapter_path"].startswith("${env:")
 
 
+class TestHermesDeploymentMatchesTraining:
+    """KLEOS Hermes v0.0.6, the first KLEOS model prepared for serving.
+
+    Its research artifact records ``revision: null`` in adapter_config.json
+    (finding H-F1) and is frozen that way as historical evidence. The deployment
+    path must therefore carry the pin itself, and it must be the same pin the
+    model was trained against.
+    """
+
+    def test_hermes_deployment_config_exists(self):
+        assert HERMES_DEPLOYMENT_CONFIG.exists()
+
+    def test_hermes_revision_matches_the_training_config(self):
+        training = load_model_config(NEMO_CONFIG)
+        assert _hermes()["revision"] == training.revision, (
+            "The Hermes serving pin and training pin have drifted apart. An "
+            "adapter served against different base weights than it was trained "
+            "on degrades silently."
+        )
+
+    def test_hermes_base_model_matches_the_training_config(self):
+        assert _hermes()["base_model"] == load_model_config(NEMO_CONFIG).base_model
+
+    def test_hermes_revision_is_the_verified_sha(self):
+        assert _hermes()["revision"] == HERMES_PINNED_SHA
+        assert is_pinned_revision(_hermes()["revision"])
+
+    def test_hermes_ships_no_adapter_weights_path_by_default(self):
+        assert _hermes()["adapter_path"].startswith("${env:")
+
+    def test_hermes_records_the_frozen_adapter_identity(self):
+        deployment = _hermes()
+        assert deployment["adapter_sha256"] == HERMES_ADAPTER_SHA
+        assert deployment["source_checkpoint"] == "checkpoint-200"
+        assert deployment["trainable_parameters"] == 57_016_320
+
+    def test_hermes_records_the_sealed_dataset(self):
+        deployment = _hermes()
+        assert deployment["dataset_version"] == "kleos-policy-v0.0.6"
+        assert len(deployment["dataset_sha256"]) == 64
+
+    def test_hermes_decoding_matches_the_evaluated_conditions(self):
+        generation = _hermes()["generation"]
+        assert generation["do_sample"] is False
+        assert generation["temperature"] == 0.0
+
+    def test_hermes_states_the_tokenizer_contract_explicitly(self):
+        tokenizer = _hermes()["tokenizer"]
+        # Not absent, not inherited from a library default: stated. v0.0.6
+        # trained and evaluated with the Mistral regex unpatched.
+        assert tokenizer["fix_mistral_regex"] is False
+        assert tokenizer["source"] == "frozen_package"
+
+    def test_hermes_carries_its_measured_limitations(self):
+        notes = " ".join(_hermes()["notes"]).lower()
+        for expected in ("json", "abstain", "rephrasing"):
+            assert expected in notes, (
+                "A serving record must carry the limitations that were measured, "
+                "so a consumer cannot discover them in production."
+            )
+
+
 class TestOtherConfigsDidNotInheritTheSha:
     """The verified sha belongs to ONE checkpoint and must not be copy-pasted."""
+
+    def test_no_model_config_mixes_up_the_two_shas(self):
+        for path, own in (
+            (MINISTRAL_CONFIG, PINNED_SHA),
+            (NEMO_CONFIG, HERMES_PINNED_SHA),
+        ):
+            assert load_model_config(path).revision == own
+
+    def test_no_other_model_config_uses_the_hermes_sha(self):
+        for path in sorted((CONFIGS_DIR / "models").glob("*.yaml")):
+            if path.name == "mistral_nemo_12b.yaml":
+                continue
+            assert load_model_config(path).revision != HERMES_PINNED_SHA, (
+                f"{path.name} carries Mistral-Nemo's commit sha. That sha "
+                "identifies a different checkpoint and would load the wrong "
+                "weights or fail outright."
+            )
 
     def test_no_other_model_config_uses_the_ministral_sha(self):
         for path in sorted((CONFIGS_DIR / "models").glob("*.yaml")):

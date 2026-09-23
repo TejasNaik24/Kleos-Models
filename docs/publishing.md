@@ -156,6 +156,7 @@ To resolve a new pin:
 
 ```python
 from huggingface_hub import model_info
+
 model_info("mistralai/Ministral-8B-Instruct-2410", token=...).sha
 ```
 
