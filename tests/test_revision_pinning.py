@@ -159,6 +159,15 @@ class TestHermesDeploymentMatchesTraining:
         assert tokenizer["fix_mistral_regex"] is False
         assert tokenizer["source"] == "frozen_package"
 
+    def test_hermes_pins_the_compute_dtype_it_was_evaluated_in(self):
+        # v0.0.6 trained and evaluated on a T4, where `auto` meant float16. On any
+        # newer GPU (ZeroGPU's Blackwell included) `auto` means bfloat16, so the
+        # serving record must say float16 outright.
+        runtime = _hermes()["runtime"]
+        assert runtime["compute_dtype"] == "float16"
+        assert runtime["quantization_mode"] == "nf4"
+        assert runtime["double_quant"] is True
+
     def test_hermes_carries_its_measured_limitations(self):
         notes = " ".join(_hermes()["notes"]).lower()
         for expected in ("json", "abstain", "rephrasing"):

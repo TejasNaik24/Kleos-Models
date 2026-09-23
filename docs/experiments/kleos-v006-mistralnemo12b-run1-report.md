@@ -594,10 +594,18 @@ unchanged.** The deployment work below happened separately, on a *copy*; see
    records both the pin and the original absence, and the loader refuses to serve
    an unpinned base.
 
-3. **Abstention and consistency** are not fixed by a larger base, and are not
+3. **Exact-artifact reproduction — VERIFIED, 2026-09-23.** The deployment
+   package, loaded through the serving path on a Colab T4 with the base revision
+   confirmed against the Hub, reproduced the frozen evaluation's responses **9/9,
+   byte for byte**, across all seven task families plus two should-decline cases.
+   This is a reproducibility check on the artifact, not a new score; the numbers
+   in this report stand as they are. Details in
+   [../deployment.md](../deployment.md#verification-record--hermes-v006).
+
+4. **Abstention and consistency** are not fixed by a larger base, and are not
    addressed by any of the above. They need the next dataset revision:
    conditional-abstention families with a learnable evidence cue, and the 78
    abstention labels present in training (D3).
 
-4. **Findings H-F2 through H-F10 remain open.** They are tooling and
+5. **Findings H-F2 through H-F10 remain open.** They are tooling and
    record-keeping issues; none alters a reported number, and none is fixed here.

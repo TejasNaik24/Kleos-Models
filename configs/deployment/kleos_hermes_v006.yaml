@@ -64,14 +64,31 @@ deployment:
     fix_mistral_regex: false
     padding_side: right
     pad_token: "</s>"
+    # The frozen files, as recorded from the research run (report §10). The
+    # package build copies them unchanged, and the serving container refuses a
+    # package whose tokenizer differs from these — so tokenization is pinned by
+    # content, not just by the flag.
+    files_sha256:
+      tokenizer.json: b0240ce510f08e6c2041724e9043e33be9d251d1e4a4d94eb68cd47b954b61d2
+      tokenizer_config.json: a3cd297b36e6a26dae570290548b9da0d5f9ee15363465cfea1056e4d9a78faa
+      chat_template.jinja: e4676cb56dffea7782fd3e2b577cfaf1e123537e6ef49b3ec7caa6c095c62272
 
-  quantization:
-    # Matches training and evaluation, so the served model is the model that was
-    # measured. Serving unquantized is valid and will differ slightly; that is a
-    # change worth measuring rather than assuming.
-    mode: nf4
+  # How the base is instantiated. Part of the model's identity: the package
+  # records it, the packaged model config must match it, and a server refuses
+  # a package that differs. Matches training and evaluation.
+  runtime:
+    quantization_mode: nf4
     double_quant: true
-    compute_dtype: auto
+    # float16, stated — NOT `auto`. v0.0.6 was trained and evaluated on a T4
+    # (compute capability 7.5), where `auto` resolved to float16; the research
+    # manifest records `resolved_compute_dtype: float16`. On any GPU with
+    # compute capability >= 8.0 — L4, A100, H100, the RTX Pro 6000 behind
+    # ZeroGPU — `auto` resolves to bfloat16, so the served model would compute
+    # differently from the one that was measured, with no error raised.
+    # Pinning float16 does not change Hermes; it stops the hardware changing it.
+    compute_dtype: float16
+    attn_implementation: sdpa
+    max_seq_length: 1024
 
   generation:
     # Greedy, matching the conditions the reported scores came from. Sampling

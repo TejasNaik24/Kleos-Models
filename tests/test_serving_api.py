@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from tests.test_deployment_manifest import RUNTIME
 
 from kleos_models.serving.app import (
     GenerateMessage,
@@ -61,6 +62,7 @@ def build_manifest(**overrides: Any) -> DeploymentManifest:
         ),
         "peft": PeftRecord(r=16, lora_alpha=32, lora_dropout=0.05),
         "tokenizer": TokenizerContract(fix_mistral_regex=False),
+        "runtime": RUNTIME,
         "dataset": DatasetRecord(version="kleos-policy-v0.0.6", sha256="c" * 64),
         "training_config_hash": "b" * 64,
         "limits": ServingLimits(

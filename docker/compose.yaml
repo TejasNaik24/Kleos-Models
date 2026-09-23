@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# One Hermes replica on one NVIDIA GPU. An example of the run contract, not a
+# production topology: put a TLS-terminating proxy in front, and keep the
+# published port on loopback or a private network.
+#
+#   cd docker
+#   mkdir -p secrets && umask 077
+#   openssl rand -hex 32 > secrets/hermes_api_key      # share with the KLEOS backend
+#   printf '%s' "$HF_TOKEN" > secrets/hf_token         # optional; faster first download
+#   chmod 0444 secrets/*                               # readable by the container's uid 10001
+#   HERMES_PACKAGE_HOST_DIR=/srv/kleos/hermes-v0.0.6 docker compose up -d
+#
+# docker/secrets/ and docker/hermes.env are gitignored. Never commit either.
+# Requires the NVIDIA Container Toolkit on the host.
+# ---------------------------------------------------------------------------
+
+name: kleos-hermes
+
+services:
+  hermes:
+    image: kleos-hermes:v0.0.6
+    build:
+      context: ..
+      dockerfile: docker/hermes.Dockerfile
+    init: true
+    restart: unless-stopped
+    ports:
+      # Loopback only. The service authenticates every request, but it is not
+      # meant to face the internet without TLS in front of it.
+      - "127.0.0.1:8000:8000"
+    environment:
+      HERMES_API_KEY_FILE: /run/secrets/hermes_api_key
+      HF_TOKEN_FILE: /run/secrets/hf_token
+    secrets:
+      - hermes_api_key
+      - hf_token
+    volumes:
+      # Persistent model cache: the ~24.5 GB base download happens once.
+      - hf-cache:/cache/huggingface
+      # The frozen deployment package, read-only. Required.
+      - ${HERMES_PACKAGE_HOST_DIR:?set HERMES_PACKAGE_HOST_DIR to the built package}:/models/hermes-v0.0.6:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+secrets:
+  hermes_api_key:
+    file: ./secrets/hermes_api_key
+  hf_token:
+    file: ./secrets/hf_token
+
+volumes:
+  hf-cache:

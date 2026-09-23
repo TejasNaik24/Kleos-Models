@@ -201,6 +201,7 @@ make reporting a favourable subset effortless and invisible.
 | [evaluation.md](evaluation.md) | Metrics, graders, consistency, OOD |
 | [experiments.md](experiments.md) | Pre-registered hypotheses |
 | [colab.md](colab.md) | The canonical training workflow |
-| [deployment.md](deployment.md) | Frozen artifacts, the serving contract, the inference API |
+| [deployment.md](deployment.md) | Frozen artifacts, the serving contract, the inference API, the container, free ZeroGPU hosting |
+| [kleos-hermes-integration.md](kleos-hermes-integration.md) | For KLEOS: configuration, the request/response and status contract, fallback, frontend states |
 | [privacy.md](privacy.md) | Public/private boundary |
 | [troubleshooting.md](troubleshooting.md) | OOM, gated repos, version issues |

@@ -56,6 +56,12 @@ MUST_BE_IGNORED = [
     "wandb/run-abc/logs",
     "credentials.json",
     "key.pem",
+    # Container secrets and deployment packages (the model-serving side).
+    "docker/hermes.env",
+    "docker/secrets/hermes_api_key",
+    "docker/secrets/hf_token",
+    "packages/hermes-v0.0.6/adapter/adapter_model.safetensors",
+    "packages/hermes-v0.0.6/tokenizer/tokenizer.json",
 ]
 
 #: Paths that must stay tracked. These contain no real data: the schema
@@ -73,6 +79,12 @@ MUST_BE_TRACKED = [
     "data/processed/.gitkeep",
     "outputs/.gitkeep",
     ".env.example",
+    # The committed container templates: placeholders only, no values.
+    "docker/hermes.env.example",
+    "docker/hermes.Dockerfile",
+    "docker/compose.yaml",
+    "docker/requirements-hermes.txt",
+    ".dockerignore",
     "src/kleos_models/config.py",
     "configs/training/qlora_small.yaml",
     "scripts/train.py",

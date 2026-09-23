@@ -81,7 +81,10 @@ revision pinned, the tokenizer files frozen and hashed, and a manifest that a
 loader verifies before answering any request. The research artifact was not
 edited to match it — its `adapter_config.json` still records `revision: null`,
 and the deployment package records both the pin and that original absence. No
-number above is affected. See [deployment.md](deployment.md).
+number above is affected. On 2026-09-23 the package, loaded through the serving
+path, reproduced the frozen evaluation's responses 9/9 byte for byte — a
+reproducibility check on the artifact, not a new score. See
+[deployment.md](deployment.md).
 
 ---
 

@@ -38,7 +38,14 @@ logger = get_logger(__name__)
 
 #: Bumped when the manifest *schema* changes in a way a loader must notice.
 #: Distinct from the model version: the same frozen adapter can be repackaged.
-DEPLOYMENT_ARTIFACT_VERSION = 1
+#:
+#: 2 — adds the runtime contract (quantization, compute dtype, attention) and
+#: hashes the packaged model config. Version-1 packages did not pin the compute
+#: dtype, so a loader must not accept them.
+DEPLOYMENT_ARTIFACT_VERSION = 2
+
+#: The packaged model config, relative to the package root.
+PACKAGED_MODEL_CONFIG = "deployment/model_config.yaml"
 
 #: Layout every deployment package must use. The loader resolves nothing outside
 #: the package except the base model, which comes from the registry by revision.
@@ -202,6 +209,39 @@ class ServingLimits(StrictModel):
     request_timeout_seconds: float = Field(default=120.0, gt=0)
 
 
+#: Values that would let the hardware choose the arithmetic. Not a contract.
+_HARDWARE_DEPENDENT = frozenset({"auto", "default", ""})
+
+
+class RuntimeContract(StrictModel):
+    """How the base model must be instantiated for the adapter to be the measured model.
+
+    The adapter is deltas, and the tokenizer is pinned by content, but neither
+    says how the *base* is loaded. These settings do, and every one of them
+    changes the arithmetic. In particular ``compute_dtype``: v0.0.6 was trained
+    and evaluated with the 4-bit matmuls in float16 because its T4 could not do
+    bfloat16. ``auto`` would pick bfloat16 on any newer GPU, and the served
+    model would silently stop being the one that was measured.
+    """
+
+    quantization_mode: str = Field(description="e.g. 'nf4'.")
+    double_quant: bool
+    compute_dtype: str = Field(description="Explicit dtype for 4-bit matmuls; never 'auto'.")
+    attn_implementation: str
+    max_seq_length: int = Field(gt=0)
+
+    @field_validator("compute_dtype")
+    @classmethod
+    def _dtype_must_be_explicit(cls, value: str) -> str:
+        if value.strip().lower() in _HARDWARE_DEPENDENT:
+            raise ValueError(
+                f"runtime.compute_dtype must name a dtype, got {value!r}. A hardware-"
+                "dependent default is how an adapter evaluated in float16 ends up "
+                "served in bfloat16."
+            )
+        return value
+
+
 class DeploymentManifest(StrictModel):
     """The complete, verifiable description of a deployable KLEOS model."""
 
@@ -216,9 +256,13 @@ class DeploymentManifest(StrictModel):
     adapter: AdapterRecord
     peft: PeftRecord
     tokenizer: TokenizerContract
+    runtime: RuntimeContract
     dataset: DatasetRecord
     generation: GenerationDefaults = Field(default_factory=GenerationDefaults)
     limits: ServingLimits = Field(default_factory=ServingLimits)
+    #: The packaged model config the loader instantiates the base from. Hashed,
+    #: because an edited quantization or dtype setting changes the model.
+    deployment_files: list[FileRecord] = Field(default_factory=list)
 
     #: config_hash of the training run. Ties this package to a reproducible run.
     training_config_hash: str
@@ -292,7 +336,7 @@ class DeploymentManifest(StrictModel):
     # -- verification --------------------------------------------------------
 
     def all_files(self) -> list[FileRecord]:
-        return [*self.adapter.files, *self.tokenizer.files]
+        return [*self.adapter.files, *self.tokenizer.files, *self.deployment_files]
 
     def check_files(self, package_dir: Path | str) -> list[str]:
         """Re-hash every recorded file. Returns human-readable problems."""
@@ -323,6 +367,8 @@ class DeploymentManifest(StrictModel):
         for required in REQUIRED_TOKENIZER_FILES:
             if f"{TOKENIZER_DIRNAME}/{required}" not in recorded:
                 problems.append(f"manifest does not record {TOKENIZER_DIRNAME}/{required}")
+        if PACKAGED_MODEL_CONFIG not in recorded:
+            problems.append(f"manifest does not record {PACKAGED_MODEL_CONFIG}")
 
         weights = f"{ADAPTER_DIRNAME}/adapter_model.safetensors"
         for record in self.adapter.files:
@@ -383,9 +429,187 @@ class DeploymentManifest(StrictModel):
                 )
         return problems
 
+    def check_runtime_config(self, package_dir: Path | str) -> list[str]:
+        """Verify the packaged model config instantiates the base the way the manifest says."""
+        import yaml
+
+        path = Path(package_dir) / PACKAGED_MODEL_CONFIG
+        if not path.exists():
+            return [f"missing {PACKAGED_MODEL_CONFIG}"]
+        try:
+            model = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("model") or {}
+        except yaml.YAMLError as exc:
+            return [f"{PACKAGED_MODEL_CONFIG} is not valid YAML: {exc}"]
+
+        quantization = model.get("quantization") or {}
+        packaged = {
+            "quantization_mode": quantization.get("mode"),
+            "double_quant": quantization.get("double_quant"),
+            "compute_dtype": quantization.get("compute_dtype"),
+            "attn_implementation": model.get("attn_implementation"),
+            "max_seq_length": model.get("max_seq_length"),
+        }
+        return [
+            f"{PACKAGED_MODEL_CONFIG} {key} is {packaged[key]!r}, manifest says {want!r}"
+            for key, want in self.runtime.model_dump().items()
+            if packaged.get(key) != want
+        ]
+
     def problems(self, package_dir: Path | str) -> list[str]:
         """Every reason this package must not be served."""
-        return [*self.check_files(package_dir), *self.check_adapter_config(package_dir)]
+        return [
+            *self.check_files(package_dir),
+            *self.check_adapter_config(package_dir),
+            *self.check_runtime_config(package_dir),
+        ]
+
+    def check_expected_identity(self, expected: dict[str, Any]) -> list[str]:
+        """Compare this package against the identity a deployment was built to serve.
+
+        :meth:`problems` proves a package matches *its own* manifest, which only
+        proves it is internally consistent. A different adapter, packaged just
+        as carefully, passes that check too. This one compares against an
+        identity recorded independently — in the container image, from
+        ``configs/deployment/*.yaml`` — so only the frozen artifact is accepted.
+
+        Keys absent from ``expected`` are not checked; every key present is.
+        """
+        actual: dict[str, Any] = {
+            "model_name": self.model_name,
+            "model_version": self.model_version,
+            "base_model": self.base_model,
+            "base_revision": self.base_revision,
+            "experiment_id": self.adapter.experiment_id,
+            "source_checkpoint": self.adapter.source_checkpoint,
+            "adapter_sha256": self.adapter.weights_sha256,
+            "dataset_version": self.dataset.version,
+            "dataset_sha256": self.dataset.sha256,
+            "training_config_hash": self.training_config_hash,
+            "tokenizer_source": self.tokenizer.source,
+            "tokenizer_fix_mistral_regex": self.tokenizer.fix_mistral_regex,
+        }
+        problems: list[str] = []
+        for key, have in actual.items():
+            want = expected.get(key)
+            if want is None:
+                continue
+            # type() as well as value: YAML `0` must not satisfy a boolean False.
+            if type(have) is not type(want) or have != want:
+                problems.append(f"{key}: package has {have!r}, expected {want!r}")
+
+        recorded = {Path(record.path).name: record.sha256 for record in self.tokenizer.files}
+        for name, digest in (expected.get("tokenizer_files_sha256") or {}).items():
+            have_digest = recorded.get(name)
+            if have_digest is None:
+                problems.append(f"tokenizer/{name}: expected in the package, not recorded")
+            elif have_digest != digest:
+                problems.append(
+                    f"tokenizer/{name}: sha256 {have_digest[:16]}…, expected {digest[:16]}…"
+                )
+
+        generation = self.generation.model_dump()
+        for key, want in (expected.get("generation") or {}).items():
+            have = generation.get(key)
+            if have != want:
+                problems.append(f"generation.{key}: package has {have!r}, expected {want!r}")
+
+        runtime = self.runtime.model_dump()
+        for key, want in (expected.get("runtime") or {}).items():
+            have = runtime.get(key)
+            if type(have) is not type(want) or have != want:
+                problems.append(f"runtime.{key}: package has {have!r}, expected {want!r}")
+        return problems
+
+
+def load_expected_identity(path: Path | str) -> dict[str, Any]:
+    """Read the identity a deployment must match from a serving record.
+
+    The record is the declarative ``configs/deployment/<model>.yaml`` — the same
+    file ``build_deployment_package.py`` builds from, so the builder and the
+    server agree by construction about what the frozen artifact is.
+
+    Raises:
+        ConfigError: the file is missing, malformed, or pins too little to mean
+            anything. An identity check that pins nothing would pass everything.
+    """
+    import yaml
+
+    source = Path(path)
+    if not source.exists():
+        raise ConfigError(
+            f"No serving record at {source}.",
+            suggestions=["The container expects configs/deployment/kleos_hermes_v006.yaml."],
+        )
+    raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+    spec = raw.get("deployment") if isinstance(raw, dict) else None
+    if not isinstance(spec, dict):
+        raise ConfigError(f"{source} has no top-level 'deployment:' mapping.")
+
+    tokenizer = spec.get("tokenizer") or {}
+    identity: dict[str, Any] = {
+        "model_name": spec.get("name"),
+        "model_version": spec.get("version"),
+        "base_model": spec.get("base_model"),
+        "base_revision": spec.get("revision"),
+        "experiment_id": spec.get("experiment_id"),
+        "source_checkpoint": spec.get("source_checkpoint"),
+        "adapter_sha256": spec.get("adapter_sha256"),
+        "dataset_version": spec.get("dataset_version"),
+        "dataset_sha256": spec.get("dataset_sha256"),
+        "training_config_hash": spec.get("training_config_hash"),
+        "tokenizer_source": tokenizer.get("source"),
+        "tokenizer_fix_mistral_regex": tokenizer.get("fix_mistral_regex"),
+        "tokenizer_files_sha256": dict(tokenizer.get("files_sha256") or {}),
+        "generation": dict(spec.get("generation") or {}),
+        "runtime": dict(spec.get("runtime") or {}),
+    }
+
+    required = ("model_name", "base_model", "base_revision", "adapter_sha256")
+    missing = [key for key in required if not identity.get(key)]
+    if missing:
+        raise ConfigError(
+            f"{source} does not pin {', '.join(missing)}.",
+            suggestions=["An identity check must pin at least the base and the adapter."],
+        )
+    if not identity["runtime"]:
+        raise ConfigError(
+            f"{source} has no runtime block, so the base could be loaded in any dtype.",
+            suggestions=["Pin quantization_mode, double_quant and compute_dtype explicitly."],
+        )
+    try:
+        RuntimeContract.model_validate(identity["runtime"])
+    except Exception as exc:
+        raise ConfigError(
+            f"{source} runtime block is not a valid contract.",
+            details={"error": str(exc)[:400]},
+        ) from exc
+    if not isinstance(identity["tokenizer_fix_mistral_regex"], bool):
+        raise ConfigError(
+            f"{source} must state tokenizer.fix_mistral_regex as true or false.",
+            suggestions=[
+                "Tokenizer behaviour is part of the model's identity; leave nothing to a default."
+            ],
+        )
+    return identity
+
+
+def verify_identity(manifest: DeploymentManifest, expected: dict[str, Any]) -> None:
+    """Raise unless the package is exactly the artifact the deployment expects."""
+    problems = manifest.check_expected_identity(expected)
+    if problems:
+        raise ConfigError(
+            f"This package is not {expected.get('model_name')} "
+            f"{expected.get('model_version') or ''}".rstrip()
+            + ".",
+            details={"problems": problems},
+            suggestions=[
+                "Do not serve it. It verified against its own manifest, so it is "
+                "intact — but it is a different artifact from the one this "
+                "deployment was built to serve.",
+                "Mount the package built from the frozen run, or rebuild the image "
+                "if the serving record itself changed deliberately.",
+            ],
+        )
 
 
 def verify_package(package_dir: Path | str, *, strict: bool = True) -> DeploymentManifest:
@@ -458,6 +682,7 @@ def build_deployment_manifest(
     training_config_hash: str,
     adapter_config: dict[str, Any],
     fix_mistral_regex: bool,
+    runtime: RuntimeContract,
     tokenizer_padding_side: str = "right",
     tokenizer_pad_token: str | None = None,
     split_strategy: str | None = None,
@@ -493,8 +718,15 @@ def build_deployment_manifest(
             f"No adapter_model.safetensors in {root / ADAPTER_DIRNAME}.",
             suggestions=["A deployment package without weights cannot be served."],
         )
+    if not (root / PACKAGED_MODEL_CONFIG).exists():
+        raise ConfigError(
+            f"No {PACKAGED_MODEL_CONFIG} in {root}.",
+            suggestions=["Write the packaged model config before building the manifest."],
+        )
 
     return DeploymentManifest(
+        runtime=runtime,
+        deployment_files=[build_file_record(root, PACKAGED_MODEL_CONFIG)],
         model_name=model_name,
         model_version=model_version,
         base_model=base_model,

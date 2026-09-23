@@ -53,6 +53,12 @@ ENV_REQUIRE_REMOTE_REVISION = "HERMES_REQUIRE_REMOTE_REVISION"
 ENV_REQUEST_TIMEOUT = "HERMES_REQUEST_TIMEOUT_SECONDS"
 ENV_MAX_INPUT_CHARS = "HERMES_MAX_INPUT_CHARS"
 ENV_ALLOW_UNAUTHENTICATED = "HERMES_ALLOW_UNAUTHENTICATED"
+#: Serving record whose identity the package must match (set by the container).
+ENV_EXPECTED_DEPLOYMENT_CONFIG = "HERMES_EXPECTED_DEPLOYMENT_CONFIG"
+#: Exit the process when the model cannot be loaded, instead of staying up with
+#: /v1/generate returning 503. The container sets it so an orchestrator sees the
+#: failure rather than a live process that will never be ready.
+ENV_EXIT_ON_LOAD_FAILURE = "HERMES_EXIT_ON_LOAD_FAILURE"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
@@ -73,6 +79,9 @@ class ServingSettings:
     max_input_chars: int | None = None
     request_timeout_seconds: float | None = None
     allow_unauthenticated: bool = False
+    #: When set, a package that is intact but not this artifact is refused.
+    expected_deployment_config: Path | None = None
+    exit_on_load_failure: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -110,6 +119,7 @@ class ServingSettings:
 
         timeout = source.get(ENV_REQUEST_TIMEOUT)
         max_chars = source.get(ENV_MAX_INPUT_CHARS)
+        expected = source.get(ENV_EXPECTED_DEPLOYMENT_CONFIG, "").strip()
         return cls(
             package_dir=Path(package),
             api_keys=keys,
@@ -118,6 +128,8 @@ class ServingSettings:
             max_input_chars=int(max_chars) if max_chars else None,
             request_timeout_seconds=float(timeout) if timeout else None,
             allow_unauthenticated=allow_unauthenticated,
+            expected_deployment_config=Path(expected) if expected else None,
+            exit_on_load_failure=_flag(source.get(ENV_EXIT_ON_LOAD_FAILURE)),
         )
 
     def effective_limits(self, manifest_limits: ServingLimits) -> ServingLimits:
@@ -181,6 +193,22 @@ class GenerateResponse(BaseModel):
     model: ModelIdentity
 
 
+def key_matches(presented: str | None, keys: tuple[str, ...]) -> bool:
+    """Constant-time comparison of a presented key against every configured key.
+
+    Shared by the Docker service (bearer header) and the ZeroGPU Space (custom
+    header). Compares against every key rather than stopping at the first
+    match: short-circuiting would leak through timing which key matched.
+    """
+    if not presented:
+        return False
+    matched = False
+    for key in keys:
+        if hmac.compare_digest(presented, key):
+            matched = True
+    return matched
+
+
 def _authorized(header: str | None, keys: tuple[str, ...]) -> bool:
     """Constant-time bearer-token check."""
     if not keys:
@@ -190,13 +218,7 @@ def _authorized(header: str | None, keys: tuple[str, ...]) -> bool:
     scheme, _, presented = header.partition(" ")
     if scheme.lower() != "bearer" or not presented:
         return False
-    # compare_digest against every key: short-circuiting on the first match
-    # would leak which key matched through timing.
-    matched = False
-    for key in keys:
-        if hmac.compare_digest(presented, key):
-            matched = True
-    return matched
+    return key_matches(presented, keys)
 
 
 def validate_request(request: GenerateRequest, limits: ServingLimits) -> None:
@@ -245,20 +267,32 @@ def create_app(
     async def lifespan(_: Any) -> Any:
         if state["deployment"] is None:
             from kleos_models.serving.loader import load_deployment
+            from kleos_models.serving.manifest import load_expected_identity
 
             try:
+                expected = (
+                    load_expected_identity(settings.expected_deployment_config)
+                    if settings.expected_deployment_config is not None
+                    else None
+                )
                 loaded = load_deployment(
                     settings.package_dir,
                     verify=True,
                     require_remote_revision=settings.require_remote_revision,
                     device_map=settings.device_map,
+                    expected_identity=expected,
                 )
             except Exception as exc:
-                # Startup verification failed. Stay up so /health can report why,
-                # but never answer /v1/generate: serving an artifact that failed
-                # verification is the one outcome this service exists to prevent.
+                # Never answer /v1/generate with an artifact that failed
+                # verification — that is the one outcome this service exists to
+                # prevent. By default the process stays up so /health can say
+                # why; with exit_on_load_failure it exits non-zero instead, so an
+                # orchestrator marks the deploy failed rather than waiting on a
+                # process that will never become ready.
                 state["error"] = f"{type(exc).__name__}: {exc}"
                 logger.error("Startup verification failed: %s", state["error"])
+                if settings.exit_on_load_failure:
+                    raise
             else:
                 state["deployment"] = loaded
                 state["limits"] = settings.effective_limits(loaded.manifest.limits)

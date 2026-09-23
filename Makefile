@@ -93,7 +93,24 @@ install-serve: $(BIN)/python ## Install the inference service deps (fastapi, uvi
 .PHONY: verify-package
 verify-package: ## Verify a deployment package: make verify-package PACKAGE=/path
 	@test -n "$(PACKAGE)" || (echo "Set PACKAGE=/path/to/hermes-v0.0.6" && exit 1)
-	$(BIN)/python scripts/verify_deployment_package.py --package $(PACKAGE)
+	$(BIN)/python scripts/verify_deployment_package.py --package $(PACKAGE) \
+		--expect-deployment-config configs/deployment/kleos_hermes_v006.yaml
+
+HERMES_IMAGE ?= kleos-hermes:v0.0.6
+
+.PHONY: docker-check
+docker-check: ## Lint the Hermes Dockerfile with BuildKit's checks (no build)
+	docker build --check -f docker/hermes.Dockerfile .
+
+.PHONY: docker-build
+docker-build: ## Build the Hermes serving image for linux/amd64
+	docker build --platform linux/amd64 -f docker/hermes.Dockerfile -t $(HERMES_IMAGE) .
+
+.PHONY: docker-preflight
+docker-preflight: ## Run the image's preflight against a package, no GPU: make docker-preflight PACKAGE=/path
+	@test -n "$(PACKAGE)" || (echo "Set PACKAGE=/path/to/hermes-v0.0.6" && exit 1)
+	docker run --rm --platform linux/amd64 -e HERMES_ALLOW_UNAUTHENTICATED=1 \
+		-v "$(PACKAGE)":/models/hermes-v0.0.6:ro $(HERMES_IMAGE) --check-only --no-gpu-check
 
 .PHONY: clean
 clean: ## Remove caches and build artifacts

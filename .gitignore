@@ -80,6 +80,10 @@ mlruns/
 # below already blocks the weights, this also keeps the 17MB tokenizer out.
 packages/
 exports/
+# Real container secrets and settings. docker/hermes.env.example is the
+# committed template; these are the filled-in copies.
+docker/hermes.env
+docker/secrets/
 *.safetensors
 *.bin
 *.pt
