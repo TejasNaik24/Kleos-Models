@@ -100,12 +100,20 @@ def main(argv: list[str] | None = None) -> int:
             if value is not None:
                 print(f"  {field:<21}: {value}")
 
-        if hasattr(hf_config, "vision_config"):
+        from kleos_models.models.adapters import resolve_load_plan
+
+        plan = resolve_load_plan(config, hf_config)
+        if plan.view is not None:
+            view = plan.view
+            print(f"\n  This config loads a {view.kind} view of the {reported_type!r}")
+            print(f"  checkpoint: the {view.text_model_type!r} tower only, as a causal LM.")
+            print(f"  Checkpoint keys left unloaded: {list(view.ignored_prefixes)}")
+        elif hasattr(hf_config, "vision_config"):
             print("\n  ! This checkpoint has a vision_config: it is a vision-language")
             print("    model. AutoModelForCausalLM will NOT load it. LoRA must be")
             print("    scoped to the language tower.")
 
-        if config.model_type and reported_type != config.model_type:
+        if plan.view is None and config.model_type and reported_type != config.model_type:
             print(f"\n  ! Config declares model_type={config.model_type!r} but the")
             print(f"    checkpoint reports {reported_type!r}. Fix the config.")
     except Exception as exc:

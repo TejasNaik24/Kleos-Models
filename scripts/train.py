@@ -21,6 +21,10 @@ Usage::
 
     # See whether it fits before committing a GPU session:
     python scripts/train.py --config configs/training/qlora_small.yaml --dry-run
+
+Before any weights load, the train split is tokenized (tokenizer only) so the
+memory check is sized by the longest real example rather than max_seq_length.
+Before the first step, the trainer measures one step on the longest batch.
 """
 
 from __future__ import annotations
@@ -85,6 +89,22 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-gradient-check",
         action="store_true",
         help="Skip the pre-training forward/backward verification.",
+    )
+    parser.add_argument(
+        "--skip-memory-probe",
+        action="store_true",
+        help="Skip measuring a step on the longest batch before training (CUDA only).",
+    )
+    parser.add_argument(
+        "--feasibility",
+        choices=["enforce", "record"],
+        default="enforce",
+        help=(
+            "enforce (default): refuse, or under strict_config=false adjust, a run the "
+            "memory estimate says will not fit. record: record the assessment and "
+            "train anyway, leaving the decision to the memory probe. For when the "
+            "estimate and a measured smoke run disagree; never to skip checking."
+        ),
     )
     add_common_arguments(parser)
     args = parser.parse_args(argv)
@@ -164,16 +184,42 @@ def main(argv: list[str] | None = None) -> int:
             "    Pass --experiment-id <original-id> to resume into the previous run."
         )
 
+    from kleos_models.errors import KleosError
     from kleos_models.models.adapters import get_adapter
     from kleos_models.models.feasibility import assess_feasibility, enforce_feasibility
+    from kleos_models.training.trainer import measure_sequence_lengths
+
+    # The activation peak follows the longest example actually present, so size
+    # the estimate from the data: tokenize the train split (tokenizer only, no
+    # weights). Without a tokenizer only a dry run may continue, on the worst
+    # case of model.max_seq_length.
+    lengths = None
+    try:
+        lengths = measure_sequence_lengths(config, bundle)
+        print(
+            f"  longest train sequence : {lengths['longest']} tokens "
+            f"({lengths['longest_padded']} padded; max_seq_length {config.model.max_seq_length})"
+        )
+    except KleosError as exc:
+        if not args.dry_run:
+            raise
+        print(
+            f"  ! could not tokenize the train split ({exc.message}); the estimate "
+            f"assumes max_seq_length={config.model.max_seq_length}, the worst case."
+        )
+    longest_sequence = lengths["longest_padded"] if lengths else None
 
     adapter = get_adapter(config.model)
     feasibility = assess_feasibility(
         config.model,
         config.training,
-        target_modules=adapter.default_target_modules,
+        target_modules=adapter.resolve_target_modules(config.model.lora),
+        seq_length=longest_sequence,
     )
     manifest.feasibility = feasibility.to_dict()
+    if lengths:
+        manifest.feasibility["sequence_lengths"] = lengths
+    manifest.feasibility["policy"] = args.feasibility
     print("\n" + feasibility.render())
 
     if args.dry_run:
@@ -184,7 +230,21 @@ def main(argv: list[str] | None = None) -> int:
         print("  Remove --dry-run to train.\n")
         return 0
 
-    adjustments = enforce_feasibility(feasibility, config.training)
+    if args.feasibility == "record":
+        # Recorded, not enforced; and nothing is adjusted either, so the run
+        # uses exactly the configuration it was given.
+        adjustments = []
+        manifest.note(
+            f"--feasibility record: assessed {feasibility.tier.value} "
+            f"(fits={feasibility.fits}, headroom {feasibility.headroom_gb:+.2f} GB) "
+            "and trained without enforcing it."
+        )
+        print(
+            "\n  ! --feasibility record: the assessment above is recorded, not enforced. "
+            "The memory probe measures the longest batch before step 1."
+        )
+    else:
+        adjustments = enforce_feasibility(feasibility, config.training)
     for adjustment in adjustments:
         manifest.add_adjustment(
             adjustment.field, adjustment.original, adjustment.adjusted, adjustment.reason
@@ -214,6 +274,8 @@ def main(argv: list[str] | None = None) -> int:
         manifest,
         resume_from_checkpoint=args.resume_from_checkpoint,
         verify_gradients=not args.skip_gradient_check,
+        probe_memory=not args.skip_memory_probe,
+        longest_sequence=longest_sequence,
     )
 
     # --- 18. report artifacts ----------------------------------------------

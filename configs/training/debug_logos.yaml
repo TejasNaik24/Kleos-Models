@@ -1,0 +1,60 @@
+# ---------------------------------------------------------------------------
+# Logos smoke test — "does Ministral 3 14B fit and run on this T4?"
+#
+# NOT a research configuration. Ten steps prove the text-only view loads every
+# weight, LoRA attaches where expected, the loop trains, checkpoints and
+# resumes — and measure peak VRAM. Loss values mean nothing and must never be
+# reported. Run it before committing a GPU session to the real Logos run:
+#
+#     python scripts/train.py --config configs/training/debug_logos.yaml \
+#                             --dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 \
+#                             --output-dir /content/logos-smoke \
+#                             --experiment-id kleos-logos-smoke-001
+#
+# The model side is NOT overridden: seq 1024, LoRA r=16/alpha=32, NF4 with
+# double-quant, fix_mistral_regex, the text-only view. Only the step count
+# shrinks. Logos' estimated peak is ~13.7 GiB on a 14.56 GiB T4, so the memory
+# reading this produces is the go/no-go gate for the real run (docs/logos.md).
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/ministral3_14b.yaml
+  dataset: ../datasets/kleos_policy_v006.yaml
+  evaluation: ../evaluation/kleos_logos_v001.yaml
+
+name: kleos-debug-logos
+description: Ten-step pipeline and memory check on Ministral 3 14B. Not a research run.
+tags: [debug, smoke, logos, ministral3, mistral]
+
+task: null
+
+# model: intentionally NOT overridden, so the VRAM reading transfers to the
+# real run.
+
+training:
+  max_steps: 10
+  num_train_epochs: 1
+  learning_rate: 2.0e-4
+  per_device_train_batch_size: 1
+  # 2 rather than 8: accumulation changes how many micro-batches make a step,
+  # not peak activation memory.
+  gradient_accumulation_steps: 2
+  gradient_checkpointing: true
+
+  # A checkpoint at step 5, so the runbook can prove resume works.
+  logging_steps: 1
+  save_strategy: steps
+  save_steps: 5
+  save_total_limit: 2
+  eval_strategy: steps
+  eval_steps: 5
+  load_best_model_at_end: false
+
+  # Strict on purpose: the job of this run is to measure memory at the real
+  # settings, so it must never shrink itself to fit.
+  strict_config: true
+  allow_full_finetune: false
+
+evaluation:
+  max_examples: 4

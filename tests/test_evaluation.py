@@ -898,12 +898,43 @@ class TestComparison:
         )
         assert "no meaningful difference" in comparison._conclusion()
 
-    def test_different_benchmarks_produce_a_comparability_warning(self):
+    # Finding H-F5: benchmark identity is content, not path. Colab rebuilds the
+    # benchmark at the same path every session, so a path can match while the
+    # content differs, and differ while the content matches.
+
+    def test_same_path_with_different_targets_is_not_comparable(self):
         base = self._payload("arm0_base", {"a": 0.5})
         finetuned = self._payload("arm2_finetuned", {"a": 0.9}, adapter_path="ad")
-        finetuned["benchmark_path"] = "other_bench"
+        base["results"][0]["reference_decision"] = "label_x"
+        finetuned["results"][0]["reference_decision"] = "label_y"
         comparison = compare_results(base, finetuned)
-        assert any("Different benchmarks" in w for w in comparison.comparability_warnings)
+        assert comparison.incomparable
+        assert not comparison.per_task
+        assert any("different benchmarks" in w for w in comparison.comparability_warnings)
+
+    def test_a_different_path_with_identical_targets_is_comparable(self):
+        base = self._payload("arm0_base", {"a": 0.5})
+        finetuned = self._payload("arm2_finetuned", {"a": 0.9}, adapter_path="ad")
+        finetuned["benchmark_path"] = "/content/benchmark/benchmark.jsonl"
+        comparison = compare_results(base, finetuned)
+        assert not comparison.incomparable
+        assert comparison.benchmark_identity["method"] == "targets"
+
+    def test_matching_file_hashes_establish_identity(self):
+        base = self._payload("arm0_base", {"a": 0.5})
+        finetuned = self._payload("arm2_finetuned", {"a": 0.9}, adapter_path="ad")
+        base["benchmark_sha256"] = finetuned["benchmark_sha256"] = "f" * 64
+        comparison = compare_results(base, finetuned)
+        assert comparison.benchmark_identity["method"] == "sha256"
+        assert not comparison.incomparable
+
+    def test_different_file_hashes_and_targets_are_not_comparable(self):
+        base = self._payload("arm0_base", {"a": 0.5})
+        finetuned = self._payload("arm2_finetuned", {"a": 0.9}, adapter_path="ad")
+        base["benchmark_sha256"], finetuned["benchmark_sha256"] = "a" * 64, "b" * 64
+        base["results"][0]["reference_decision"] = "label_x"
+        finetuned["results"][0]["reference_decision"] = "label_y"
+        assert compare_results(base, finetuned).incomparable
 
     def test_missing_adapter_produces_a_warning(self):
         comparison = compare_results(

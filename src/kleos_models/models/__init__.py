@@ -9,6 +9,9 @@ a feasibility table before installing or downloading anything heavy.
 
 from kleos_models.models.adapters import (
     ADAPTER_REGISTRY,
+    CheckpointView,
+    LoadPlan,
+    Ministral3TextAdapter,
     Mistral3VLMAdapter,
     MistralDenseAdapter,
     ModelCapabilities,
@@ -19,6 +22,7 @@ from kleos_models.models.adapters import (
     get_adapter,
     register_adapter,
     resolve_adapter_from_hf_config,
+    resolve_load_plan,
 )
 from kleos_models.models.feasibility import (
     Adjustment,
@@ -42,9 +46,12 @@ from kleos_models.models.quantization import (
 __all__ = [
     "ADAPTER_REGISTRY",
     "Adjustment",
+    "CheckpointView",
     "FeasibilityReport",
     "GPUInfo",
+    "LoadPlan",
     "MemoryEstimate",
+    "Ministral3TextAdapter",
     "Mistral3VLMAdapter",
     "MistralDenseAdapter",
     "ModelCapabilities",
@@ -65,4 +72,5 @@ __all__ = [
     "render_feasibility_table",
     "resolve_adapter_from_hf_config",
     "resolve_compute_dtype",
+    "resolve_load_plan",
 ]

@@ -12,6 +12,14 @@ Design constraints taken directly from the specification:
   Deltas come with a paired bootstrap confidence interval, and the verdict wording
   is driven by that interval rather than by the sign of the mean.
 
+Beside the original example-level bootstrap, every delta also gets a *cluster*
+interval that resamples whole groups (``group_id``), because perturbations of one
+case are not independent (finding H-F14), and the answerable and should-decline
+subsets are compared separately. Benchmark identity is checked by content, never
+by path (finding H-F5). ``cross_model=True`` compares two models on one arm (for
+example Hermes arm2 against Logos arm2), where differing base models are the point
+rather than a warning.
+
 This module imports no torch.
 """
 
@@ -24,13 +32,38 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from kleos_models.evaluation.metrics import bootstrap_difference, summarize
+from kleos_models.evaluation.corrections import SUBSETS
+from kleos_models.evaluation.metrics import (
+    bootstrap_difference,
+    paired_cluster_bootstrap_difference,
+    render_p_value,
+    summarize,
+)
 from kleos_models.logging_utils import format_table, get_logger
 
 logger = get_logger(__name__)
 
 #: Below this absolute delta, a difference is treated as noise regardless of sign.
 NEGLIGIBLE_DELTA = 0.01
+
+#: Why a cluster interval is missing when the records carry no group ids.
+_NO_GROUPS = (
+    "records carry no group_id; annotate stored results with scripts/rescore.py --mode annotate"
+)
+
+
+def _verdict(delta: float, significance: dict[str, Any]) -> str:
+    """Plain-language outcome of one delta, driven by its interval."""
+    if abs(delta) < NEGLIGIBLE_DELTA:
+        return "no change"
+    significant = significance.get("significant_at_05")
+    direction = "improved" if delta > 0 else "regressed"
+    if significant is False:
+        return f"{direction} (not significant)"
+    if significant is True:
+        p_text = render_p_value(significance.get("p_value"), significance.get("iterations"))
+        return f"{direction} ({p_text})"
+    return direction
 
 
 @dataclass
@@ -42,6 +75,8 @@ class TaskComparison:
     finetuned_score: float
     count: int
     significance: dict[str, Any] = field(default_factory=dict)
+    #: Paired bootstrap resampling groups rather than examples (H-F14).
+    cluster_significance: dict[str, Any] = field(default_factory=dict)
 
     @property
     def absolute_delta(self) -> float:
@@ -56,15 +91,14 @@ class TaskComparison:
     @property
     def verdict(self) -> str:
         """Plain-language outcome, driven by the confidence interval."""
-        if abs(self.absolute_delta) < NEGLIGIBLE_DELTA:
-            return "no change"
-        significant = self.significance.get("significant_at_05")
-        direction = "improved" if self.absolute_delta > 0 else "regressed"
-        if significant is False:
-            return f"{direction} (not significant)"
-        if significant is True:
-            return f"{direction} (p={self.significance.get('p_value')})"
-        return direction
+        return _verdict(self.absolute_delta, self.significance)
+
+    @property
+    def cluster_verdict(self) -> str:
+        """The same, driven by the cluster interval; ``n/a`` without group ids."""
+        if not self.cluster_significance.get("estimable"):
+            return "n/a"
+        return _verdict(self.absolute_delta, self.cluster_significance)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,12 +110,18 @@ class TaskComparison:
             "count": self.count,
             "verdict": self.verdict,
             "significance": self.significance,
+            "cluster_verdict": self.cluster_verdict,
+            "cluster_significance": self.cluster_significance,
         }
 
 
 @dataclass
 class ComparisonReport:
-    """A full base-vs-fine-tuned comparison."""
+    """A full base-vs-fine-tuned comparison.
+
+    In cross-model mode "base" and "fine-tuned" read as "left" and "right": the
+    two models being compared, on the same arm.
+    """
 
     base_arm: str
     finetuned_arm: str
@@ -95,6 +135,15 @@ class ComparisonReport:
     capability_delta: dict[str, Any] = field(default_factory=dict)
     comparability_warnings: list[str] = field(default_factory=list)
     generated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    mode: str = "fine_tuning"
+    #: How the two results were established to use the same benchmark.
+    benchmark_identity: dict[str, Any] = field(default_factory=dict)
+    #: Set when the results must not be compared at all.
+    incomparable: bool = False
+    subsets: list[TaskComparison] = field(default_factory=list)
+    #: The pre-registered primary comparison, when one was requested.
+    primary: dict[str, Any] = field(default_factory=dict)
+    corrected_consistency: dict[str, Any] = field(default_factory=dict)
 
     @property
     def regressed_tasks(self) -> list[TaskComparison]:
@@ -112,6 +161,9 @@ class ComparisonReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "generated_at": self.generated_at,
+            "mode": self.mode,
+            "incomparable": self.incomparable,
+            "benchmark_identity": self.benchmark_identity,
             "base_arm": self.base_arm,
             "finetuned_arm": self.finetuned_arm,
             "base_model": self.base_model,
@@ -125,20 +177,29 @@ class ComparisonReport:
             "comparability_warnings": self.comparability_warnings,
             "improved_task_count": len(self.improved_tasks),
             "regressed_task_count": len(self.regressed_tasks),
+            "subsets": [t.to_dict() for t in self.subsets],
+            "primary": self.primary,
+            "corrected_consistency": self.corrected_consistency,
         }
 
     def render(self, *, show_aggregate: bool = False) -> str:
         """Render the comparison table (spec section 54)."""
+        left, right = self.labels
         lines = [
             "=" * 88,
-            f"Comparison: {self.base_arm} vs {self.finetuned_arm}",
+            f"Comparison: {self.base_arm} vs {self.finetuned_arm}"
+            + ("  (cross-model)" if self.mode == "cross_model" else ""),
             "=" * 88,
             "",
-            f"  base model      : {self.base_model.get('base_model', '-')}",
-            f"  fine-tuned      : {self.finetuned_model.get('base_model', '-')}",
+            f"  {left:<15} : {self.base_model.get('base_model', '-')}",
+            f"  {right:<15} : {self.finetuned_model.get('base_model', '-')}",
             f"  adapter         : {self.finetuned_model.get('adapter_path', '-')}",
+            f"  benchmark       : {self.benchmark_identity.get('detail', 'not checked')}",
             "",
         ]
+        if self.incomparable:
+            lines.append("  NOT COMPARABLE — see the warnings below. No delta is reported.")
+            lines.append("")
 
         if self.comparability_warnings:
             lines.append("  COMPARABILITY WARNINGS")
@@ -148,19 +209,46 @@ class ComparisonReport:
         rows = [
             {
                 "task": t.task,
-                "base": t.base_score,
-                "finetuned": t.finetuned_score,
+                left: t.base_score,
+                right: t.finetuned_score,
                 "abs delta": t.absolute_delta,
                 "rel delta": f"{t.relative_delta:+.1%}",
                 "n": t.count,
                 "verdict": t.verdict,
+                "cluster verdict": t.cluster_verdict,
             }
             for t in self.per_task
         ]
         if rows:
-            lines.append("Per task")
+            lines.append(
+                "Per task (verdict: examples resampled; cluster verdict: groups resampled)"
+            )
             lines.append(format_table(rows))
             lines.append("")
+
+        if self.subsets:
+            lines.append("By subset (paired, groups resampled)")
+            lines.append(
+                format_table(
+                    [
+                        {
+                            "subset": t.task,
+                            left: t.base_score,
+                            right: t.finetuned_score,
+                            "abs delta": t.absolute_delta,
+                            "n": t.count,
+                            "groups": t.cluster_significance.get("clusters", "-"),
+                            "cluster 95% CI": _render_ci(t.cluster_significance),
+                            "cluster verdict": t.cluster_verdict,
+                        }
+                        for t in self.subsets
+                    ]
+                )
+            )
+            lines.append("")
+
+        if self.primary:
+            lines.extend(_render_primary(self.primary, left, right))
 
         if show_aggregate and self.overall:
             lines.extend(
@@ -188,6 +276,15 @@ class ComparisonReport:
                     "",
                 ]
             )
+
+        if self.corrected_consistency:
+            lines.append("Consistency by group_id (corrected unit; oracle ceiling in brackets)")
+            for name, pair in self.corrected_consistency.items():
+                lines.append(
+                    f"  {name:<22} {pair['left']:.3f} → {pair['right']:.3f} "
+                    f"({pair['right'] - pair['left']:+.3f})  [oracle {pair['oracle']:.3f}]"
+                )
+            lines.append("")
 
         if self.consistency_delta:
             lines.extend(
@@ -230,8 +327,31 @@ class ComparisonReport:
         lines.extend(["", self._conclusion(), ""])
         return "\n".join(lines)
 
+    @property
+    def labels(self) -> tuple[str, str]:
+        """Column names for the two sides."""
+        if self.mode == "cross_model":
+            return (
+                _short_model(self.base_model.get("base_model")),
+                _short_model(self.finetuned_model.get("base_model")),
+            )
+        return "base", "finetuned"
+
     def _conclusion(self) -> str:
         """State the outcome without overclaiming (spec sections 35, 36)."""
+        if self.incomparable:
+            return "Conclusion: none. The two results are not comparable."
+        if self.mode == "cross_model":
+            if self.primary:
+                return (
+                    f"Conclusion (primary, pre-registered): {self.primary['verdict'].upper()} "
+                    f"on the {self.primary['subset']} subset "
+                    f"({self.primary.get('explanation', '')}). Per-task rows are secondary."
+                )
+            return (
+                "Conclusion: cross-model comparison without a primary subset; read the "
+                "per-task and subset rows, and do not summarise them as a single winner."
+            )
         improved, regressed = len(self.improved_tasks), len(self.regressed_tasks)
 
         if improved and regressed:
@@ -275,15 +395,151 @@ class ComparisonReport:
         return target
 
 
-def _per_example_scores(
-    results: Sequence[dict[str, Any]], *, task: str | None = None
-) -> dict[str, float]:
-    """Map example id → score, optionally restricted to one task."""
-    return {
-        record["example_id"]: float(record["score"])
-        for record in results
-        if task is None or record.get("task") == task
-    }
+def _short_model(model_id: Any) -> str:
+    """The last path segment of a model id, for column headers."""
+    text = str(model_id or "-")
+    return text.rsplit("/", 1)[-1][:24]
+
+
+def _render_ci(significance: dict[str, Any]) -> str:
+    if not significance.get("estimable"):
+        return "n/a"
+    return f"{significance['ci95_low']:+.4f} to {significance['ci95_high']:+.4f}"
+
+
+def _render_primary(primary: dict[str, Any], left: str, right: str) -> list[str]:
+    return [
+        f"PRIMARY: {right} vs {left} on the {primary['subset']} subset",
+        f"  difference     : {primary.get('difference', 0):+.4f} "
+        f"(n={primary.get('n', 0)}, {primary.get('clusters', 0)} groups)",
+        f"  cluster 95% CI : {_render_ci(primary)}",
+        f"  margin         : ±{primary['margin']}",
+        f"  verdict        : {primary['verdict'].upper()} — {primary.get('explanation', '')}",
+        "",
+    ]
+
+
+def primary_verdict(significance: dict[str, Any], margin: float) -> tuple[str, str]:
+    """Classify a difference against an equivalence margin by its cluster interval.
+
+    better: the whole interval is above zero. worse: the whole interval is below
+    zero. equivalent: the whole interval lies within ±margin. Otherwise
+    inconclusive: the data cannot tell these apart.
+    """
+    if not significance.get("estimable"):
+        return "inconclusive", f"interval not estimable: {significance.get('reason', 'unknown')}"
+    low, high = significance["ci95_low"], significance["ci95_high"]
+    if low > 0:
+        note = ", but within the equivalence margin" if high <= margin else ""
+        return "better", f"95% CI {low:+.4f} to {high:+.4f} excludes zero{note}"
+    if high < 0:
+        note = ", but within the equivalence margin" if low >= -margin else ""
+        return "worse", f"95% CI {low:+.4f} to {high:+.4f} excludes zero{note}"
+    if -margin <= low and high <= margin:
+        return "equivalent", f"95% CI {low:+.4f} to {high:+.4f} lies within ±{margin}"
+    return "inconclusive", f"95% CI {low:+.4f} to {high:+.4f} spans zero and exceeds ±{margin}"
+
+
+def check_benchmark_identity(
+    left: dict[str, Any], right: dict[str, Any]
+) -> tuple[bool, dict[str, Any], list[str]]:
+    """Whether two results were graded against the same benchmark.
+
+    By content: the benchmark file's sha256 when both recorded it, otherwise the
+    targets of the examples both evaluated (id, task, reference decision). A path
+    identifies nothing (H-F5). Returns ``(comparable, identity, warnings)``.
+    """
+    warnings: list[str] = []
+    left_rows = {r["example_id"]: r for r in left.get("results", [])}
+    right_rows = {r["example_id"]: r for r in right.get("results", [])}
+    shared = sorted(set(left_rows) & set(right_rows))
+    disagreeing = [
+        i
+        for i in shared
+        if (left_rows[i].get("task"), left_rows[i].get("reference_decision"))
+        != (right_rows[i].get("task"), right_rows[i].get("reference_decision"))
+    ]
+    targets_agree = bool(shared) and not disagreeing
+
+    left_sha, right_sha = left.get("benchmark_sha256"), right.get("benchmark_sha256")
+    if left_sha and right_sha and left_sha == right_sha:
+        return True, {"method": "sha256", "detail": f"sha256 {left_sha[:16]}… on both"}, warnings
+    if left_sha and right_sha:
+        if targets_agree:
+            warnings.append(
+                "The benchmark files differ byte for byte, but every shared example has "
+                "the same task and target. Compared on the shared examples."
+            )
+            return (
+                True,
+                {"method": "targets", "detail": "files differ; shared targets identical"},
+                warnings,
+            )
+        return (
+            False,
+            {"method": "sha256", "detail": f"sha256 {left_sha[:16]}… vs {right_sha[:16]}…"},
+            [*warnings, "Different benchmarks (sha256 and targets differ). Not comparable."],
+        )
+    if targets_agree:
+        return (
+            True,
+            {
+                "method": "targets",
+                "detail": f"{len(shared)} shared example(s) with identical targets "
+                "(a file hash was not recorded on both sides)",
+            },
+            warnings,
+        )
+    if not shared:
+        return False, {"method": "targets", "detail": "no shared examples"}, warnings
+    return (
+        False,
+        {"method": "targets", "detail": f"{len(disagreeing)} shared example(s) differ in target"},
+        [
+            *warnings,
+            f"{len(disagreeing)} example(s) have different tasks or targets in the two "
+            "results: they were graded against different benchmarks. Not comparable.",
+        ],
+    )
+
+
+def _groups_for(results: Sequence[dict[str, Any]]) -> dict[str, str | None]:
+    return {r["example_id"]: r.get("group_id") for r in results}
+
+
+def _paired(
+    base_results: Sequence[dict[str, Any]],
+    finetuned_results: Sequence[dict[str, Any]],
+    *,
+    name: str,
+    keep: Any,
+    compute_significance: bool,
+) -> TaskComparison | None:
+    """One paired comparison over the examples ``keep(record)`` selects."""
+    base_scores = {r["example_id"]: float(r["score"]) for r in base_results if keep(r)}
+    ft_scores = {r["example_id"]: float(r["score"]) for r in finetuned_results if keep(r)}
+    paired_ids = sorted(set(base_scores) & set(ft_scores))
+    if not paired_ids:
+        return None
+    left = [base_scores[i] for i in paired_ids]
+    right = [ft_scores[i] for i in paired_ids]
+    comparison = TaskComparison(
+        task=name,
+        base_score=summarize(name, left).mean,
+        finetuned_score=summarize(name, right).mean,
+        count=len(paired_ids),
+    )
+    if compute_significance:
+        comparison.significance = bootstrap_difference(left, right)
+        groups = _groups_for(base_results)
+        clusters = [groups.get(i) for i in paired_ids]
+        if all(clusters):
+            comparison.cluster_significance = paired_cluster_bootstrap_difference(
+                left, right, [str(c) for c in clusters]
+            )
+        else:
+            comparison.cluster_significance = {"estimable": False, "reason": _NO_GROUPS}
+    return comparison
 
 
 def compare_results(
@@ -291,28 +547,39 @@ def compare_results(
     finetuned: dict[str, Any],
     *,
     compute_significance: bool = True,
+    cross_model: bool = False,
+    primary_subset: str | None = None,
+    equivalence_margin: float | None = None,
 ) -> ComparisonReport:
     """Compare two saved evaluation-result payloads (spec section 54).
 
     Scores are paired by ``example_id`` so the bootstrap is a genuine paired test
     rather than a comparison of two unrelated samples.
+
+    Args:
+        cross_model: ``base`` and ``finetuned`` are two models on the same arm,
+            not one model before and after fine-tuning.
+        primary_subset: Subset (``answerable`` or ``should_decline``) whose
+            cluster interval decides the primary verdict, with
+            ``equivalence_margin``.
     """
     report = ComparisonReport(
         base_arm=base.get("arm", "base"),
         finetuned_arm=finetuned.get("arm", "finetuned"),
         base_model=base.get("model", {}),
         finetuned_model=finetuned.get("model", {}),
+        mode="cross_model" if cross_model else "fine_tuning",
     )
 
     base_results = base.get("results", [])
     finetuned_results = finetuned.get("results", [])
 
     # --- comparability checks ----------------------------------------------
-    if base.get("benchmark_path") != finetuned.get("benchmark_path"):
-        report.comparability_warnings.append(
-            f"Different benchmarks: {base.get('benchmark_path')} vs "
-            f"{finetuned.get('benchmark_path')}. The scores are not comparable."
-        )
+    comparable, identity, identity_warnings = check_benchmark_identity(base, finetuned)
+    report.benchmark_identity = identity
+    report.comparability_warnings.extend(identity_warnings)
+    if not comparable:
+        report.incomparable = True
     if base.get("generation") != finetuned.get("generation"):
         report.comparability_warnings.append(
             "Decoding settings differ between the arms; part of any difference may be "
@@ -320,15 +587,23 @@ def compare_results(
         )
     base_model_id = base.get("model", {}).get("base_model")
     ft_model_id = finetuned.get("model", {}).get("base_model")
-    if base_model_id != ft_model_id:
-        report.comparability_warnings.append(
-            f"Different base models ({base_model_id} vs {ft_model_id}). This is a "
-            "cross-model comparison, not a fine-tuning effect."
-        )
-    if finetuned.get("model", {}).get("adapter_path") is None:
-        report.comparability_warnings.append(
-            "The fine-tuned arm reports no adapter path — it may be the base model evaluated twice."
-        )
+    if cross_model:
+        if report.base_arm != report.finetuned_arm:
+            report.comparability_warnings.append(
+                f"Cross-model comparison of different arms ({report.base_arm} vs "
+                f"{report.finetuned_arm}); arm conditions differ as well as models."
+            )
+    else:
+        if base_model_id != ft_model_id:
+            report.comparability_warnings.append(
+                f"Different base models ({base_model_id} vs {ft_model_id}). This is a "
+                "cross-model comparison, not a fine-tuning effect; use cross_model mode."
+            )
+        if finetuned.get("model", {}).get("adapter_path") is None:
+            report.comparability_warnings.append(
+                "The fine-tuned arm reports no adapter path — it may be the base model "
+                "evaluated twice."
+            )
 
     base_ids = {r["example_id"] for r in base_results}
     ft_ids = {r["example_id"] for r in finetuned_results}
@@ -343,6 +618,11 @@ def compare_results(
         report.comparability_warnings.append(
             "The arms share no example ids; no paired comparison is possible."
         )
+        report.incomparable = True
+        return report
+    if report.incomparable:
+        for warning in report.comparability_warnings:
+            logger.warning("Comparability: %s", warning)
         return report
 
     # --- per task -----------------------------------------------------------
@@ -351,37 +631,77 @@ def compare_results(
         | {r.get("task", "unknown") for r in finetuned_results}
     )
     for task in tasks:
-        base_scores = _per_example_scores(base_results, task=task)
-        ft_scores = _per_example_scores(finetuned_results, task=task)
-        paired_ids = sorted(set(base_scores) & set(ft_scores))
-        if not paired_ids:
-            continue
-        left = [base_scores[i] for i in paired_ids]
-        right = [ft_scores[i] for i in paired_ids]
-        report.per_task.append(
-            TaskComparison(
-                task=task,
-                base_score=summarize(task, left).mean,
-                finetuned_score=summarize(task, right).mean,
-                count=len(paired_ids),
-                significance=(bootstrap_difference(left, right) if compute_significance else {}),
-            )
+        comparison = _paired(
+            base_results,
+            finetuned_results,
+            name=task,
+            keep=lambda r, task=task: r.get("task", "unknown") == task,
+            compute_significance=compute_significance,
         )
+        if comparison is not None:
+            report.per_task.append(comparison)
 
     # --- overall -------------------------------------------------------------
-    base_all = _per_example_scores(base_results)
-    ft_all = _per_example_scores(finetuned_results)
-    paired_ids = sorted(set(base_all) & set(ft_all))
-    if paired_ids:
-        left = [base_all[i] for i in paired_ids]
-        right = [ft_all[i] for i in paired_ids]
-        report.overall = TaskComparison(
-            task="overall",
-            base_score=summarize("overall", left).mean,
-            finetuned_score=summarize("overall", right).mean,
-            count=len(paired_ids),
-            significance=bootstrap_difference(left, right) if compute_significance else {},
+    report.overall = _paired(
+        base_results,
+        finetuned_results,
+        name="overall",
+        keep=lambda r: True,
+        compute_significance=compute_significance,
+    )
+
+    # --- subsets (answerable / should-decline) -------------------------------
+    for subset in SUBSETS:
+        comparison = _paired(
+            base_results,
+            finetuned_results,
+            name=subset,
+            keep=lambda r, subset=subset: r.get("subset") == subset,
+            compute_significance=compute_significance,
         )
+        if comparison is not None:
+            report.subsets.append(comparison)
+
+    if primary_subset is not None:
+        margin = equivalence_margin if equivalence_margin is not None else 0.0
+        chosen = next((t for t in report.subsets if t.task == primary_subset), None)
+        if chosen is None:
+            report.primary = {
+                "subset": primary_subset,
+                "margin": margin,
+                "verdict": "inconclusive",
+                "explanation": f"no record carries subset={primary_subset!r}; annotate the "
+                "results with scripts/rescore.py --mode annotate",
+            }
+        else:
+            verdict, explanation = primary_verdict(chosen.cluster_significance, margin)
+            report.primary = {
+                "subset": primary_subset,
+                "margin": margin,
+                **chosen.cluster_significance,
+                "left_mean": round(chosen.base_score, 4),
+                "right_mean": round(chosen.finetuned_score, 4),
+                "verdict": verdict,
+                "explanation": explanation,
+            }
+
+    # --- consistency by group_id, from the corrected blocks ------------------
+    base_corrected = (base.get("corrected") or {}).get("consistency") or {}
+    ft_corrected = (finetuned.get("corrected") or {}).get("consistency") or {}
+    for name in ("group_id", "group_id_answerable"):
+        left_block, right_block = base_corrected.get(name), ft_corrected.get(name)
+        if (
+            left_block
+            and right_block
+            and left_block.get("evaluated_groups")
+            and right_block.get("evaluated_groups")
+        ):
+            report.corrected_consistency[name] = {
+                "left": left_block["agreement_rate"],
+                "right": right_block["agreement_rate"],
+                "oracle": left_block["oracle_agreement_rate"],
+                "groups": left_block["evaluated_groups"],
+            }
 
     # --- OOD -----------------------------------------------------------------
     base_ood, ft_ood = base.get("ood"), finetuned.get("ood")
@@ -464,6 +784,7 @@ def render_markdown_report(
     what model, what configuration, what metrics, did it improve, where did it
     fail, what changed OOD, what changed in general capability.
     """
+    left, right = comparison.labels
     lines = [
         f"# Experiment report — {experiment_id}",
         "",
@@ -471,12 +792,15 @@ def render_markdown_report(
         "",
         "## What was compared",
         "",
-        f"- base arm: `{comparison.base_arm}`",
-        f"- fine-tuned arm: `{comparison.finetuned_arm}`",
-        f"- base model: `{comparison.base_model.get('base_model', '-')}`",
+        f"- mode: `{comparison.mode}`",
+        f"- {left} arm: `{comparison.base_arm}`",
+        f"- {right} arm: `{comparison.finetuned_arm}`",
+        f"- {left} model: `{comparison.base_model.get('base_model', '-')}`",
+        f"- {right} model: `{comparison.finetuned_model.get('base_model', '-')}`",
         f"- model family: `{comparison.base_model.get('family', '-')}`",
         f"- adapter: `{comparison.finetuned_model.get('adapter_path', '-')}`",
         f"- dataset version: `{dataset_version}`",
+        f"- benchmark identity: {comparison.benchmark_identity.get('detail', 'not checked')}",
         "",
     ]
 
@@ -490,21 +814,78 @@ def render_markdown_report(
         lines.extend(f"- {w}" for w in comparison.comparability_warnings)
         lines.append("")
 
+    if comparison.incomparable:
+        lines.extend(["## Not comparable", "", comparison._conclusion(), ""])
+        return "\n".join(lines)
+
+    if comparison.primary:
+        primary = comparison.primary
+        lines.extend(
+            [
+                "## Primary comparison (pre-registered)",
+                "",
+                f"- subset: `{primary['subset']}`, margin ±{primary['margin']}",
+                f"- {left} {primary.get('left_mean', '-')} → {right} "
+                f"{primary.get('right_mean', '-')} "
+                f"(difference {primary.get('difference', 0):+.4f})",
+                f"- cluster 95% CI: {_render_ci(primary)} "
+                f"({primary.get('clusters', 0)} groups, n={primary.get('n', 0)})",
+                f"- **verdict: {primary['verdict'].upper()}** — {primary.get('explanation', '')}",
+                "",
+            ]
+        )
+
     lines.extend(
         [
-            "## Did it improve?",
+            "## Did it improve?" if comparison.mode == "fine_tuning" else "## Per task",
             "",
-            "| Task | Base | Fine-tuned | Abs Δ | Rel Δ | n | Verdict |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | --- |",
+            f"| Task | {left} | {right} | Abs Δ | Rel Δ | n | Verdict | Cluster verdict |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",
         ]
     )
     for task in comparison.per_task:
         lines.append(
             f"| `{task.task}` | {task.base_score:.4f} | {task.finetuned_score:.4f} | "
             f"{task.absolute_delta:+.4f} | {task.relative_delta:+.1%} | {task.count} | "
-            f"{task.verdict} |"
+            f"{task.verdict} | {task.cluster_verdict} |"
         )
-    lines.append("")
+    lines.extend(
+        [
+            "",
+            "_Verdict: examples resampled (the original method). Cluster verdict: "
+            "whole groups resampled, which respects that perturbations of one case "
+            "are not independent (H-F14)._",
+            "",
+        ]
+    )
+
+    if comparison.subsets:
+        lines.extend(
+            [
+                "## By subset",
+                "",
+                f"| Subset | {left} | {right} | Abs Δ | n | Groups | Cluster 95% CI | Verdict |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+            ]
+        )
+        for subset in comparison.subsets:
+            lines.append(
+                f"| `{subset.task}` | {subset.base_score:.4f} | {subset.finetuned_score:.4f} | "
+                f"{subset.absolute_delta:+.4f} | {subset.count} | "
+                f"{subset.cluster_significance.get('clusters', '-')} | "
+                f"{_render_ci(subset.cluster_significance)} | {subset.cluster_verdict} |"
+            )
+        lines.append("")
+
+    if comparison.corrected_consistency:
+        lines.extend(["## Consistency by group_id", ""])
+        for name, pair in comparison.corrected_consistency.items():
+            lines.append(
+                f"- {name}: {pair['left']:.3f} → {pair['right']:.3f} "
+                f"({pair['right'] - pair['left']:+.3f}); an oracle scores {pair['oracle']:.3f} "
+                f"over {pair['groups']} groups"
+            )
+        lines.append("")
 
     if comparison.ood_delta:
         lines.extend(
@@ -536,7 +917,7 @@ def render_markdown_report(
         delta = comparison.consistency_delta
         lines.extend(
             [
-                "## Consistency",
+                "## Consistency (configured grouping key)",
                 "",
                 f"- agreement rate: {delta['base_agreement']:.3f} → "
                 f"{delta['finetuned_agreement']:.3f} ({delta['agreement_delta']:+.3f})",
@@ -585,8 +966,9 @@ def render_markdown_report(
             "---",
             "",
             "_Generated by `scripts/compare.py`. Deltas are paired per example and",
-            "accompanied by bootstrap confidence intervals. A difference that is not",
-            "significant is reported as such rather than as a win._",
+            "accompanied by bootstrap confidence intervals, over examples and over",
+            "groups. A difference that is not significant is reported as such rather",
+            "than as a win._",
             "",
         ]
     )

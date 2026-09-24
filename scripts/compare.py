@@ -17,6 +17,17 @@ Usage::
     python scripts/compare.py --base outputs/base_results.json \
                               --finetuned outputs/finetuned_results.json \
                               --report reports/experiment-001
+
+    # Two models on the same arm, with the pre-registered primary comparison
+    # (H8b: Hermes arm2 vs Logos arm2 on the answerable subset):
+    python scripts/compare.py --cross-model \
+                              --base hermes_arm2.annotated.json \
+                              --finetuned logos_arm2.json \
+                              --primary-subset answerable --equivalence-margin 0.02
+
+Exit codes: 0 compared; 2 not comparable (different benchmarks, or no shared
+examples); 1 only with --fail-on-regression, when the comparison regressed (a
+task whose cluster verdict regressed, or a primary verdict of "worse").
 """
 
 from __future__ import annotations
@@ -27,7 +38,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _cli import add_common_arguments, run, setup_logging
-from kleos_models.evaluation.reports import compare_results, write_experiment_report
+from kleos_models.evaluation.reports import (
+    ComparisonReport,
+    compare_results,
+    write_experiment_report,
+)
 from kleos_models.evaluation.runner import load_evaluation_result
 from kleos_models.logging_utils import get_logger
 
@@ -59,14 +74,44 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-significance", action="store_true", help="Skip bootstrap significance testing."
     )
+    parser.add_argument(
+        "--cross-model",
+        action="store_true",
+        help="--base and --finetuned are two models on the same arm (e.g. Hermes vs Logos).",
+    )
+    parser.add_argument(
+        "--primary-subset",
+        choices=["answerable", "should_decline"],
+        help="Decide a primary verdict on this subset's cluster interval.",
+    )
+    parser.add_argument(
+        "--equivalence-margin",
+        type=float,
+        default=0.02,
+        help="Margin for an 'equivalent' primary verdict (default 0.02).",
+    )
+    parser.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 when the comparison regressed, so a driver script can branch on it.",
+    )
     add_common_arguments(parser)
     args = parser.parse_args(argv)
     setup_logging(args)
+    if args.equivalence_margin < 0:
+        parser.error("--equivalence-margin must not be negative")
 
     base = load_evaluation_result(args.base)
     finetuned = load_evaluation_result(args.finetuned)
 
-    comparison = compare_results(base, finetuned, compute_significance=not args.no_significance)
+    comparison = compare_results(
+        base,
+        finetuned,
+        compute_significance=not args.no_significance,
+        cross_model=args.cross_model,
+        primary_subset=args.primary_subset,
+        equivalence_margin=args.equivalence_margin if args.primary_subset else None,
+    )
     print("\n" + comparison.render(show_aggregate=args.show_aggregate))
 
     if args.report:
@@ -85,10 +130,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"✓ Report written to {paths['summary']}")
         print(f"  metrics    {paths['metrics']}\n")
 
-    # Non-zero exit when the fine-tuned arm regressed, so CI or a driver script
-    # can notice. A regression is a valid result, not an error, hence exit 0 by
-    # default unless --fail-on-regression is used by the caller.
+    if comparison.incomparable:
+        return 2
+    # A regression is a valid result, not an error: exit 1 only when asked.
+    if args.fail_on_regression and _regressed(comparison):
+        return 1
     return 0
+
+
+def _regressed(comparison: ComparisonReport) -> bool:
+    if comparison.primary:
+        return bool(comparison.primary.get("verdict") == "worse")
+    return any(t.cluster_verdict.startswith("regressed (p") for t in comparison.per_task) or any(
+        t.verdict.startswith("regressed (p") and t.cluster_verdict == "n/a"
+        for t in comparison.per_task
+    )
 
 
 if __name__ == "__main__":

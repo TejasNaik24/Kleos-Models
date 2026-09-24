@@ -372,6 +372,71 @@ class TestCheckpointRetention:
         assert removed
         assert len(discover_checkpoints(tmp_path)) == 3
 
+    # Finding H-F9: the KLEOS pass runs after transformers' rotation and used to
+    # keep the newest N by recency alone, so a best checkpoint older than the
+    # newest N was deleted and load_best_model_at_end silently shipped the final
+    # weights.
+
+    def test_best_checkpoint_survives_beyond_the_newest_n(self, tmp_path):
+        for step in (200, 225, 250, 275):
+            make_checkpoint(tmp_path, step)
+        removed = prune_checkpoints(tmp_path, keep=3, protect=(str(tmp_path / "checkpoint-200"),))
+        assert [c.step for c in discover_checkpoints(tmp_path)] == [275, 250, 225, 200]
+        assert removed == []
+
+    def test_protection_only_exempts_the_protected_checkpoint(self, tmp_path):
+        for step in (100, 200, 225, 250, 275):
+            make_checkpoint(tmp_path, step)
+        prune_checkpoints(tmp_path, keep=2, protect=(str(tmp_path / "checkpoint-200"),))
+        assert [c.step for c in discover_checkpoints(tmp_path)] == [275, 250, 200]
+
+    def test_protection_matches_by_name_not_path_form(self, tmp_path):
+        # The Trainer may record the path relative or unresolved.
+        for step in (10, 20, 30):
+            make_checkpoint(tmp_path, step)
+        prune_checkpoints(tmp_path, keep=1, protect=("outputs/run/../run/checkpoint-10",))
+        assert [c.step for c in discover_checkpoints(tmp_path)] == [30, 10]
+
+    def test_save_total_limit_one_keeps_latest_and_best(self, tmp_path):
+        # transformers keeps two checkpoints here (best and latest); the KLEOS
+        # pass must not cut that to one.
+        for step in (50, 100):
+            make_checkpoint(tmp_path, step)
+        prune_checkpoints(tmp_path, keep=1, protect=(str(tmp_path / "checkpoint-50"),))
+        assert [c.step for c in discover_checkpoints(tmp_path)] == [100, 50]
+
+    def test_a_protected_checkpoint_is_kept_even_if_it_looks_incomplete(self, tmp_path):
+        make_checkpoint(tmp_path, 10)
+        make_checkpoint(tmp_path, 20, complete=False)
+        prune_checkpoints(tmp_path, keep=5, protect=("checkpoint-20",))
+        assert (tmp_path / "checkpoint-20").exists()
+
+    def test_none_and_empty_protection_change_nothing(self, tmp_path):
+        for step in (10, 20, 30, 40):
+            make_checkpoint(tmp_path, step)
+        prune_checkpoints(tmp_path, keep=2, protect=(None, ""))
+        assert [c.step for c in discover_checkpoints(tmp_path)] == [40, 30]
+
+    def test_the_callback_protects_the_trainers_best_checkpoint(self, tmp_path):
+        from types import SimpleNamespace
+
+        from kleos_models.training.callbacks import CheckpointMetadataCallback
+
+        for step in (200, 225, 250, 275):
+            make_checkpoint(tmp_path, step)
+        callback = CheckpointMetadataCallback(
+            experiment_id="exp-1", metadata={}, output_dir=tmp_path, save_total_limit=3
+        )
+        state = SimpleNamespace(
+            global_step=275,
+            epoch=2.6,
+            best_metric=0.41,
+            best_model_checkpoint=str(tmp_path / "checkpoint-200"),
+        )
+        callback.on_save(None, state, None)
+        assert (tmp_path / "checkpoint-200").exists()
+        assert [c.step for c in discover_checkpoints(tmp_path)] == [275, 250, 225, 200]
+
 
 class TestEnvironmentCapture:
     def test_environment_snapshot_has_the_required_fields(self):

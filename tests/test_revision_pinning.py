@@ -237,3 +237,42 @@ class TestModelCardStatesRevisionHonestly:
     def test_the_tokenizer_is_loaded_from_the_base_at_the_same_revision(self):
         card = self._card(PINNED_SHA)
         assert "AutoTokenizer.from_pretrained(BASE, revision=REVISION)" in card
+
+
+#: The base revision KLEOS Logos v0.0.1 trains against, audited 2026-09-24.
+LOGOS_PINNED_SHA = "3cea74c1ebaf5ce5f5a2553de470e2ceab825142"
+#: sha256 of Logos' tokenizer files at that revision. Only the chat template is
+#: small enough to vendor (tests/fixtures); the other two are recorded here and in
+#: the header of configs/models/ministral3_14b.yaml for the audit trail.
+LOGOS_TOKENIZER_SHA256 = {
+    "tokenizer.json": "d5f6046775b112f0e2d456ee9dba450684ab964fe5c4e231599bdc6773028135",
+    "tokenizer_config.json": "f59f7294e4f26383d0ea93840fe21cf197784be0842a8301a0343e8c34ed0d6d",
+    "chat_template.jinja": "2f545122222db8bb43ca0ea0c49e9185320a8670f7d35575b0da0eb48b1e8970",
+}
+
+
+class TestLogosIsPinned:
+    """KLEOS Logos v0.0.1: base, revision and tokenizer files, audited 2026-09-24."""
+
+    def test_logos_base_and_revision(self):
+        config = load_model_config(CONFIGS_DIR / "models" / "ministral3_14b.yaml")
+        assert config.base_model == "mistralai/Ministral-3-14B-Instruct-2512-BF16"
+        assert config.revision == LOGOS_PINNED_SHA
+        assert is_pinned_revision(config.revision)
+
+    def test_logos_uses_no_other_models_sha(self):
+        config = load_model_config(CONFIGS_DIR / "models" / "ministral3_14b.yaml")
+        assert config.revision not in (PINNED_SHA, HERMES_PINNED_SHA)
+
+    def test_the_vendored_chat_template_is_the_pinned_one(self):
+        import hashlib
+
+        from tests.conftest import REPO_ROOT
+
+        template = REPO_ROOT / "tests" / "fixtures" / "ministral3_chat_template.jinja"
+        digest = hashlib.sha256(template.read_bytes()).hexdigest()
+        assert digest == LOGOS_TOKENIZER_SHA256["chat_template.jinja"]
+
+    def test_the_model_config_records_the_tokenizer_hashes(self):
+        header = (CONFIGS_DIR / "models" / "ministral3_14b.yaml").read_text(encoding="utf-8")
+        assert "tests/test_revision_pinning.py" in header

@@ -110,7 +110,9 @@ os.environ["HF_HOME"] = "/content/drive/MyDrive/kleos/hf_cache"
 
 Setting `HF_HOME` to Drive also means a reconnect does not re-download the base
 model — which on a slow day is the difference between resuming in one minute and
-in twenty.
+in twenty. It costs Drive space equal to the checkpoint (about 16 GB for an 8B
+model, 28 GB for Logos' base); with little Drive space, keep `HF_HOME` under
+`/content` and accept the re-download, as the Logos runbook (`docs/logos.md`) does.
 
 ## 8. Dry run
 
@@ -123,11 +125,18 @@ loading weights.
 
 ## 9. Train
 
+Pin the experiment id: section 10 needs the same one to resume.
+
+```python
+EXPERIMENT_ID = "my-first-run"
+```
+
 ```python
 !python scripts/train.py \
     --config configs/training/qlora_small.yaml \
     --dataset data/examples \
-    --output-dir {OUTPUT_DIR}
+    --output-dir {OUTPUT_DIR} \
+    --experiment-id {EXPERIMENT_ID}
 ```
 
 Before the loop starts you get GPU, VRAM, CUDA and library versions, model and
@@ -143,8 +152,13 @@ It will. Re-run the setup cells, remount Drive, then:
 !python scripts/train.py \
     --config configs/training/qlora_small.yaml \
     --output-dir {OUTPUT_DIR} \
+    --experiment-id {EXPERIMENT_ID} \
     --resume-from-checkpoint auto
 ```
+
+`--experiment-id` must be the id the run started with. It names the run's
+directory; a generated id is new on every invocation, so `auto` would search
+an empty directory and the run would silently start again from step 0.
 
 `auto` finds the newest **valid** checkpoint. A checkpoint half-written when the
 runtime was killed is detected as incomplete and skipped, rather than causing a

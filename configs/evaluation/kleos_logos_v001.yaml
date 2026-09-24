@@ -1,0 +1,14 @@
+# ---------------------------------------------------------------------------
+# Evaluation for KLEOS Logos v0.0.1: IDENTICAL to Hermes' by construction.
+#
+# Same benchmark (built from the sealed v0.0.6 test split, sha256 a11ffad7...),
+# same grader, same greedy decoding, same seeds, same arms. Hermes vs Logos is
+# only interpretable if nothing on the evaluation side differs, so this file
+# extends Hermes' and overrides nothing. tests/test_config.py enforces that.
+#
+# The corrected metrics (consistency by group_id, answerable vs should-decline
+# subsets, group-level bootstrap) are computed for every run by the runner and
+# reported beside the original ones; they need no setting here.
+# ---------------------------------------------------------------------------
+
+extends: kleos_policy_v006.yaml

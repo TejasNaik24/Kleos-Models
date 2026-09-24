@@ -107,8 +107,13 @@ installs torch-dependent packages with `--no-deps` specifically to prevent this.
 Expected on the free tier. Re-run the setup cells, remount Drive, then:
 
 ```bash
-python scripts/train.py --config <config> --resume-from-checkpoint auto
+python scripts/train.py --config <config> --experiment-id <original-id> \
+                        --resume-from-checkpoint auto
 ```
+
+`--experiment-id` must be the id the run started with. It names the run's
+directory; a generated id is new on every invocation, so `auto` would search
+an empty directory and the run would silently start again from step 0.
 
 If you were not writing checkpoints to Drive, the run is gone. Set
 `--output-dir /content/drive/MyDrive/kleos/outputs` next time.

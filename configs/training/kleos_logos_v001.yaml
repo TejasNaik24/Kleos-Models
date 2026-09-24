@@ -1,0 +1,98 @@
+# ---------------------------------------------------------------------------
+# KLEOS LOGOS v0.0.1 — the deeper KLEOS model. NOT YET TRAINED.
+#
+#   python scripts/train.py --config configs/training/kleos_logos_v001.yaml \
+#                           --dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 \
+#                           --output-dir /content/drive/MyDrive/kleos-private/outputs \
+#                           --experiment-id kleos-v006-ministral314b-run1
+#
+# Use exactly those two paths: config_hash covers the resolved dataset path and
+# output directory, and the hash pre-registered under H8 in docs/experiments.md
+# is computed with them. docs/logos.md has the full Colab runbook.
+#
+# WHAT THIS RUN IS FOR
+# Hermes (Mistral-Nemo 12B) is frozen. Logos asks whether a much more capable
+# base (Ministral 3 14B: MMLU 79.4 against Nemo's 68.0) turns into better
+# KLEOS decisions under the SAME data and recipe. So everything below is
+# Hermes' configuration value for value, except where the model requires
+# otherwise or a difference is deliberate and stated:
+#
+#   model        Ministral 3 14B text tower (configs/models/ministral3_14b.yaml),
+#                including its tokenizer, chat template and
+#                fix_mistral_regex: true. These are the object of study.
+#   eval/save    every 25 steps, not 50. Hermes' validation loss bottomed near
+#                epoch 1.95 (step ~200) and rose after; a 25-step grid locates
+#                that minimum twice as finely. Cost: ~6 extra validation
+#                passes (~15-20 minutes on a T4). Training math is unchanged.
+#   strict       strict_config: true. This run will be compared against Hermes,
+#                so a memory fallback must stop it rather than quietly shrink
+#                it. (Hermes ran with false so a first fallback would be
+#                recorded rather than abort.)
+#
+# The dataset is the sealed kleos-policy-v0.0.6, unchanged, so Hermes vs Logos
+# isolates the base model. Its known limits (docs/logos.md, "Dataset") cap
+# every model trained on it: the four decline labels never occur in training.
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/ministral3_14b.yaml
+  # The sealed release, referenced not copied. Read-only; never regenerated.
+  dataset: ../datasets/kleos_policy_v006.yaml
+  evaluation: ../evaluation/kleos_logos_v001.yaml
+
+name: kleos-logos-v001-ministral3-14b
+description: >-
+  KLEOS Logos v0.0.1. QLoRA adapter on the text tower of Ministral 3 14B
+  (Apache-2.0) over the sealed kleos-policy-v0.0.6 release, with Hermes'
+  recipe. Engineering defaults, not tuned hyperparameters. NOT YET TRAINED.
+tags: [kleos, logos, policy, v0.0.6, qlora, mistral, ministral3, apache-2.0]
+hypothesis: H8
+
+# Null, as for Hermes: one multi-task policy adapter over all seven tasks.
+task: null
+
+model:
+  # Restated, as in Hermes' config: the longest example is 492 tokens under
+  # this tokenizer, so nothing truncates.
+  max_seq_length: 1024
+
+training:
+  num_train_epochs: 3.0
+  max_steps: -1
+
+  # Hermes' values, unchanged.
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  per_device_eval_batch_size: 1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  optim: paged_adamw_8bit
+  gradient_checkpointing: true
+  # auto -> fp16 on a T4 (compute capability 7.5 has no bfloat16).
+  precision: auto
+
+  # 820 examples at an effective batch of 8: ~103 steps per epoch, ~309 total.
+  # 25 rather than Hermes' 50; see the header. load_best_model_at_end needs
+  # save and eval on the same step grid, so they move together.
+  logging_steps: 5
+  save_strategy: steps
+  save_steps: 25
+  # The best checkpoint is always kept on top of these (finding H-F9).
+  save_total_limit: 3
+  eval_strategy: steps
+  eval_steps: 25
+
+  # Best checkpoint by VALIDATION loss; the test split plays no part.
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+
+  # See the header: a compared run must not silently change shape.
+  strict_config: true
+
+  # QLoRA must stay QLoRA.
+  allow_full_finetune: false

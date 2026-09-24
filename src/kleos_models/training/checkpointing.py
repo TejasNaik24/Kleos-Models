@@ -10,6 +10,10 @@ usually without warning and often overnight. Three consequences shape this modul
    validated before being offered.
 3. **Retention never empties the directory.** ``save_total_limit`` is honoured with
    a hard floor of one, so cleanup cannot leave a user with nothing to resume from.
+4. **Retention never deletes the best checkpoint.** transformers' own rotation
+   exempts ``best_model_checkpoint``; the KLEOS pass runs after it and must not
+   undo that, or ``load_best_model_at_end`` silently ships the final weights
+   instead (finding H-F9).
 
 This module imports no torch.
 """
@@ -19,6 +23,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -241,13 +246,25 @@ def read_checkpoint_metadata(checkpoint_dir: Path | str) -> dict[str, Any] | Non
         return None
 
 
-def prune_checkpoints(output_dir: Path | str, *, keep: int, dry_run: bool = False) -> list[Path]:
+def prune_checkpoints(
+    output_dir: Path | str,
+    *,
+    keep: int,
+    dry_run: bool = False,
+    protect: Iterable[Path | str | None] = (),
+) -> list[Path]:
     """Delete old checkpoints, always keeping at least one.
 
     Args:
         output_dir: Directory to prune.
-        keep: How many to retain. Values below 1 are raised to 1.
+        keep: How many of the newest to retain. Values below 1 are raised to 1.
         dry_run: Report what would be deleted without deleting.
+        protect: Checkpoints never deleted, on top of the ``keep`` newest. Pass
+            the Trainer's ``best_model_checkpoint``. Matched by directory name,
+            because the Trainer may record the path in a different form (relative,
+            unresolved) than the one found on disk; all checkpoints of a run
+            share one directory, so the name identifies it. ``None`` entries are
+            ignored.
 
     Returns:
         Paths removed (or that would be removed).
@@ -261,6 +278,8 @@ def prune_checkpoints(output_dir: Path | str, *, keep: int, dry_run: bool = Fals
             floor,
         )
 
+    protected_names = {Path(item).name for item in protect if item}
+
     checkpoints = discover_checkpoints(output_dir, include_invalid=True)
     valid = [c for c in checkpoints if c.valid]
     invalid = [c for c in checkpoints if not c.valid]
@@ -268,7 +287,16 @@ def prune_checkpoints(output_dir: Path | str, *, keep: int, dry_run: bool = Fals
     removed: list[Path] = []
 
     # Incomplete checkpoints are never useful; remove them regardless of the limit.
+    # A protected one is kept even so: this module's idea of "complete" is not
+    # worth deleting the checkpoint the Trainer will load at the end.
     for checkpoint in invalid:
+        if checkpoint.path.name in protected_names:
+            logger.warning(
+                "Keeping %s although it looks incomplete (%s): it is protected.",
+                checkpoint.path.name,
+                checkpoint.reason,
+            )
+            continue
         logger.info(
             "Removing incomplete checkpoint %s (%s)", checkpoint.path.name, checkpoint.reason
         )
@@ -277,6 +305,13 @@ def prune_checkpoints(output_dir: Path | str, *, keep: int, dry_run: bool = Fals
         removed.append(checkpoint.path)
 
     for checkpoint in valid[floor:]:
+        if checkpoint.path.name in protected_names:
+            logger.info(
+                "Keeping %s beyond the %d newest: it is the best checkpoint so far.",
+                checkpoint.path.name,
+                floor,
+            )
+            continue
         logger.info("Pruning checkpoint %s (keeping %d newest)", checkpoint.path.name, floor)
         if not dry_run:
             shutil.rmtree(checkpoint.path, ignore_errors=True)
