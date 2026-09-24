@@ -95,6 +95,9 @@ class FaithfulnessResult:
     fabricated_ids: list[str] = field(default_factory=list)
     unsupported_claims: list[str] = field(default_factory=list)
     supported_claims: list[str] = field(default_factory=list)
+    #: How many decisive evidence ids the reference named. Zero makes coverage
+    #: 1.0 by definition, so the number carries no information.
+    decisive_evidence_count: int = 0
 
     @property
     def score(self) -> float:
@@ -113,6 +116,7 @@ class FaithfulnessResult:
             "fabricated_ids": self.fabricated_ids,
             "unsupported_claims": self.unsupported_claims[:20],
             "supported_claim_count": len(self.supported_claims),
+            "decisive_evidence_count": self.decisive_evidence_count,
         }
 
 
@@ -204,6 +208,7 @@ def assess_faithfulness(
         fabricated_ids=fabricated,
         unsupported_claims=unsupported,
         supported_claims=supported,
+        decisive_evidence_count=len(decisive_evidence_ids),
     )
 
 
@@ -232,6 +237,11 @@ class FaithfulnessReport:
     def responses_with_fabricated_citations(self) -> int:
         return sum(1 for r in self.results if r.fabricated_ids)
 
+    @property
+    def evidence_coverage_vacuous(self) -> bool:
+        """No response had decisive evidence to cover, so coverage is 1.0 by definition."""
+        return bool(self.results) and all(r.decisive_evidence_count == 0 for r in self.results)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "count": self.count,
@@ -245,19 +255,27 @@ class FaithfulnessReport:
     def render(self) -> str:
         if not self.results:
             return "Faithfulness: not evaluated (no responses)."
+        coverage_note = (
+            "  (vacuous: no decisive evidence ids in the benchmark)"
+            if self.evidence_coverage_vacuous
+            else ""
+        )
         return "\n".join(
             [
                 "Faithfulness",
                 f"  responses evaluated       : {self.count}",
                 f"  mean score                : {self.mean_score:.4f}",
-                f"  evidence coverage         : {self._mean('evidence_coverage'):.4f}",
-                f"  citation precision        : {self._mean('citation_precision'):.4f}",
+                f"  evidence coverage         : {self._mean('evidence_coverage'):.4f}{coverage_note}",
+                f"  citation precision        : {self._mean('citation_precision'):.4f}"
+                "  (UNCALIBRATED)",
                 f"  unsupported claim rate    : {self._mean('unsupported_claim_rate'):.4f}",
                 f"  fabricated citations in   : {self.responses_with_fabricated_citations} "
-                "response(s)",
+                "response(s)  (UNCALIBRATED)",
                 "",
                 "  These are text-level heuristics, not entailment checks. They detect",
                 "  claims and citations absent from the supplied context; they do not",
-                "  verify semantic support.",
+                "  verify semantic support. The citation check also flags gold answers",
+                "  (finding H-F12): compare it with its gold floor, computed by",
+                "  scripts/rescore.py --gold-targets, before reading it as fabrication.",
             ]
         )

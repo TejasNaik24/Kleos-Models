@@ -464,6 +464,13 @@ can ship. It does not fix anything Ministral got wrong.
 None is fixed in this change. Each is tooling or record-keeping; none alters a
 reported number.
 
+**Status, 2026-09-24 (Logos phase).** Fixed in code for future runs, with this
+run's artifacts and numbers untouched: H-F1 for newly trained adapters (the base
+revision is written into `adapter_config.json`), H-F5 (identity by content), H-F7
+(details saved), H-F9 (the best checkpoint is protected) and H-F10 (the estimator
+reproduces this run's 13.09 GB peak). H-F11–H-F14 below were found in the same
+audit. They are about how the evaluation measures, not about this model.
+
 ### Findings that affect how the record is read
 
 **H-F6 — `assert_comparable` never compares base models.** It raises only on a
@@ -534,6 +541,39 @@ result files record `/content/benchmark/benchmark.jsonl`, rebuilt in different
 sessions, and no content hash is stored. Identity was verified by hand here (hash
 plus target fingerprint); the tool would have accepted a different file at the
 same path.
+
+### Measurement findings (added 2026-09-24)
+
+Found while designing Logos' comparison with this run. None changes a number in
+this report. Each changes how a number should be read, and each now has a
+corrected measure reported beside the original
+([../evaluation.md](../evaluation.md)).
+
+**H-F11 — Consistency is grouped by scenario family, which mixes labels.** The
+runner groups by `metadata.scenario_family` whatever `consistency.group_key`
+says. 6 of the 15 test families contain cases whose correct answers differ, so a
+model answering every case correctly would score `agreement_rate` 0.600 (9/15)
+and log 57 "flips". The 10/15 families that flip in §7 therefore include families
+where flipping is correct. The equivalence unit is `group_id`: 78 test groups, each
+label-identical by construction, where the same oracle scores 1.000.
+
+**H-F12 — The fabricated-citation heuristic flags gold answers.** Applied to the
+reference answers, it flags about 27% of training targets and 48% of test targets.
+arm2's 98 of 349 responses is therefore no evidence of fabrication, and the arm1 →
+arm2 drop (147 → 98) says as much about answer style as about grounding. It is now
+reported as uncalibrated, beside its gold floor (`rescore.py --gold-targets`).
+
+**H-F13 — Evidence coverage is vacuous on this benchmark.** No item carries
+`reference.evidence_ids`, so coverage is 1.0 for every response by definition
+(the 1.0000 in both columns of §7).
+
+**H-F14 — The confidence intervals treat 349 examples as independent.** They are
+78 groups of perturbations of one case. An example-level bootstrap resamples
+correlated items as if independent and understates uncertainty, most for tasks
+with few groups (`context_prioritization`: n = 8). This run's per-task verdicts are
+so far from zero that clustering is unlikely to change one, but that is to be
+shown, not assumed: `rescore.py --mode annotate` computes the group-level
+intervals from the stored results without modifying them.
 
 ---
 

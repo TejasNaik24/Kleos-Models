@@ -128,7 +128,7 @@ class TestReferences:
 
         invocations = re.findall(
             r"python (scripts/[a-z_]+\.py)((?:\s+\\?\s*--[\w-]+(?:\s+[^\s\\]+)?)*)",
-            source_of(loaded["02_train_qlora.ipynb"]),
+            source_of(loaded["02_train_qlora.ipynb"]) + source_of(loaded["03_evaluate.ipynb"]),
         )
         assert invocations, "no script invocations found in the training notebook"
 
@@ -167,6 +167,23 @@ class TestTrainingNotebookContent:
 
     def test_it_covers_resume(self, training):
         assert "--resume-from-checkpoint auto" in source_of(training)
+
+    def test_training_and_resume_pin_the_experiment_id(self, training):
+        # A generated id is new on every invocation, so resume would search an
+        # empty directory and silently restart from step 0.
+        cells = [
+            "".join(cell["source"])
+            for cell in training["cells"]
+            if cell["cell_type"] == "code" and "scripts/train.py" in "".join(cell["source"])
+        ]
+        real_runs = [c for c in cells if "--dry-run" not in c]
+        assert len(real_runs) >= 2
+        for cell in real_runs:
+            assert "--experiment-id {EXPERIMENT_ID}" in cell
+        assert 'EXPERIMENT_ID = "' in source_of(training, "code")
+
+    def test_it_does_not_pretend_a_rename_switches_models(self, training):
+        assert "--set model.name" not in source_of(training, "code")
 
     def test_it_covers_drive_persistence(self, training):
         text = source_of(training)

@@ -41,8 +41,10 @@ importable for introspection in the light environment.
 
 from __future__ import annotations
 
+import copy
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -116,6 +118,95 @@ class TargetModuleResolution:
         }
 
 
+#: Key renames that expose the text tower of a ``mistral3`` (vision-language)
+#: checkpoint as a plain causal LM. Mistral's hub checkpoints use the layout
+#: from before transformers 5 reorganized VLMs: ``language_model.model.*`` and a
+#: separate, untied ``language_model.lm_head.weight``.
+MISTRAL3_TEXT_KEY_MAPPING: dict[str, str] = {
+    r"^language_model\.model\.": "model.",
+    r"^language_model\.lm_head\.": "lm_head.",
+}
+#: Checkpoint keys a text-only view is expected to leave behind.
+MISTRAL3_NON_TEXT_PREFIXES: tuple[str, ...] = ("vision_tower.", "multi_modal_projector.")
+
+
+@dataclass(frozen=True)
+class CheckpointView:
+    """How to load one tower of a composite checkpoint as a standalone model.
+
+    Used for KLEOS Logos: the text tower of Ministral 3 14B, whose checkpoint is
+    a vision-language model. The weights come from the official repository at
+    the pinned revision, byte for byte; only their names are mapped, and the
+    vision weights are never loaded. The view is recorded in the manifest so a
+    run always says which tower it trained.
+    """
+
+    kind: str
+    container_model_type: str
+    container_architectures: tuple[str, ...]
+    text_model_type: str
+    text_config: Any
+    key_mapping: Mapping[str, str]
+    ignored_prefixes: tuple[str, ...]
+    dtype_inherited: str | None = None
+
+    def load_kwargs(self) -> dict[str, Any]:
+        """``from_pretrained`` kwargs that load the view."""
+        return {
+            "config": self.text_config,
+            "key_mapping": dict(self.key_mapping),
+            "output_loading_info": True,
+        }
+
+    def validate_loading_info(self, info: Mapping[str, Any]) -> dict[str, Any]:
+        """Refuse a load that did not map every expected weight.
+
+        A missing key would be randomly initialized and a mismatched one
+        reshaped or dropped: either way the model is not the checkpoint, and
+        nothing downstream would notice. The only keys allowed to go unused are
+        the other tower's.
+        """
+        missing = sorted(str(k) for k in info.get("missing_keys") or [])
+        mismatched = [str(k) for k in info.get("mismatched_keys") or []]
+        unexpected = sorted(str(k) for k in info.get("unexpected_keys") or [])
+        stray = [k for k in unexpected if not k.startswith(self.ignored_prefixes)]
+        if missing or mismatched or stray:
+            raise ModelCompatibilityError(
+                f"The {self.kind} view did not load cleanly from the "
+                f"{self.container_model_type} checkpoint.",
+                details={
+                    "missing_keys": missing[:20],
+                    "mismatched_keys": mismatched[:20],
+                    "unexpected_non_vision_keys": stray[:20],
+                },
+                suggestions=[
+                    "The checkpoint's key layout is not the one the view expects; "
+                    "do not train on this load.",
+                    "Confirm the pinned revision and the installed transformers version.",
+                ],
+            )
+        return {
+            "missing_keys": 0,
+            "mismatched_keys": 0,
+            "unexpected_keys": len(unexpected),
+            "unexpected_by_prefix": {
+                prefix: sum(1 for key in unexpected if key.startswith(prefix))
+                for prefix in self.ignored_prefixes
+            },
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "container_model_type": self.container_model_type,
+            "container_architectures": list(self.container_architectures),
+            "text_model_type": self.text_model_type,
+            "key_mapping": dict(self.key_mapping),
+            "ignored_checkpoint_prefixes": list(self.ignored_prefixes),
+            "dtype_inherited_from_container": self.dtype_inherited,
+        }
+
+
 class ModelFamilyAdapter(ABC):
     """Per-family behaviour: loading, templates, reasoning, LoRA targeting."""
 
@@ -186,6 +277,15 @@ class ModelFamilyAdapter(ABC):
         if self.config.attn_implementation:
             kwargs["attn_implementation"] = self.config.attn_implementation
         return kwargs
+
+    def checkpoint_view(self, hf_config: Any) -> CheckpointView | None:
+        """A view to load when the checkpoint is a container for this family.
+
+        ``None`` (the default) means the checkpoint loads as itself. An adapter
+        overriding this must refuse, not guess, when the container is not the
+        one it knows how to open.
+        """
+        return None
 
     # -- reasoning ----------------------------------------------------------
 
@@ -571,6 +671,15 @@ class Mistral3VLMAdapter(ModelFamilyAdapter):
 
     KLEOS training data is text-only, so the vision tower is frozen and left
     unquantized.
+
+    **Known issue (finding L-F1, docs/logos.md), not fixed:** on transformers 5
+    both scoping mechanisms miss. Target validation requires names that *start
+    with* ``language_model``, but transformers 5 names them
+    ``model.language_model.*``, so attaching LoRA raises. And PEFT reads the
+    ``exclude_modules`` list by exact name or ``.suffix``, so ``"vision_tower"``
+    excludes none of the projections inside the tower. No KLEOS run uses this
+    adapter; ``tests/test_vlm_targeting_finding.py`` holds both as strict xfails.
+    Logos loads its ``mistral3`` checkpoint through ``Ministral3TextAdapter``.
     """
 
     model_types = ("mistral3",)
@@ -648,6 +757,145 @@ class Mistral3VLMAdapter(ModelFamilyAdapter):
 
 
 # ---------------------------------------------------------------------------
+# Ministral 3 text tower (KLEOS Logos)
+# ---------------------------------------------------------------------------
+
+
+class Ministral3TextAdapter(ModelFamilyAdapter):
+    """The text tower of a Ministral 3 checkpoint, loaded as a plain causal LM.
+
+    ``mistralai/Ministral-3-14B-Instruct-2512-BF16`` is published as a
+    vision-language model (``Mistral3ForConditionalGeneration``, model_type
+    ``mistral3``) whose text tower is ``ministral3``: 40 layers x 5120, the
+    same shape as Mistral-Nemo with a wider MLP. KLEOS is text-only, and the
+    0.44B-parameter vision tower would cost roughly 0.9 GB on a 16 GB T4 that
+    has less than 1 GB to spare. So Logos loads *only* the text tower, as
+    ``Ministral3ForCausalLM``: the same weights, renamed on load, with the
+    vision weights left on disk.
+
+    A config selects this view by stating ``model_type: ministral3`` for a
+    checkpoint that reports ``mistral3``. An adapter trained on this view binds
+    to ``model.layers.*`` names and must be served through the same view.
+    """
+
+    model_types = ("ministral3",)
+    family = "mistral"
+
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(
+            family="mistral",
+            model_type="ministral3",
+            auto_class="AutoModelForCausalLM",
+            reasoning=ReasoningCapability.UNSUPPORTED,
+            is_moe=False,
+            is_multimodal=False,
+            supports_4bit=True,
+            default_context_limit=262144,
+            notes=[
+                "Text tower of a Mistral3 vision-language checkpoint, loaded as "
+                "Ministral3ForCausalLM; the vision tower is never loaded.",
+                "The chat template renders system prompts in place, so no system "
+                "merge is needed (unlike Mistral-Nemo, deviation D5).",
+            ],
+        )
+
+    @property
+    def default_target_modules(self) -> list[str]:
+        return [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ]
+
+    @property
+    def excluded_module_patterns(self) -> list[str]:
+        # Defensive: the view loads no vision modules, and if one ever appeared
+        # it must not receive an adapter.
+        return [*super().excluded_module_patterns, "vision_tower", "multi_modal_projector"]
+
+    def checkpoint_view(self, hf_config: Any) -> CheckpointView | None:
+        container_type = getattr(hf_config, "model_type", None)
+        if container_type != "mistral3":
+            return None  # a plain ministral3 checkpoint loads as itself
+
+        text_config = getattr(hf_config, "text_config", None)
+        text_type = getattr(text_config, "model_type", None)
+        architectures = tuple(getattr(hf_config, "architectures", None) or ())
+        problems: list[str] = []
+        if text_type != "ministral3":
+            problems.append(
+                f"its text tower is {text_type!r}, not 'ministral3' (for example "
+                "Mistral Small 3.x, whose tower is 'mistral')"
+            )
+        if "Mistral3ForConditionalGeneration" not in architectures:
+            problems.append(f"it declares {list(architectures)}")
+        if self.config.architecture and self.config.architecture not in architectures:
+            problems.append(
+                f"the config expects {self.config.architecture!r} but the checkpoint "
+                f"declares {list(architectures)}"
+            )
+        if getattr(hf_config, "quantization_config", None):
+            problems.append(
+                "it is pre-quantized (for example the FP8 release), and a text-only "
+                "view would silently drop that quantization"
+            )
+        if problems:
+            raise ModelCompatibilityError(
+                f"{self.config.base_model} is not a Ministral 3 checkpoint this "
+                "text-only view can open.",
+                details={"problems": problems},
+                suggestions=[
+                    "Use the BF16 Ministral 3 repository at a pinned revision.",
+                    "For a different Mistral3 model, use model_type 'mistral3' and "
+                    "the vision-language adapter.",
+                ],
+            )
+
+        text: Any = copy.deepcopy(text_config)  # not None: checked via text_type above
+        inherited: str | None = None
+        container_dtype = getattr(hf_config, "dtype", None) or getattr(
+            hf_config, "torch_dtype", None
+        )
+        if getattr(text, "dtype", None) is None and container_dtype is not None:
+            # The container states the weights' dtype; a sub-config usually
+            # does not. Carry it over so 'auto' dtype means what it means for
+            # the full checkpoint.
+            text.dtype = container_dtype
+            inherited = str(container_dtype).replace("torch.", "")
+
+        return CheckpointView(
+            kind="text_only",
+            container_model_type="mistral3",
+            container_architectures=architectures,
+            text_model_type="ministral3",
+            text_config=text,
+            key_mapping=MISTRAL3_TEXT_KEY_MAPPING,
+            ignored_prefixes=MISTRAL3_NON_TEXT_PREFIXES,
+            dtype_inherited=inherited,
+        )
+
+    def prepare_model_for_training(self, model: Any) -> Any:
+        """Prove the view held: not one vision parameter may be present."""
+        leaked = [
+            name
+            for name, _ in model.named_parameters()
+            if "vision_tower" in name or "multi_modal_projector" in name
+        ]
+        if leaked:
+            raise ModelCompatibilityError(
+                "The text-only view loaded vision parameters.",
+                details={"parameters": leaked[:10]},
+                suggestions=["Do not train: this is not the text tower alone."],
+            )
+        return model
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -656,6 +904,7 @@ _ADAPTER_CLASSES: tuple[type[ModelFamilyAdapter], ...] = (
     QwenMoEAdapter,
     QwenDenseAdapter,
     Mistral3VLMAdapter,
+    Ministral3TextAdapter,
     MistralDenseAdapter,
 )
 
@@ -691,6 +940,8 @@ def _infer_model_type(config: ModelConfig) -> str:
         return "qwen3_moe"
     if "mistral-small-3" in name or "mistral-small-24b" in name:
         return "mistral3"
+    if "ministral-3-" in name:
+        return "ministral3"
     if "qwen3" in name or "qwen-3" in name:
         return "qwen3"
     if "qwen2.5" in name or "qwen2_5" in name:
@@ -743,24 +994,65 @@ def get_adapter(config: ModelConfig) -> ModelFamilyAdapter:
     return adapter
 
 
+@dataclass
+class LoadPlan:
+    """What to instantiate for a config, given the checkpoint's own config."""
+
+    config: ModelConfig
+    adapter: ModelFamilyAdapter
+    #: Set when a tower of a composite checkpoint is loaded on its own.
+    view: CheckpointView | None = None
+    #: The config's model_type when the checkpoint's was trusted instead.
+    flipped_from: str | None = None
+
+
+def resolve_load_plan(config: ModelConfig, hf_config: Any) -> LoadPlan:
+    """Decide how to load ``config`` given the checkpoint's reported config.
+
+    Normally the checkpoint is the authority: a config whose ``model_type``
+    disagrees with the checkpoint is corrected, with a warning. That is how the
+    same Ministral-8B config survives transformers 4.x reporting ``mistral``
+    and 5.x ``ministral``. The one exception is a deliberate view: when the
+    configured adapter knows how to open the reported container (``ministral3``
+    over a ``mistral3`` checkpoint), the config is kept and the view is used.
+    """
+    reported = getattr(hf_config, "model_type", None)
+    if reported and config.model_type and reported != config.model_type:
+        try:
+            configured = get_adapter(config)
+        except ModelCompatibilityError:
+            configured = None
+        view = configured.checkpoint_view(hf_config) if configured is not None else None
+        if configured is not None and view is not None:
+            return LoadPlan(config=config, adapter=configured, view=view)
+
+    flipped: str | None = None
+    resolved = config
+    if reported and reported != config.model_type:
+        if config.model_type:
+            logger.warning(
+                "Config says model_type=%r; the checkpoint reports %r. Trusting the checkpoint.",
+                config.model_type,
+                reported,
+            )
+            flipped = config.model_type
+        resolved = config.model_copy(update={"model_type": reported})
+    return LoadPlan(config=resolved, adapter=get_adapter(resolved), flipped_from=flipped)
+
+
 def resolve_adapter_from_hf_config(hf_config: Any, config: ModelConfig) -> ModelFamilyAdapter:
     """Resolve an adapter using a downloaded HF config as the authority.
 
     Preferred over :func:`get_adapter` once the checkpoint's real config is
-    available, because it removes all guesswork about the architecture.
+    available, because it removes all guesswork about the architecture. A
+    deliberate view (see :func:`resolve_load_plan`) keeps the configured adapter.
     """
-    model_type = getattr(hf_config, "model_type", None)
     architectures = list(getattr(hf_config, "architectures", None) or [])
-
-    if model_type and model_type != config.model_type:
-        if config.model_type:
-            logger.warning(
-                "Config declares model_type=%r but the checkpoint reports %r; "
-                "trusting the checkpoint.",
-                config.model_type,
-                model_type,
-            )
-        config = config.model_copy(update={"model_type": model_type})
+    plan = resolve_load_plan(config, hf_config)
+    if plan.view is not None:
+        return plan.adapter
+    config = plan.config
+    model_type = config.model_type
 
     if architectures and config.architecture and config.architecture not in architectures:
         raise ModelCompatibilityError(

@@ -50,12 +50,24 @@ from kleos_models.training.memory import (
     diagnose_oom,
     free_memory,
     is_oom_error,
+    probe_training_peak,
     render_environment_report,
     reset_peak_memory,
     snapshot_memory,
 )
 
 logger = get_logger(__name__)
+
+#: The collator pads each batch to a multiple of this, so the longest padded
+#: sequence, not the longest raw one, sets the activation peak.
+PAD_TO_MULTIPLE_OF = 8
+
+
+def padded_length(length: int, multiple: int = PAD_TO_MULTIPLE_OF) -> int:
+    """``length`` rounded up to the collator's padding multiple."""
+    if multiple <= 1:
+        return length
+    return -(-length // multiple) * multiple
 
 
 class PaddingCollator:
@@ -67,7 +79,7 @@ class PaddingCollator:
     ``IGNORE_INDEX`` so padded positions contribute nothing to the loss.
     """
 
-    def __init__(self, pad_token_id: int, *, pad_to_multiple_of: int = 8) -> None:
+    def __init__(self, pad_token_id: int, *, pad_to_multiple_of: int = PAD_TO_MULTIPLE_OF) -> None:
         self.pad_token_id = pad_token_id
         self.pad_to_multiple_of = pad_to_multiple_of
 
@@ -184,12 +196,52 @@ def format_split(
     return ListDataset(rows), summary
 
 
-def _sample_batch(
-    dataset: ListDataset, collator: PaddingCollator, *, size: int = 2
-) -> dict[str, Any]:
-    """Build a small batch for gradient verification."""
-    rows = [dataset[i] for i in range(min(size, len(dataset)))]
+def _sample_batch(dataset: ListDataset, collator: PaddingCollator, *, size: int) -> dict[str, Any]:
+    """Build a small batch for gradient verification.
+
+    ``size`` is the configured ``per_device_train_batch_size``: a larger check
+    batch than training uses could itself run out of memory on a GPU the run
+    fits.
+    """
+    rows = [dataset[i] for i in range(min(max(1, size), len(dataset)))]
     return collator(rows)
+
+
+def measure_sequence_lengths(
+    config: ExperimentConfig,
+    bundle: DatasetBundle,
+    *,
+    tokenizer: Any | None = None,
+) -> dict[str, Any]:
+    """The longest training sequence, tokenized exactly as the trainer will.
+
+    With batch size 1 and padding to the longest in the batch, the activation
+    peak follows the longest example actually present, not
+    ``model.max_seq_length``. Measuring it lets the pre-flight memory check size
+    itself from the data. Loads only the tokenizer, never weights.
+    """
+    from kleos_models.models.adapters import get_adapter
+    from kleos_models.models.loading import load_tokenizer
+
+    adapter = get_adapter(config.model)
+    if tokenizer is None:
+        tokenizer = load_tokenizer(config.model, adapter)
+    mode = adapter.resolve_reasoning_mode(config.model.reasoning.default_mode)
+    formatter = ConversationFormatter(
+        tokenizer,
+        max_seq_length=config.model.max_seq_length,
+        template_kwargs=adapter.chat_template_kwargs(mode),
+        strip_reasoning=config.model.reasoning.strip_thinking_from_targets,
+    )
+    _, stats = formatter.format_dataset(bundle.train)
+    summary = stats.summary()
+    longest = int(summary["max_tokens"])
+    return {
+        "split": "train",
+        "longest": longest,
+        "longest_padded": padded_length(longest),
+        **summary,
+    }
 
 
 def run_training(
@@ -199,6 +251,8 @@ def run_training(
     *,
     resume_from_checkpoint: str | None = None,
     verify_gradients: bool = True,
+    probe_memory: bool = True,
+    longest_sequence: int | None = None,
     loaded: LoadedModel | None = None,
 ) -> TrainingResult:
     """Execute the full training pipeline (spec section 15).
@@ -211,6 +265,10 @@ def run_training(
         resume_from_checkpoint: ``None``, ``"auto"``, or an explicit path.
         verify_gradients: Run a forward/backward check before the real loop, so a
             silently-untrainable setup fails in seconds rather than hours.
+        probe_memory: Measure a step on the longest micro-batch before the loop
+            (CUDA only; see :func:`probe_training_peak`).
+        longest_sequence: The longest padded training sequence, measured before
+            loading weights; sizes the environment report's memory estimate.
         loaded: Pre-loaded model, used by tests to inject a tiny model.
 
     Returns:
@@ -233,7 +291,9 @@ def run_training(
     try:
         # --- 1-3. environment report -------------------------------------
         events.set_stage("environment")
-        report = render_environment_report(config.model, config.training)
+        report = render_environment_report(
+            config.model, config.training, seq_length=longest_sequence
+        )
         logger.info("\n%s", report)
         (output_dir / "environment.txt").write_text(report, encoding="utf-8")
         manifest.mark_started()
@@ -298,7 +358,9 @@ def run_training(
             with log_stage(logger, "Verifying gradients reach the adapter"):
                 from kleos_models.models.peft_setup import verify_gradients_flow
 
-                batch = _sample_batch(train_dataset, collator)
+                batch = _sample_batch(
+                    train_dataset, collator, size=config.training.per_device_train_batch_size
+                )
                 device = next(model.parameters()).device
                 batch = {k: v.to(device) for k, v in batch.items()}
                 diagnostics = verify_gradients_flow(model, batch)
@@ -311,6 +373,19 @@ def run_training(
                 events.emit("gradient_check", **diagnostics)
                 manifest.metrics["gradient_check"] = diagnostics
                 free_memory()
+
+        # --- memory probe ---------------------------------------------------
+        # Before the Trainer exists: it re-seeds on construction, so these passes
+        # cannot shift the run's random stream.
+        if probe_memory:
+            stage = "memory_probe"
+            events.set_stage(stage)
+            with log_stage(logger, "Measuring memory on the longest batch"):
+                probe = probe_training_peak(model, train_dataset, collator, config.training)
+            if probe is not None:
+                manifest.metrics["memory_probe"] = probe
+                events.emit("memory_probe", **probe)
+                manifest.save(output_dir)
 
         # --- 10. trainer ---------------------------------------------------
         stage = "trainer_init"

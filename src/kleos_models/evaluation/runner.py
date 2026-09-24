@@ -12,7 +12,13 @@ Two invariants make the results comparable:
    ``arm2_finetuned`` is the adapter.
 2. **Per-example records are always kept.** Aggregates alone would make it
    possible to report a favourable subset without deciding to. The raw records let
-   any aggregate be recomputed and checked.
+   any aggregate be recomputed and checked. They carry the grader's details
+   (finding H-F7), the item's ``group_id`` and its subset, so every corrected
+   measure (``corrections.py``) can be recomputed from the file alone.
+
+Results use schema version 2: the version-1 fields keep their definitions and
+values, and version 2 adds ``benchmark_sha256``, ``benchmark_fingerprint``,
+``generation_stats`` and ``corrected`` beside them.
 
 This module imports no torch; the backend supplies generation.
 """
@@ -20,6 +26,8 @@ This module imports no torch; the backend supplies generation.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -31,6 +39,14 @@ from kleos_models.data.schemas import EvaluationExample
 from kleos_models.errors import EvaluationError
 from kleos_models.evaluation.capability import CapabilityDelta
 from kleos_models.evaluation.consistency import ConsistencyReport, build_consistency_groups
+from kleos_models.evaluation.corrections import (
+    benchmark_index,
+    build_corrected,
+    generation_stats,
+    render_corrected,
+    subset_of,
+    targets_fingerprint,
+)
 from kleos_models.evaluation.faithfulness import (
     FaithfulnessReport,
     assess_faithfulness,
@@ -49,6 +65,9 @@ from kleos_models.inference.generate import (
 from kleos_models.logging_utils import get_logger
 
 logger = get_logger(__name__)
+
+#: Layout version of saved results. Version 2 adds fields; it changes none.
+RESULTS_SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -76,6 +95,8 @@ class ExampleResult:
     parse_failed: bool = False
     had_reasoning: bool = False
     details: dict[str, Any] = field(default_factory=dict)
+    group_id: str | None = None
+    subset: str | None = None
 
     def to_dict(self, *, include_response: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -97,6 +118,11 @@ class ExampleResult:
             "completion_tokens": self.completion_tokens,
             "parse_failed": self.parse_failed,
             "had_reasoning": self.had_reasoning,
+            "group_id": self.group_id,
+            "subset": self.subset,
+            # What the grader extracted from the response (finding H-F7): the
+            # predicted ranking, label and confidence behind the score.
+            "details": json.loads(json.dumps(self.details, default=str)),
         }
         if self.faithfulness:
             payload["faithfulness"] = self.faithfulness
@@ -124,6 +150,16 @@ class EvaluationResult:
     seeds: list[int] = field(default_factory=list)
     duration_seconds: float = 0.0
     warnings: list[str] = field(default_factory=list)
+    #: sha256 of the benchmark file's bytes, when the caller read it from disk.
+    benchmark_sha256: str | None = None
+    #: sha256 of the graded targets; checkable even without the file.
+    benchmark_fingerprint: str | None = None
+    generation_stats: dict[str, Any] = field(default_factory=dict)
+    corrected: dict[str, Any] = field(default_factory=dict)
+    #: Load time, wall time and peak VRAM, filled in by the script that ran it.
+    resource_usage: dict[str, Any] = field(default_factory=dict)
+    #: How a resumed evaluation was assembled; empty for an uninterrupted run.
+    resume: dict[str, Any] = field(default_factory=dict)
 
     @property
     def count(self) -> int:
@@ -144,6 +180,7 @@ class EvaluationResult:
 
     def to_dict(self, *, include_responses: bool = True) -> dict[str, Any]:
         return {
+            "schema_version": RESULTS_SCHEMA_VERSION,
             "arm": self.arm,
             "arm_config": self.arm_config,
             "model": self.model_description,
@@ -160,6 +197,12 @@ class EvaluationResult:
             "faithfulness": self.faithfulness.to_dict() if self.faithfulness else None,
             "capability": self.capability.to_dict() if self.capability else None,
             "warnings": self.warnings,
+            "benchmark_sha256": self.benchmark_sha256,
+            "benchmark_fingerprint": self.benchmark_fingerprint,
+            "generation_stats": self.generation_stats,
+            "corrected": self.corrected,
+            "resource_usage": self.resource_usage,
+            "resume": self.resume,
             "results": [r.to_dict(include_response=include_responses) for r in self.results],
         }
 
@@ -172,11 +215,7 @@ class EvaluationResult:
                 file will be shared.
         """
         target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(self.to_dict(include_responses=include_responses), indent=2, default=str),
-            encoding="utf-8",
-        )
+        write_json_atomic(target, self.to_dict(include_responses=include_responses))
         logger.info("Wrote evaluation results to %s", target)
         return target
 
@@ -211,11 +250,43 @@ class EvaluationResult:
             lines.extend(["", *(f"  {line}" for line in self.consistency.render().splitlines())])
         if self.faithfulness and self.faithfulness.count:
             lines.extend(["", *(f"  {line}" for line in self.faithfulness.render().splitlines())])
+        if self.corrected:
+            lines.extend(
+                ["", *(f"  {line}" for line in render_corrected(self.corrected).splitlines())]
+            )
         if self.warnings:
             lines.extend(["", "  Warnings:"])
             lines.extend(f"    - {w}" for w in self.warnings)
         lines.append("")
         return "\n".join(lines)
+
+
+def write_json_atomic(path: Path, payload: Any) -> None:
+    """Write JSON so a crash leaves either the old file or the new one, never half.
+
+    The text goes to a temporary file in the same directory, is flushed to disk,
+    and replaces the target in one ``os.replace``. An evaluation takes hours on a
+    free GPU; a runtime that dies mid-write must not leave a truncated result.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2, default=str)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def _group_value(example: EvaluationExample, key: str) -> str | None:
+    """The example's value for the configured consistency grouping key."""
+    value = getattr(example.metadata, key, None)
+    if value is None and example.metadata.model_extra:
+        value = example.metadata.model_extra.get(key)
+    return str(value) if value else None
 
 
 def _resolve_grader(name: str, cache: dict[str, Grader]) -> Grader:
@@ -252,6 +323,7 @@ def run_evaluation(
     arm: str = "arm0_base",
     orchestration: OrchestrationConfig | None = None,
     benchmark_path: str = "unknown",
+    benchmark_sha256: str | None = None,
     default_grader: str | None = None,
     include_faithfulness: bool = True,
 ) -> EvaluationResult:
@@ -264,6 +336,7 @@ def run_evaluation(
         arm: Research arm label, recorded on every example result.
         orchestration: Scaffolding config. Defaults to the arm's own.
         benchmark_path: Recorded for provenance.
+        benchmark_sha256: sha256 of the benchmark file, recorded as its identity.
         default_grader: Grader for examples that do not name one.
         include_faithfulness: Run faithfulness assessment.
 
@@ -313,6 +386,8 @@ def run_evaluation(
 
     results: list[ExampleResult] = []
     faithfulness_report = FaithfulnessReport()
+    group_key = config.consistency.group_key
+    group_values: dict[str, str | None] = {e.id: _group_value(e, group_key) for e in selected}
     started = time.perf_counter()
 
     for seed in config.seeds:
@@ -324,6 +399,11 @@ def run_evaluation(
             call_started = time.perf_counter()
             output = backend.generate(messages, generation, example_id=example.id, seed=seed)
             latency = time.perf_counter() - call_started
+            # A resumed run replays earlier generations; report the latency they
+            # really took, not the microseconds the replay did.
+            recorded_latency = output.metadata.get("recorded_latency_seconds")
+            if recorded_latency is not None:
+                latency = float(recorded_latency)
 
             grade = grader.grade(output.text, example.reference, example=example)
 
@@ -363,6 +443,8 @@ def run_evaluation(
                     parse_failed=grade.parse_failed,
                     had_reasoning=output.reasoning is not None,
                     details=grade.details,
+                    group_id=example.metadata.group_id,
+                    subset=subset_of(example.reference),
                 )
             )
 
@@ -422,13 +504,15 @@ def run_evaluation(
             )
 
     # --- consistency --------------------------------------------------------
+    # Grouped by the configured key. The v0.0.6 configs name scenario_family, so
+    # this block is unchanged for them; the group_id view is in `corrected`.
     consistency_report: ConsistencyReport | None = None
     if config.consistency.enabled:
-        grouped = [r for r in results if r.scenario_family]
+        grouped = [r for r in results if group_values.get(r.example_id)]
         if grouped:
             consistency_report = build_consistency_groups(
                 example_ids=[r.example_id for r in grouped],
-                group_ids=[r.scenario_family or "" for r in grouped],
+                group_ids=[group_values[r.example_id] or "" for r in grouped],
                 decisions=[r.decision for r in grouped],
                 scores=[r.score for r in grouped],
                 perturbation_kinds=[r.perturbation_kind or "" for r in grouped],
@@ -439,8 +523,14 @@ def run_evaluation(
         else:
             warnings.append(
                 "Consistency testing was requested but no example carries "
-                "metadata.scenario_family, so equivalent scenarios cannot be grouped."
+                f"metadata.{group_key}, so equivalent scenarios cannot be grouped."
             )
+
+    records = [r.to_dict(include_response=True) for r in results]
+    index = benchmark_index(selected)
+    corrected = build_corrected(
+        records, index=index, min_group_size=config.consistency.min_group_size
+    )
 
     result = EvaluationResult(
         arm=arm,
@@ -457,6 +547,10 @@ def run_evaluation(
         seeds=list(config.seeds),
         duration_seconds=duration,
         warnings=warnings,
+        benchmark_sha256=benchmark_sha256,
+        benchmark_fingerprint=targets_fingerprint(records),
+        generation_stats=generation_stats(records, max_new_tokens=generation.max_new_tokens),
+        corrected=corrected,
     )
 
     logger.info(

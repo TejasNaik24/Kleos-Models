@@ -200,8 +200,13 @@ class CheckpointMetadataCallback(TrainerCallbackBase):  # type: ignore[misc,vali
             except OSError as exc:  # pragma: no cover
                 logger.warning("Could not update manifest after checkpoint: %s", exc)
 
-        # Retention with a floor: never leave zero checkpoints behind.
-        prune_checkpoints(self.output_dir, keep=self.save_total_limit)
+        # Retention with a floor: never leave zero checkpoints behind, and never
+        # delete the checkpoint load_best_model_at_end will load (H-F9).
+        prune_checkpoints(
+            self.output_dir,
+            keep=self.save_total_limit,
+            protect=(getattr(state, "best_model_checkpoint", None),),
+        )
 
 
 class ProgressCallback(TrainerCallbackBase):  # type: ignore[misc,valid-type]

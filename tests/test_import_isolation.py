@@ -46,6 +46,10 @@ LIGHT_MODULES = [
     "kleos_models.evaluation.capability",
     "kleos_models.evaluation.reports",
     "kleos_models.evaluation.runner",
+    # The corrected measures and evaluation resume run on stored results, on a
+    # CPU runtime, with no model: re-reporting Hermes must not need torch.
+    "kleos_models.evaluation.corrections",
+    "kleos_models.evaluation.resume",
     "kleos_models.experiments",
     "kleos_models.experiments.manifest",
     "kleos_models.experiments.registry",

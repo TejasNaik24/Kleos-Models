@@ -139,9 +139,12 @@ def attach_lora(
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
 
-    # 3. Attach.
+    # 3. Attach. The base revision goes into adapter_config.json, so an adapter
+    # loaded on its own (AutoPeftModel) finds the weights it was trained against
+    # rather than whatever `main` points to (finding H-F1). PEFT reads it only
+    # there; adapter files are still fetched at the caller's revision.
     lora_config = build_lora_config(lora, resolution.matched, adapter=adapter)
-    model = peft.get_peft_model(model, lora_config)
+    model = peft.get_peft_model(model, lora_config, revision=model_config.revision)
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())

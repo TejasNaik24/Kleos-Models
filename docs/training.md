@@ -139,14 +139,21 @@ invalidated by a memory-driven fallback nobody noticed.
 Written for the reality of free Colab, where the runtime can vanish at any moment.
 
 ```bash
-python scripts/train.py --config <config> --resume-from-checkpoint auto
+python scripts/train.py --config <config> --experiment-id <original-id> \
+                        --resume-from-checkpoint auto
 ```
+
+`--experiment-id` must be the id the run started with. It names the run's
+directory; a generated id is new on every invocation, so `auto` would search
+an empty directory and the run would silently start again from step 0.
 
 - `auto` finds the newest **valid** checkpoint.
 - A checkpoint half-written when a runtime was killed is detected as incomplete
   and skipped, rather than failing confusingly on resume.
 - `save_total_limit` is honoured with a floor of 1 — retention can never leave you
-  with nothing to resume from.
+  with nothing to resume from — and the best checkpoint so far is always kept on
+  top of it, so `load_best_model_at_end` cannot silently fall back to the final
+  weights (finding H-F9).
 - KLEOS metadata (experiment id, dataset version and hash, config hash, seed)
   travels with each checkpoint, so a directory recovered from Drive months later
   still identifies its run.
@@ -176,11 +183,16 @@ successes.
 
 ## Multi-model support
 
-The same command trains any supported model:
+The model is whatever the training config includes (`includes.model`). To train a
+different one, use or copy a training config that includes it, as
+`kleos_hermes_v006.yaml` and `kleos_logos_v001.yaml` do. `--set model.name=...`
+only renames the model entry; it does not load a different checkpoint.
+
+To check how another model would fit the same recipe before writing its config:
 
 ```bash
-python scripts/train.py --config configs/training/qlora_small.yaml \
-                        --set model.name=ministral_8b
+python scripts/plan_run.py --config configs/training/qlora_small.yaml \
+                           --set-model configs/models/ministral_8b.yaml
 ```
 
 Everything family-specific — auto class, LoRA targets, exclusions, reasoning

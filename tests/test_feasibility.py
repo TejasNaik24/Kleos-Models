@@ -334,3 +334,219 @@ class TestPreFlightReport:
         assert "float16 will be used" in render_environment_report(
             config.model, config.training, gpu=T4
         )
+
+
+# ---------------------------------------------------------------------------
+# The rebuilt estimator (finding H-F10) and KLEOS Logos
+# ---------------------------------------------------------------------------
+
+from kleos_models.models.feasibility import (  # noqa: E402
+    EMPIRICAL_ANCHORS,
+    GPU_PRESETS,
+    NON_ALLOCATOR_GB,
+    REFERENCE_PAGED_GB,
+    memory_budget_gb,
+    simulated_gpu,
+)
+
+SEVEN = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+T4_COLAB = GPU_PRESETS["t4-colab"]
+
+
+def training_config(name: str):
+    return load_config(CONFIGS_DIR / "training" / name)
+
+
+class TestExactLoRACounts:
+    """The counts PEFT reported on real runs, from the shapes alone."""
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("mistral_nemo_12b", 57_016_320),  # Hermes' manifest
+            ("ministral_8b", 43_646_976),  # the Ministral-8B run's manifest
+            ("ministral3_14b", 60_948_480),  # Logos, 280 modules
+        ],
+    )
+    def test_seven_projection_counts(self, name, expected):
+        shape = ModelShape.from_config(model(name))
+        assert estimate_lora_parameters(shape, 16, SEVEN) == expected
+
+    def test_logos_text_parameters_are_the_verified_count(self):
+        shape = ModelShape.from_config(model("ministral3_14b"))
+        assert shape.parameter_count == 13_506_073_600
+        assert shape.vision_parameter_count == 438_958_080
+
+
+class TestEmpiricalAnchors:
+    @pytest.mark.parametrize("anchor", EMPIRICAL_ANCHORS, ids=lambda a: a.run)
+    def test_the_estimate_reproduces_a_measured_peak(self, anchor):
+        # Both measured on this project's T4 runs; a change that breaks either
+        # is a change to the physics, and must be justified against them.
+        assert abs(anchor.deviation()) < 0.02, (anchor.estimate_gb(), anchor.measured_peak_gb)
+
+
+class TestLogosOnAFreeT4:
+    def assess_at(self, name: str, seq: int | None):
+        config = training_config(name)
+        adapter = get_adapter(config.model)
+        return assess_feasibility(
+            config.model,
+            config.training,
+            gpu=T4_COLAB,
+            target_modules=adapter.resolve_target_modules(config.model.lora),
+            seq_length=seq,
+        )
+
+    def test_logos_at_its_longest_example_is_a_marginal_fit(self):
+        report = self.assess_at("kleos_logos_v001.yaml", 496)
+        assert 13.4 <= report.estimate.peak_allocated_gb <= 14.2
+        assert report.tier is FeasibilityTier.ADAPTER_TRAIN
+        assert report.fits and report.marginal
+        assert not report.proposed_adjustments
+        assert any("expandable_segments" in r for r in report.recommendations)
+
+    def test_hermes_at_its_longest_example_fits_comfortably(self):
+        report = self.assess_at("kleos_hermes_v006.yaml", 440)
+        assert report.fits and not report.marginal
+        assert report.headroom_gb > 0.5
+
+    def test_the_worst_case_length_would_have_refused_both(self):
+        # Why train.py measures the data first: at max_seq_length the estimate
+        # would shrink Hermes' config and refuse Logos', though Hermes ran.
+        for name in ("kleos_logos_v001.yaml", "kleos_hermes_v006.yaml"):
+            assert not self.assess_at(name, None).fits
+
+    def test_mistral_small_24b_does_not_fit_a_colab_t4(self):
+        report = assess("mistral_small_3_2", T4_COLAB)
+        assert not report.fits
+
+    def test_the_vision_tower_counts_only_when_loaded(self):
+        small = model("mistral_small_3_2")
+        loaded = estimate_memory(small, TrainingConfig(), loads_vision_tower=True)
+        skipped = estimate_memory(small, TrainingConfig(), loads_vision_tower=False)
+        assert loaded.base_weights_gb > skipped.base_weights_gb
+        logos = estimate_memory(model("ministral3_14b"), TrainingConfig())
+        assert not any("vision tower" in a for a in logos.assumptions)
+
+    def test_the_estimate_serializes_its_new_terms(self):
+        payload = estimate_memory(
+            model("ministral3_14b"), TrainingConfig(), seq_length=496
+        ).to_dict()
+        for key in ("peak_allocated_gb", "reserve_gb", "minimum_gb", "sequence_length"):
+            assert key in payload
+        assert payload["sequence_length"] == 496
+
+
+class TestBudgets:
+    def test_measured_free_memory_is_the_budget_less_paged_state(self):
+        live = GPUInfo(available=True, total_memory_gb=15.0, free_memory_gb=14.0)
+        assert memory_budget_gb(live, paged_gb=0.25) == pytest.approx(13.75)
+
+    def test_without_a_measurement_the_non_allocator_use_is_deducted(self):
+        preset = GPU_PRESETS["t4-colab"]
+        assert memory_budget_gb(preset) == pytest.approx(14.56 - NON_ALLOCATOR_GB)
+        excess = REFERENCE_PAGED_GB + 1.0
+        assert memory_budget_gb(preset, paged_gb=excess) == pytest.approx(
+            14.56 - NON_ALLOCATOR_GB - 1.0
+        )
+
+    def test_presets_hold_only_measured_hardware(self):
+        # 14.56 GiB is what torch reported on Colab's T4 during Hermes' run.
+        assert set(GPU_PRESETS) == {"t4-colab"}
+        assert T4_COLAB.total_memory_gb == 14.56
+        assert T4_COLAB.compute_capability == (7, 5)
+        assert "Hermes run report" in T4_COLAB.source
+
+    def test_a_custom_gpu_spec_is_parsed(self):
+        gpu = simulated_gpu("L4:22.0:8.9")
+        assert gpu.total_memory_gb == 22.0
+        assert gpu.compute_capability == (8, 9)
+        assert gpu.bf16_supported
+        assert "not measured" in gpu.source
+
+    @pytest.mark.parametrize("spec", ["a100", "L4:big:8.9", "L4:22:eight", "L4:-1:8.9"])
+    def test_a_bad_gpu_spec_is_refused(self, spec):
+        with pytest.raises(ValueError):
+            simulated_gpu(spec)
+
+    def test_the_smoke_tier_assumes_gradient_checkpointing(self):
+        # A config without checkpointing that fits once it is switched on is
+        # SMOKE (adjustable), not INFERENCE_ONLY.
+        config = model("ministral_8b")
+        report = assess_feasibility(
+            config,
+            TrainingConfig(gradient_checkpointing=False, per_device_train_batch_size=4),
+            gpu=T4_COLAB,
+            target_modules=SEVEN,
+        )
+        assert report.tier is FeasibilityTier.SMOKE
+        assert any(
+            a.field == "training.gradient_checkpointing" for a in report.proposed_adjustments
+        )
+
+
+class TestPlanRunScript:
+    def run(self, capsys, *argv: str) -> tuple[int, str]:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "plan_run_under_test", CONFIGS_DIR.parent / "scripts" / "plan_run.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        code = module.main(list(argv))
+        return code, capsys.readouterr().out
+
+    def test_logos_plan_on_a_simulated_t4(self, capsys):
+        code, out = self.run(
+            capsys,
+            "--config",
+            str(CONFIGS_DIR / "training" / "kleos_logos_v001.yaml"),
+            "--simulate-gpu",
+            "t4-colab",
+            "--seq-length",
+            "496",
+        )
+        assert code == 0
+        assert "MARGINAL" in out and "60,948,480" in out
+
+    def test_set_model_plans_another_model_in_the_same_recipe(self, capsys):
+        code, out = self.run(
+            capsys,
+            "--config",
+            str(CONFIGS_DIR / "training" / "kleos_hermes_v006.yaml"),
+            "--set-model",
+            str(CONFIGS_DIR / "models" / "ministral3_14b.yaml"),
+            "--simulate-gpu",
+            "t4-colab",
+            "--seq-length",
+            "496",
+        )
+        assert code == 0
+        assert "Ministral-3-14B" in out
+        assert "in place of the config's own" in out
+
+    def test_a_config_that_does_not_fit_exits_2(self, capsys):
+        code, _ = self.run(
+            capsys,
+            "--config",
+            str(CONFIGS_DIR / "training" / "kleos_logos_v001.yaml"),
+            "--simulate-gpu",
+            "t4-colab",
+        )
+        assert code == 2  # worst case: max_seq_length 1024
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--all-models", "--set-model", "x.yaml"],
+            ["--config", "c.yaml", "--seq-length", "0"],
+            ["--config", "c.yaml", "--simulate-gpu", "nonsense"],
+        ],
+    )
+    def test_bad_arguments_are_refused(self, capsys, argv):
+        with pytest.raises(SystemExit) as info:
+            self.run(capsys, *argv)
+        assert info.value.code == 2

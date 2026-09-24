@@ -232,10 +232,14 @@ def _iter_files(root: Path, paths: list[Path] | None = None):
 
 
 def _redact(line: str, match: re.Match[str]) -> str:
-    """Show enough context to locate the hit without reprinting the secret."""
+    """Show enough context to locate the hit without reprinting the secret.
+
+    The match is masked inside the context too: on a short line such as
+    ``HF_TOKEN=hf_...`` the context would otherwise be the secret itself.
+    """
     text = match.group(0)
     shown = text[:6] + "…" if len(text) > 8 else "…"
-    snippet = line.strip()[:100]
+    snippet = line.strip().replace(text, shown)
     return f"{shown!r} in {snippet[:60]!r}"
 
 

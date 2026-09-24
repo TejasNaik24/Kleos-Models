@@ -208,8 +208,12 @@ Colab runtimes die. Resume is a first-class path:
 
 ```bash
 python scripts/train.py --config configs/training/qlora_small.yaml \
+                        --experiment-id <original-id> \
                         --resume-from-checkpoint auto
 ```
+
+Pass the id the run started with: it names the run's directory, and a new id would
+make `auto` search an empty one and restart from step 0.
 
 `auto` finds the newest **valid** checkpoint — partial directories from an
 interrupted save are detected and skipped rather than causing a confusing failure.

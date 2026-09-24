@@ -8,6 +8,7 @@ something a user can act on.
 
 from __future__ import annotations
 
+import contextlib
 import gc
 from dataclasses import dataclass
 from typing import Any
@@ -95,23 +96,126 @@ def free_memory() -> None:
         pass
 
 
+def probe_training_peak(
+    model: Any,
+    dataset: Any,
+    collator: Any,
+    training_config: TrainingConfig,
+) -> dict[str, Any] | None:
+    """Measure a training step's memory on the longest micro-batch, before step 1.
+
+    The pre-flight estimate is arithmetic; this is the measurement. Two forward
+    and backward passes on the ``per_device_train_batch_size`` longest examples,
+    under the autocast the Trainer will use, keeping the gradients between them as
+    gradient accumulation does. A configuration that cannot survive its longest
+    batch then fails in the first minute rather than hours in, and a smoke run
+    reports the peak its real run will reach whichever examples its ten steps
+    happen to draw.
+
+    Nothing trains: gradients are discarded, and the Trainer re-seeds on
+    construction, so the passes leave no trace on the run.
+
+    Returns:
+        The measurement, or ``None`` without CUDA.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        return None
+
+    from kleos_models.training.arguments import resolve_precision
+
+    bf16, fp16, _ = resolve_precision(training_config)
+    dtype = torch.bfloat16 if bf16 else torch.float16 if fp16 else None
+
+    size = max(1, training_config.per_device_train_batch_size)
+    longest = sorted(range(len(dataset)), key=lambda i: len(dataset[i]["input_ids"]), reverse=True)
+    batch = collator([dataset[i] for i in longest[:size]])
+    device = next(model.parameters()).device
+    batch = {key: value.to(device) for key, value in batch.items()}
+
+    was_training = model.training
+    model.train()
+    model.zero_grad(set_to_none=True)
+    free_memory()
+    torch.cuda.reset_peak_memory_stats(device)
+    try:
+        for _ in range(2):
+            autocast = (
+                torch.autocast("cuda", dtype=dtype)
+                if dtype is not None
+                else contextlib.nullcontext()
+            )
+            with autocast:
+                loss = model(**batch).loss
+            loss.backward()
+        torch.cuda.synchronize(device)
+        free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+        peak_allocated = torch.cuda.max_memory_allocated(device) / BYTES_PER_GB
+        peak_reserved = torch.cuda.max_memory_reserved(device) / BYTES_PER_GB
+    finally:
+        model.zero_grad(set_to_none=True)
+        if not was_training:
+            model.eval()
+        free_memory()
+
+    # bitsandbytes' paged optimizer allocates its state outside PyTorch's
+    # allocator at the first optimizer step, from what is free now.
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    paged_gb = trainable * 2 / BYTES_PER_GB if "paged" in training_config.optim else 0.0
+    free_at_peak = free_bytes / BYTES_PER_GB
+    result = {
+        "batch_size": int(batch["input_ids"].shape[0]),
+        "sequence_length": int(batch["input_ids"].shape[1]),
+        "precision": "bf16" if bf16 else "fp16" if fp16 else "fp32",
+        "peak_allocated_gb": round(peak_allocated, 3),
+        "peak_reserved_gb": round(peak_reserved, 3),
+        "total_gb": round(total_bytes / BYTES_PER_GB, 3),
+        "free_at_peak_gb": round(free_at_peak, 3),
+        "paged_optimizer_gb": round(paged_gb, 3),
+        "spare_after_optimizer_gb": round(free_at_peak - paged_gb, 3),
+    }
+    logger.info(
+        "Memory probe (longest batch %d x %d tokens, %s): peak %.2f GB allocated, "
+        "%.2f GB reserved of %.2f GB; %.2f GB spare once the optimizer state exists.",
+        result["batch_size"],
+        result["sequence_length"],
+        result["precision"],
+        peak_allocated,
+        peak_reserved,
+        result["total_gb"],
+        result["spare_after_optimizer_gb"],
+    )
+    return result
+
+
 def render_environment_report(
     model_config: ModelConfig,
     training_config: TrainingConfig,
     *,
     gpu: GPUInfo | None = None,
+    seq_length: int | None = None,
 ) -> str:
     """The pre-flight report the training script prints (spec section 13).
 
     Everything the spec requires before an expensive run: GPU, VRAM, CUDA, library
     versions, model id, quantization, LoRA settings, and the memory estimate.
+
+    Args:
+        seq_length: The longest training sequence, when measured; the memory
+            estimate otherwise assumes ``model.max_seq_length``.
     """
     from kleos_models.compat import library_versions
     from kleos_models.models.feasibility import estimate_memory
 
     gpu = gpu or probe_gpu()
     versions = library_versions()
-    estimate = estimate_memory(model_config, training_config)
+    from kleos_models.models.adapters import get_adapter
+
+    targets = get_adapter(model_config).resolve_target_modules(model_config.lora)
+    estimate = estimate_memory(
+        model_config, training_config, target_modules=targets, seq_length=seq_length
+    )
 
     lines = [
         "=" * 72,

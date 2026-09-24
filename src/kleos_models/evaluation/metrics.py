@@ -470,6 +470,153 @@ def bootstrap_difference(
     }
 
 
+#: Fewer clusters than this and a cluster bootstrap is reported as not estimable:
+#: resampling a handful of groups gives an interval that means little.
+MIN_BOOTSTRAP_CLUSTERS = 5
+
+
+def _cluster_indices(clusters: Sequence[str]) -> list[list[int]]:
+    """Example indices per cluster, in a deterministic (sorted) cluster order."""
+    members: dict[str, list[int]] = {}
+    for index, cluster in enumerate(clusters):
+        members.setdefault(str(cluster), []).append(index)
+    return [members[key] for key in sorted(members)]
+
+
+def cluster_bootstrap_mean(
+    values: Sequence[float],
+    clusters: Sequence[str],
+    *,
+    iterations: int = 2000,
+    seed: int = 42,
+    min_clusters: int = MIN_BOOTSTRAP_CLUSTERS,
+) -> dict[str, Any]:
+    """Mean with a 95% interval from resampling whole clusters.
+
+    When examples come in groups that share a scenario (perturbations of one
+    case), they are not independent, and an interval that resamples examples is
+    too narrow. Resampling the groups themselves respects that: the effective
+    sample size is the number of groups, not the number of examples.
+    """
+    import random
+
+    if len(values) != len(clusters):
+        raise ValueError(
+            f"values and clusters must be the same length: {len(values)} vs {len(clusters)}"
+        )
+    groups = _cluster_indices(clusters)
+    mean = sum(values) / len(values) if values else 0.0
+    result: dict[str, Any] = {
+        "mean": round(mean, 4),
+        "n": len(values),
+        "clusters": len(groups),
+        "method": "cluster_bootstrap",
+        "iterations": iterations,
+    }
+    if len(groups) < min_clusters:
+        result.update(
+            estimable=False,
+            reason=f"{len(groups)} cluster(s); at least {min_clusters} are needed",
+        )
+        return result
+
+    rng = random.Random(seed)
+    means: list[float] = []
+    for _ in range(iterations):
+        total = 0.0
+        count = 0
+        for _ in range(len(groups)):
+            members = groups[rng.randrange(len(groups))]
+            total += sum(values[i] for i in members)
+            count += len(members)
+        means.append(total / count)
+    means.sort()
+    result.update(
+        estimable=True,
+        ci95_low=round(means[int(0.025 * iterations)], 4),
+        ci95_high=round(means[min(int(0.975 * iterations), iterations - 1)], 4),
+    )
+    return result
+
+
+def paired_cluster_bootstrap_difference(
+    left: Sequence[float],
+    right: Sequence[float],
+    clusters: Sequence[str],
+    *,
+    iterations: int = 2000,
+    seed: int = 42,
+    min_clusters: int = MIN_BOOTSTRAP_CLUSTERS,
+) -> dict[str, Any]:
+    """Paired bootstrap on ``mean(right) - mean(left)``, resampling clusters.
+
+    The cluster counterpart of :func:`bootstrap_difference`: examples stay paired,
+    and each resample draws whole groups with replacement. Same output keys, plus
+    ``clusters``, ``method`` and ``estimable``. A p-value of 0 means no resample
+    crossed zero, i.e. ``p < 1 / iterations``; render it that way, not as 0.
+    """
+    import random
+
+    if not (len(left) == len(right) == len(clusters)):
+        raise ValueError(
+            "paired cluster bootstrap needs equal-length vectors: "
+            f"{len(left)}, {len(right)}, {len(clusters)}"
+        )
+    groups = _cluster_indices(clusters)
+    observed = (sum(right) - sum(left)) / len(left) if left else 0.0
+    result: dict[str, Any] = {
+        "difference": round(observed, 4),
+        "n": len(left),
+        "clusters": len(groups),
+        "method": "paired_cluster_bootstrap",
+        "iterations": iterations,
+    }
+    if len(groups) < min_clusters:
+        result.update(
+            estimable=False,
+            reason=f"{len(groups)} cluster(s); at least {min_clusters} are needed",
+            p_value=None,
+            significant_at_05=None,
+        )
+        return result
+
+    rng = random.Random(seed)
+    differences: list[float] = []
+    for _ in range(iterations):
+        delta = 0.0
+        count = 0
+        for _ in range(len(groups)):
+            members = groups[rng.randrange(len(groups))]
+            delta += sum(right[i] - left[i] for i in members)
+            count += len(members)
+        differences.append(delta / count)
+    differences.sort()
+
+    if observed >= 0:
+        p_value = 2 * sum(1 for d in differences if d <= 0) / iterations
+    else:
+        p_value = 2 * sum(1 for d in differences if d >= 0) / iterations
+    p_value = min(1.0, p_value)
+
+    result.update(
+        estimable=True,
+        ci95_low=round(differences[int(0.025 * iterations)], 4),
+        ci95_high=round(differences[min(int(0.975 * iterations), iterations - 1)], 4),
+        p_value=round(p_value, 4),
+        significant_at_05=bool(p_value < 0.05),
+    )
+    return result
+
+
+def render_p_value(p_value: float | None, iterations: int | None = None) -> str:
+    """``p=0.0123``, or ``p<0.0005`` when no bootstrap resample crossed zero."""
+    if p_value is None:
+        return "p n/a"
+    if p_value == 0 and iterations:
+        return f"p<{1 / iterations:.4g}"
+    return f"p={p_value}"
+
+
 #: Registered metric functions taking ``(prediction, reference)``.
 TEXT_METRICS = {
     "exact_match": exact_match,

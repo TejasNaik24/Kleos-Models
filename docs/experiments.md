@@ -41,6 +41,10 @@ Read the Deviations log before quoting any number from here: the run departed
 from the pre-registered protocol in three ways, and 22% of the test label space
 turned out to be unlearnable from the training split.
 
+**KLEOS Logos v0.0.1 is pre-registered as H8 (2026-09-24) and not yet trained.**
+From H8 on, intervals resample groups rather than examples; see the protocol
+amendment below.
+
 ### KLEOS Hermes — `kleos-v006-mistralnemo12b-run1`, completed 2026-09-22
 
 | | |
@@ -280,6 +284,18 @@ That is the clearest evidence in this run that what transferred is a family-leve
 shortcut rather than the intended policy, and it is the finding most worth acting
 on in the next dataset revision.
 
+**Correction note — the grouping unit, 2026-09-24 (finding H-F11).** The groups
+above are *scenario families*, and 6 of the 15 test families mix cases whose
+correct answers differ. A model that answered every case correctly would score
+`agreement_rate` **0.600 (9/15)** and log **57 "flips"** under this grouping, so
+"10/15 groups flip" overstates instability: part of it is the metric's ceiling,
+not the model. The unit of logical equivalence is `group_id`: 78 test groups, each
+label-identical by construction, where an oracle scores 1.000. The numbers above
+are unchanged and stay as reported. From H8 on, consistency is reported by
+`group_id` beside the family figure, each with its oracle ceiling
+([evaluation.md](evaluation.md#consistency-which-unit)); `scripts/rescore.py
+--mode annotate` re-reports both earlier runs that way without touching their files.
+
 **Replication — KLEOS Hermes, 2026-09-22.** On Mistral-Nemo-12B every number above
 reproduced exactly:
 
@@ -399,6 +415,86 @@ actionable finding for the product.
 
 ---
 
+## H8 — Does a stronger base make a better KLEOS model?
+
+> Under the same data and the same recipe, a more capable base (Ministral 3 14B,
+> MMLU 79.4) yields better KLEOS decisions than Hermes' base (Mistral-Nemo 12B,
+> MMLU 68.0).
+
+**Pre-registered 2026-09-24, before any Logos training.** Model selection and
+feasibility: [logos.md](logos.md).
+
+| | |
+| --- | --- |
+| **KLEOS model** | **Logos v0.0.1**: `mistralai/Ministral-3-14B-Instruct-2512-BF16` @ `3cea74c1ebaf5ce5f5a2553de470e2ceab825142`, text tower, QLoRA NF4 r=16 on all seven projections |
+| **Config** | [`configs/training/kleos_logos_v001.yaml`](../configs/training/kleos_logos_v001.yaml), `config_hash` **`18008c6716a58afc284c64eb7e1e96c9bfce34b8da2b8c489b6d59c0c45b6f71`** with `--dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 --output-dir /content/drive/MyDrive/kleos-private/outputs` and no `KLEOS_*` variables set |
+| **Experiment id** | `kleos-v006-ministral314b-run1` |
+| **Dataset** | `kleos-policy-v0.0.6`, sealed, unchanged |
+| **Benchmark** | `benchmark.jsonl`, sha256 `a11ffad75f5147f9d0ddad7bad4bfc073dc730df2b19173ff642774233b4b266`, built from `test.jsonl` (`a4decaaf029b2273…`); greedy decoding, `max_new_tokens` 512, seed 42, grader `kleos_policy`; identical to Hermes' |
+| **Code** | The commit that adds this entry. The run's manifest records the commit it ran; a later code change must be declared as a deviation |
+| **Status** | **Pre-registered. Not run.** |
+
+### H8a — Does fine-tuning help Logos?
+
+| | |
+| --- | --- |
+| **Arms** | Logos `arm1_base_orchestrated` vs Logos `arm2_finetuned` (H1's comparison, D1) |
+| **Primary metric** | Per-task `kleos_policy` score |
+| **Statistics** | Paired **cluster** bootstrap by `group_id`, 2,000 iterations, 95% CI. The example-level bootstrap is reported beside it for continuity with H1 |
+| **Decision rule** | A task improves only if its cluster CI excludes zero. **Supported** if at least one task improves and none regresses with a CI excluding zero |
+
+### H8b — Is Logos better than Hermes? (primary)
+
+| | |
+| --- | --- |
+| **Arms** | Hermes `arm2_finetuned` (stored, re-reported with `rescore.py --mode annotate`) vs Logos `arm2_finetuned` |
+| **Primary population** | The **271 answerable** benchmark items (`reference.confident: true`, 61 groups) |
+| **Primary metric** | Mean `kleos_policy` score, paired by `example_id` |
+| **Statistics** | Paired cluster bootstrap by `group_id`, 2,000 iterations, 95% CI of Logos − Hermes |
+| **Decision rule** | **better**: CI entirely above 0. **worse**: entirely below 0. **equivalent**: entirely within ±0.02. Otherwise **inconclusive** |
+| **Command** | `compare.py --cross-model --primary-subset answerable --equivalence-margin 0.02` |
+
+**Why the answerable subset.** The other 78 items carry four decline labels that
+never occur in training (D3), so on v0.0.6 neither model can learn them and they
+cannot separate two bases. They are reported as a secondary row, not dropped.
+
+**Prediction:** unknown. Hermes and Ministral-8B scored within 0.004 of each other
+overall, which is a reason to expect a small difference. Base capability rose far
+more between Nemo and Ministral 3 than between Ministral-8B and Nemo, which is a
+reason to expect a larger one. "Equivalent" is a publishable answer: it would say
+the v0.0.6 data, not the base, is the limit.
+
+**Secondary, reported, not decisive:** per-task deltas with cluster intervals; the
+should-decline subset; consistency by `group_id` with its oracle ceiling (all
+groups and answerable groups); the family-level consistency for continuity;
+`format_valid`; generation statistics (length, latency, answers cut off at
+`max_new_tokens`); faithfulness with the citation heuristic's gold floor.
+
+**Declared differences from Hermes' run** (none in the training arithmetic):
+the base model, tokenizer and chat template; `fix_mistral_regex: true` (0 of 1,350
+examples tokenized differently); evaluation and checkpoint cadence 25 steps
+instead of 50; `strict_config: true`; `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`;
+the best checkpoint protected from pruning (H-F9); a gradient check at the
+configured batch size and a memory probe, both before the Trainer re-seeds.
+
+**Confounds, stated:**
+
+- **One seed each.** H8b compares two single training runs. A difference within
+  what a seed change could cause cannot be ruled out. The cluster interval covers
+  evaluation noise, not training noise.
+- **The bases differ in more than size:** pretraining data, distillation from
+  Mistral Small 3.1, tokenizer and template, and release date.
+- **Library versions.** transformers, peft, accelerate, bitsandbytes and
+  tokenizers are pinned to Hermes' versions; Colab's torch may differ from Hermes'
+  2.11.0.
+- **The checkpoint grid.** 25-step selection can pick a checkpoint Hermes' 50-step
+  grid could not have.
+
+**What would falsify H8:** H8b's interval entirely below zero, or entirely within
+±0.02.
+
+---
+
 ## Fixed experimental protocol
 
 Applies to every hypothesis above.
@@ -409,10 +505,25 @@ Applies to every hypothesis above.
 | Decoding | Greedy (`do_sample: false`), identical across arms |
 | Benchmark | Identical across arms, fixed before the run |
 | Graders | Fixed before the run |
-| Significance | Paired bootstrap, 2000 iterations, 95% CI |
+| Significance | Paired bootstrap, 2000 iterations, 95% CI. From H8 on, resampling groups (see amendment) |
 | Reporting | Per task; no blended aggregate |
 | Seeds | Recorded; multiple seeds only meaningful with sampling |
 | Leakage | Checked and reported before training |
+
+### Protocol amendment — clustered intervals, 2026-09-24
+
+**From H8 on, every interval resamples groups (`group_id`), not examples.** The
+349 benchmark items come in 78 groups of perturbations of one case, and those are
+not independent. An example-level bootstrap treats them as 349 independent draws
+and gives intervals that are too narrow (finding H-F14). The example-level
+intervals are still printed beside the cluster ones, so every earlier number stays
+reproducible. **No earlier result is re-decided**: H1 and H3 keep their
+pre-registered decision rules and their reported values. Corrected figures for
+the earlier runs, if produced, are labelled as re-reports.
+
+Consistency is reported by `group_id` beside the configured family grouping, each
+with the score an oracle would get (H-F11). The answerable and should-decline
+subsets are reported separately.
 
 ## Recording a run
 
@@ -441,6 +552,7 @@ Append one row per completed experiment. **Include failed and negative runs.**
 | 2026-09-22 | H1 | Mistral-Nemo-Instruct-2407 (QLoRA r=16) — **KLEOS Hermes** | kleos-policy-v0.0.6 (`3cc9a744…`) | `b2328857c6026dd7` | **Supported (replicated).** 7/7 tasks improved at p<0.001, none regressed. Overall 0.4755 → 0.8051 (+0.3295, 95% CI 0.3068–0.3521). | `outputs/kleos-v006-mistralnemo12b-run1/report_hermes_v006/summary.md`; [report](experiments/kleos-v006-mistralnemo12b-run1-report.md) |
 | 2026-09-22 | H2 | Mistral-Nemo-Instruct-2407 (QLoRA r=16) — **KLEOS Hermes** | kleos-policy-v0.0.6 (`3cc9a744…`) | `b2328857c6026dd7` | **Not measurable.** Same benchmark, 100% OOD. | same run |
 | 2026-09-22 | H3 | Mistral-Nemo-Instruct-2407 (QLoRA r=16) — **KLEOS Hermes** | kleos-policy-v0.0.6 (`3cc9a744…`) | `b2328857c6026dd7` | **Improved, still poor — identical to Ministral.** correct_agreement 0.000 → 0.333; 10/15 groups still flip; abstention table identical case for case. | same run |
+| 2026-09-24 | H8 | Ministral-3-14B-Instruct-2512-BF16, text tower (QLoRA r=16) — **KLEOS Logos v0.0.1** | kleos-policy-v0.0.6 (`3cc9a744…`) | `18008c6716a58afc` | **Pre-registered; not run.** | [logos.md](logos.md) |
 
 Run provenance: experiment id `kleos-v006-ministral8b-run1`, seed 42, 3 epochs
 (309 steps, effective batch 8, `max_seq_length` 1024), best checkpoint selected

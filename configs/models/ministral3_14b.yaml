@@ -1,0 +1,108 @@
+# ---------------------------------------------------------------------------
+# Ministral 3 14B, text tower — base model for KLEOS Logos v0.0.1.
+#
+# WHY THIS MODEL (docs/logos.md has the full comparison, with sources)
+# Logos is the deeper KLEOS model. A survey of Mistral's open weights on
+# 2026-09-24 found this to be the largest that can be QLoRA-trained on a free
+# Colab T4 and served on free Hugging Face ZeroGPU:
+#   * Apache-2.0, ungated.
+#   * MMLU 79.4 (5-shot, base model) against Mistral-Nemo's 68.0 and Mistral
+#     Small 24B's 81.0: most of the 24B's capability at 14B.
+#   * Mistral Small 3.x 24B does not fit a 16 GB T4 even in 4-bit, and the
+#     Mistral Small 3.2 repository ships no Hugging Face tokenizer.
+# It is only modestly larger than Hermes (13.5B text parameters against
+# 12.2B). The gain is capability, not size.
+#
+# THE -BF16 REPOSITORY, NOT THE DEFAULT ONE
+# mistralai/Ministral-3-14B-Instruct-2512 is published in FP8, which a T4
+# (compute capability 7.5) cannot run. The -BF16 repository is the same model
+# in bfloat16. A pre-quantized container is refused by the loader.
+#
+# TEXT-ONLY VIEW
+# The checkpoint is a vision-language model (Mistral3ForConditionalGeneration,
+# model_type mistral3) whose text tower is 'ministral3'. KLEOS is text-only,
+# and the 0.44B-parameter vision tower would cost ~0.9 GB on a T4 that has
+# less than 1 GB to spare. `model_type: ministral3` below therefore selects a
+# text-only view: Ministral3ForCausalLM, loaded from the official checkpoint
+# with its keys renamed (language_model.model.* -> model.*,
+# language_model.lm_head.* -> lm_head.*). The vision weights stay on disk, and
+# the load refuses to continue if any text weight is missing or mismatched.
+# See Ministral3TextAdapter in src/kleos_models/models/adapters.py.
+#
+# Verified against config.json at the pinned revision and on the meta device
+# (transformers 5.16.1): 40 layers, hidden 5120, intermediate 16384, 32 heads /
+# 8 KV heads, head_dim 128, vocab 131072, max_position_embeddings 262144
+# (YaRN), untied lm_head; 13,506,073,600 text parameters. LoRA r=16 on the
+# seven projections gives 280 modules and 60,948,480 trainable parameters.
+#
+# TOKENIZER
+# tokenizer.json, tokenizer_config.json and chat_template.jinja at the pinned
+# revision; tests/test_revision_pinning.py records their sha256. The template
+# renders the system prompt in place ([SYSTEM_PROMPT]...), so the Nemo-era
+# system-prompt merge (deviation D5) does not apply. transformers flags this
+# tokenizer's pre-tokenizer regex as incorrect; `fix_mistral_regex: true`
+# corrects it from the first training step. On kleos-policy-v0.0.6 the
+# correction changes 0 of 1,350 examples (measured), so it matters only for
+# user text at serving time, where training and serving must agree.
+# ---------------------------------------------------------------------------
+
+model:
+  name: ministral3_14b
+  family: mistral
+  base_model: mistralai/Ministral-3-14B-Instruct-2512-BF16
+  # Pinned to the revision audited 2026-09-24. A LoRA adapter is deltas
+  # against specific base weights; a moving pointer could pair it with weights
+  # it never saw, silently (finding H-F1).
+  revision: 3cea74c1ebaf5ce5f5a2553de470e2ceab825142
+  trust_remote_code: false
+
+  # 'ministral3' names the text tower. The checkpoint itself reports
+  # 'mistral3'; stating the tower is what selects the text-only view.
+  model_type: ministral3
+  # What the checkpoint declares, checked against its config.json.
+  architecture: Mistral3ForConditionalGeneration
+  parameter_count: 13.506e9
+  is_moe: false
+  # The view that is loaded is text-only.
+  is_multimodal: false
+  context_limit: 262144
+
+  # As for Hermes. Under this tokenizer the longest KLEOS example is 492 tokens
+  # in train and 503 in test, so nothing truncates.
+  max_seq_length: 1024
+  dtype: auto
+  attn_implementation: sdpa
+  device_map: auto
+
+  fix_mistral_regex: true
+
+  reasoning:
+    # The Instruct release has no reasoning mode (a separate -Reasoning
+    # release exists). Requesting 'thinking' raises rather than faking it.
+    supported: false
+    default_mode: standard
+
+  quantization:
+    mode: nf4
+    # auto -> float16 on a T4. The deployment record will pin what it
+    # resolved to, as Hermes' does.
+    compute_dtype: auto
+    double_quant: true
+
+  lora:
+    # 'auto' resolves to the seven projections through Ministral3TextAdapter:
+    # 40 layers x 7 = 280 modules. lm_head and embed_tokens stay excluded;
+    # lm_head is untied here, as in Nemo.
+    target_modules: auto
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    task_type: CAUSAL_LM
+
+  notes: >-
+    Base model for KLEOS Logos v0.0.1: the text tower of Ministral 3 14B
+    (Apache-2.0, December 2025), loaded without its vision encoder. Chosen as
+    the largest Mistral open-weight model that trains on a free Colab T4 and
+    serves on free ZeroGPU. Attribution and a statement of modification are
+    required when redistributing a derivative.

@@ -382,6 +382,10 @@ TRACKED_PACKAGES: tuple[str, ...] = (
     "trl",
     "numpy",
     "pydantic",
+    # Both change model inputs without changing any weight: tokenizers does the
+    # tokenization, Jinja2 renders the chat template.
+    "tokenizers",
+    "jinja2",
 )
 
 

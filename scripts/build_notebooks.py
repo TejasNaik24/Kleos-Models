@@ -408,6 +408,10 @@ manifest.
 `configs/training/debug.yaml` runs ten steps and proves the pipeline works.
 `configs/training/qlora_small.yaml` is the real run.
 
+The model is whatever the training config includes (`includes.model`). To train a
+different model, use or copy a training config that includes it;
+`--set model.name=...` only renames the run.
+
 Model configs available:
 
 | Config | Fits a free T4? |
@@ -420,29 +424,38 @@ Model configs available:
             ),
             code(
                 """
-CONFIG = "configs/training/qlora_small.yaml"
-MODEL = "configs/models/qwen3_8b.yaml"
+CONFIG = "configs/training/qlora_small.yaml"   # its includes.model picks the model
 DATASET = "data/examples"   # replace with your dataset directory
+
+# Pin the run's id. Resuming after a disconnect needs the SAME id: a generated id
+# is new every time, so --resume-from-checkpoint auto would look in a new, empty
+# directory and silently start again from step 0.
+EXPERIMENT_ID = "my-first-run"
 
 # Start with the debug config to prove the pipeline runs end to end:
 # CONFIG = "configs/training/debug.yaml"
 
-print(f"config : {CONFIG}")
-print(f"model  : {MODEL}")
-print(f"dataset: {DATASET}")
+print(f"config       : {CONFIG}")
+print(f"dataset      : {DATASET}")
+print(f"experiment id: {EXPERIMENT_ID}")
 """
             ),
             markdown(
                 """
 ## 5. Will it fit?
 
-Do this **before** downloading weights. If the answer is no, change the model
-here rather than discovering it during training.
+Do this **before** downloading weights. If the answer is no, choose another
+training config here rather than discovering it during training. To see how a
+different model would fare in the same recipe, add
+`--set-model configs/models/<name>.yaml` (planning only).
+
+This estimate assumes `max_seq_length`, the worst case. `train.py` tokenizes the
+data first and sizes the check by the longest real example.
 """
             ),
             code(
                 """
-!python scripts/plan_run.py --config {CONFIG} --set model.name=check
+!python scripts/plan_run.py --config {CONFIG}
 """
             ),
             markdown(
@@ -514,16 +527,21 @@ a setup that trains nothing would otherwise still produce a plausible loss curve
 !python scripts/train.py \\
     --config {CONFIG} \\
     --dataset {DATASET} \\
-    --output-dir {OUTPUT_DIR}
+    --output-dir {OUTPUT_DIR} \\
+    --experiment-id {EXPERIMENT_ID}
 """
             ),
             markdown(
                 """
 ## 10. Resume after a disconnect
 
-If the runtime died, re-run sections 1-3 and 7, then this cell. `auto` finds the
+If the runtime died, re-run sections 1-4 and 7, then this cell. `auto` finds the
 newest **valid** checkpoint; a half-written checkpoint from an interrupted save is
 detected and skipped rather than causing a confusing failure.
+
+`--experiment-id` must be the one the run started with (section 4). It names the
+run's directory; with a different id, `auto` searches an empty directory and the
+run silently starts over.
 """
             ),
             code(
@@ -532,6 +550,7 @@ detected and skipped rather than causing a confusing failure.
     --config {CONFIG} \\
     --dataset {DATASET} \\
     --output-dir {OUTPUT_DIR} \\
+    --experiment-id {EXPERIMENT_ID} \\
     --resume-from-checkpoint auto
 """
             ),
@@ -649,6 +668,10 @@ print("adapter:", ADAPTER)
 ## 3. Evaluate the base model (arm 0)
 
 No adapter. This is the baseline the fine-tuned arm must beat.
+
+`--resume` keeps every finished generation in a partial file next to the output,
+so if the runtime dies, re-running this cell continues where it stopped. Decoding
+is greedy, so a resumed run produces exactly what an uninterrupted one would.
 """
             ),
             code(
@@ -657,7 +680,8 @@ No adapter. This is the baseline the fine-tuned arm must beat.
     --config {CONFIG} \\
     --arm arm0_base \\
     --benchmark {BENCHMARK} \\
-    --output {OUTPUT_DIR}/base_results.json
+    --output {OUTPUT_DIR}/base_results.json \\
+    --resume
 """
             ),
             markdown(
@@ -675,7 +699,8 @@ the only difference** — that is what makes the comparison meaningful.
     --arm arm2_finetuned \\
     --adapter {ADAPTER} \\
     --benchmark {BENCHMARK} \\
-    --output {OUTPUT_DIR}/finetuned_results.json
+    --output {OUTPUT_DIR}/finetuned_results.json \\
+    --resume
 """
             ),
             markdown("## 5. Compare"),

@@ -22,7 +22,7 @@ from kleos_models.compat import dtype_kwarg, mistral_regex_kwarg, require_transf
 from kleos_models.config import DType, ModelConfig, ReasoningMode
 from kleos_models.errors import ModelCompatibilityError
 from kleos_models.logging_utils import get_logger
-from kleos_models.models.adapters import ModelFamilyAdapter, get_adapter
+from kleos_models.models.adapters import ModelFamilyAdapter, get_adapter, resolve_load_plan
 from kleos_models.models.quantization import (
     build_quantization_config,
     quantization_support,
@@ -128,6 +128,40 @@ def load_hf_config(config: ModelConfig) -> Any:
         ) from exc
 
 
+def resolve_fix_mistral_regex(
+    config: ModelConfig, requested: bool | None = None
+) -> tuple[bool | None, str]:
+    """The tokenizer regex flag to use, and where the decision came from.
+
+    Two places can state it: the model config (``model.fix_mistral_regex``,
+    Logos onwards) and a caller (serving passes the value its manifest records).
+    They must agree. Two statements that disagree mean the model would be
+    served with a tokenizer it was not trained with, which fails silently, so
+    it is an error here.
+
+    Returns:
+        ``(value, source)`` with source one of ``unset``, ``config``, ``caller``
+        or ``both``. ``None`` means pass nothing: the library default, which is
+        what every run before Logos used.
+    """
+    configured = config.fix_mistral_regex
+    if requested is None:
+        return configured, "config" if configured is not None else "unset"
+    if configured is None:
+        return requested, "caller"
+    if configured != requested:
+        raise ModelCompatibilityError(
+            "The tokenizer regex flag is stated twice and the two disagree.",
+            details={"model_config": configured, "caller": requested},
+            suggestions=[
+                "Training, evaluation and serving must tokenize identically; a "
+                "different pre-tokenizer regex is train/serve skew.",
+                "Fix the manifest or the model config so they state the same value.",
+            ],
+        )
+    return requested, "both"
+
+
 def load_tokenizer(
     config: ModelConfig,
     adapter: ModelFamilyAdapter | None = None,
@@ -141,22 +175,19 @@ def load_tokenizer(
 
     Args:
         fix_mistral_regex: Pin the Mistral pre-tokenizer regex behaviour
-            explicitly. ``None`` (the default) passes nothing and takes whatever
-            the installed transformers does, which is what every research run so
-            far used. Serving passes the recorded value so a library default can
-            never move tokenization underneath a frozen adapter — see
-            ``kleos_models.serving`` and docs/deployment.md.
-
-            This is a function argument and deliberately **not** a ``ModelConfig``
-            field: every config field is part of ``config_hash``, and adding one
-            would change the hash of runs that are already frozen.
+            explicitly. Combined with ``config.fix_mistral_regex`` by
+            :func:`resolve_fix_mistral_regex`; when both are unset nothing is
+            passed and the installed transformers decides, which is what every
+            run before Logos used. Serving passes its recorded value so a library
+            default can never move tokenization underneath a frozen adapter.
     """
     transformers = require_transformers()
     adapter = adapter or get_adapter(config)
 
+    resolved_flag, _ = resolve_fix_mistral_regex(config, fix_mistral_regex)
     kwargs: dict[str, Any] = {}
-    if fix_mistral_regex is not None:
-        kwargs = mistral_regex_kwarg(fix_mistral_regex)
+    if resolved_flag is not None:
+        kwargs = mistral_regex_kwarg(resolved_flag)
 
     try:
         tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -237,22 +268,22 @@ def load_model(
 
     check_transformers_version()
 
+    # Settle the tokenizer regex flag before any download, so a conflict
+    # between the config and the caller fails in seconds.
+    regex_flag, regex_source = resolve_fix_mistral_regex(config, fix_mistral_regex)
+
     # 1. Read the checkpoint's real config first. Cheap, and it removes guesswork.
     hf_config = load_hf_config(config)
     reported_type = getattr(hf_config, "model_type", None)
     architectures = list(getattr(hf_config, "architectures", None) or [])
 
-    resolved_config = config
-    if reported_type and reported_type != config.model_type:
-        if config.model_type:
-            logger.warning(
-                "Config says model_type=%r; the checkpoint reports %r. Trusting the checkpoint.",
-                config.model_type,
-                reported_type,
-            )
-        resolved_config = config.model_copy(update={"model_type": reported_type})
+    # The checkpoint is the authority on model_type, except for a deliberate
+    # view of one tower of a composite checkpoint (KLEOS Logos).
+    plan = resolve_load_plan(config, hf_config)
+    resolved_config = plan.config
+    view = plan.view
 
-    adapter = get_adapter(resolved_config)
+    adapter = plan.adapter
     capabilities = adapter.capabilities
 
     if architectures and capabilities.is_multimodal and "CausalLM" in str(architectures):
@@ -296,9 +327,17 @@ def load_model(
     effective_device_map = device_map if device_map is not None else resolved_config.device_map
     if effective_device_map and support.cuda_available:
         load_kwargs["device_map"] = effective_device_map
+    if view is not None:
+        load_kwargs.update(view.load_kwargs())
 
+    loading_info: dict[str, Any] | None = None
     try:
-        model = auto_class.from_pretrained(resolved_config.base_model, **load_kwargs)
+        loaded_object = auto_class.from_pretrained(resolved_config.base_model, **load_kwargs)
+        if view is not None:
+            model, raw_info = loaded_object
+            loading_info = view.validate_loading_info(raw_info)
+        else:
+            model = loaded_object
     except ValueError as exc:
         message = str(exc)
         if "Unrecognized configuration class" in message or "AutoModel" in message:
@@ -322,6 +361,17 @@ def load_model(
     except (OSError, RuntimeError) as exc:
         raise _describe_load_failure(exc, resolved_config, support) from exc
 
+    if (
+        view is not None
+        and getattr(getattr(model, "generation_config", None), "eos_token_id", None) is None
+    ):
+        # Without an end-of-sequence id every generation runs to the token cap.
+        raise ModelCompatibilityError(
+            f"{resolved_config.base_model} loaded through the {view.kind} view "
+            "has no generation_config.eos_token_id.",
+            suggestions=["Check the checkpoint's generation_config.json at the pinned revision."],
+        )
+
     # 4. Family-specific preparation (freezing a vision tower, for instance).
     model = adapter.prepare_model_for_training(model)
 
@@ -334,9 +384,9 @@ def load_model(
             model.generation_config, "pad_token_id", None
         )
 
-    tokenizer = load_tokenizer(resolved_config, adapter, fix_mistral_regex=fix_mistral_regex)
+    tokenizer = load_tokenizer(resolved_config, adapter, fix_mistral_regex=regex_flag)
 
-    load_metadata = {
+    load_metadata: dict[str, Any] = {
         "auto_class": auto_class.__name__,
         "reported_model_type": reported_type,
         "reported_architectures": architectures,
@@ -345,6 +395,14 @@ def load_model(
         "attn_implementation": resolved_config.attn_implementation,
         "for_training": for_training,
     }
+    if view is not None:
+        load_metadata["instantiated_class"] = type(model).__name__
+        load_metadata["view"] = {**view.to_dict(), "loading_info": loading_info}
+    if plan.flipped_from is not None:
+        load_metadata["checkpoint_model_type_flipped_from"] = plan.flipped_from
+    if regex_source != "unset":
+        load_metadata["fix_mistral_regex"] = regex_flag
+        load_metadata["fix_mistral_regex_source"] = regex_source
 
     loaded = LoadedModel(
         model=model,

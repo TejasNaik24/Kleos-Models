@@ -10,6 +10,10 @@ Design rules
 3. **Configs hash.** ``ExperimentConfig.config_hash`` is a stable digest of the
    fully resolved configuration and is recorded in every experiment manifest.
    Two runs with the same hash used the same knobs.
+4. **New fields must not move old hashes.** A field added after runs were
+   recorded is listed in its class's ``HASH_NEUTRAL_FIELDS`` and defaults to
+   ``None``; while unset it is left out of every dump, so each recorded
+   ``config_hash`` still reproduces. Once set, it is hashed like any other knob.
 
 This module imports no torch and no transformers.
 """
@@ -24,10 +28,18 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from kleos_models.constants import (
     QUALITY_STATUSES,
@@ -132,6 +144,24 @@ class StrictModel(BaseModel):
     """Reject unknown keys so typos in YAML fail loudly rather than silently."""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True, use_enum_values=False)
+
+    #: Fields added after runs were recorded (design rule 4). While ``None`` they
+    #: are omitted from every dump, in python and json mode alike, so the recorded
+    #: ``config_hash`` of every earlier run still reproduces. Only ever add names
+    #: here, and only for fields whose default is ``None``.
+    HASH_NEUTRAL_FIELDS: ClassVar[frozenset[str]] = frozenset()
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_hash_neutral_fields(self, handler: SerializerFunctionWrapHandler) -> Any:
+        # A wrap serializer rather than Field(exclude_if=...): it behaves the
+        # same on every pydantic 2.x, including whatever Colab has preinstalled.
+        data = handler(self)
+        names = type(self).HASH_NEUTRAL_FIELDS
+        if names and isinstance(data, dict):
+            for name in names:
+                if name in data and data[name] is None:
+                    del data[name]
+        return data
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +340,27 @@ class ModelConfig(StrictModel):
         default=None,
         description="Override the tokenizer chat template. Leave null to use the official one.",
     )
+    fix_mistral_regex: bool | None = Field(
+        default=None,
+        description=(
+            "Mistral tokenizers only: transformers>=5 can patch a pre-tokenizer "
+            "regex that differs from mistral-common's. Null passes nothing (the "
+            "library default, which is what every run before Logos used); true or "
+            "false is stated explicitly and carried through training, evaluation "
+            "and serving. Hash-neutral while null."
+        ),
+    )
     notes: str | None = None
+
+    HASH_NEUTRAL_FIELDS: ClassVar[frozenset[str]] = frozenset({"fix_mistral_regex"})
+
+    @model_validator(mode="after")
+    def _check_regex_flag_family(self) -> ModelConfig:
+        if self.fix_mistral_regex is not None and self.family != "mistral":
+            raise ValueError(
+                f"fix_mistral_regex applies to Mistral tokenizers only; family is {self.family!r}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_lengths(self) -> ModelConfig:
@@ -847,13 +897,23 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return loaded
 
 
-def _resolve_layers(path: Path, seen: list[Path]) -> dict[str, Any]:
+def _resolve_layers(
+    path: Path,
+    seen: list[Path],
+    include_overrides: Mapping[str, Path] | None = None,
+    applied: set[str] | None = None,
+) -> dict[str, Any]:
     """Load one YAML file with its ``extends`` and ``includes`` resolved.
 
     ``extends`` supplies defaults that the current file overrides. ``includes``
     maps a top-level section (``model``, ``dataset``, ``training``,
     ``evaluation``) to another YAML file, which is how one training config
     consumes an unmodified model config.
+
+    ``include_overrides`` swaps the file a section includes (``--set-model``):
+    the replacement is used *instead of* the declared fragment, not merged into
+    it, and the declaring file's own section keys still apply on top. It reaches
+    every file in the ``extends`` chain but never the fragments themselves.
 
     Relative paths resolve against the file that declares them.
     """
@@ -877,7 +937,9 @@ def _resolve_layers(path: Path, seen: list[Path]) -> dict[str, Any]:
         parents = [extends] if isinstance(extends, str) else list(extends)
         for parent in parents:
             parent_path = (base_dir / str(parent)).resolve()
-            merged = deep_merge(merged, _resolve_layers(parent_path, seen))
+            merged = deep_merge(
+                merged, _resolve_layers(parent_path, seen, include_overrides, applied)
+            )
 
     includes = raw.pop("includes", None) or {}
     if not isinstance(includes, Mapping):
@@ -886,7 +948,12 @@ def _resolve_layers(path: Path, seen: list[Path]) -> dict[str, Any]:
             details={"found_type": type(includes).__name__},
         )
     for section, include_path in includes.items():
-        include_resolved = (base_dir / str(include_path)).resolve()
+        if include_overrides and section in include_overrides:
+            include_resolved = Path(include_overrides[section]).resolve()
+            if applied is not None:
+                applied.add(section)
+        else:
+            include_resolved = (base_dir / str(include_path)).resolve()
         fragment = _resolve_layers(include_resolved, seen)
         # A fragment may either be the section body directly, or wrap it under
         # the section name. Support both so configs/models/*.yaml can carry a
@@ -948,9 +1015,27 @@ def apply_overrides(data: dict[str, Any], overrides: Iterable[str]) -> dict[str,
     return result
 
 
-def load_raw_config(path: Path | str, overrides: Sequence[str] = ()) -> dict[str, Any]:
-    """Resolve a config file to a plain dict without validating it."""
-    resolved = _resolve_layers(Path(path), seen=[])
+def load_raw_config(
+    path: Path | str,
+    overrides: Sequence[str] = (),
+    *,
+    model_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Resolve a config file to a plain dict without validating it.
+
+    Args:
+        model_path: Use this model config instead of the one the file includes
+            (``--set-model``). Refused for a file that includes no model config,
+            because there would be nothing to replace.
+    """
+    include_overrides = {"model": Path(model_path)} if model_path is not None else None
+    applied: set[str] = set()
+    resolved = _resolve_layers(Path(path), [], include_overrides, applied)
+    if include_overrides and "model" not in applied:
+        raise ConfigError(
+            f"{path} does not include a model config, so --set-model has nothing to replace.",
+            suggestions=["Point --config at a training config with includes.model."],
+        )
     resolved = apply_overrides(resolved, overrides)
     return _expand_env(resolved)
 
@@ -961,6 +1046,7 @@ def load_config(
     *,
     dataset_path: Path | str | None = None,
     output_dir: Path | str | None = None,
+    model_path: Path | str | None = None,
 ) -> ExperimentConfig:
     """Load, compose, override and validate an experiment configuration.
 
@@ -971,11 +1057,13 @@ def load_config(
             a run at the externally produced private dataset without this repo
             depending on the private one (spec section 27).
         output_dir: CLI ``--output-dir`` value.
+        model_path: A model config to use instead of the included one
+            (``--set-model``). Note that ``--set model.name=...`` only renames.
 
     Raises:
         ConfigError: with the offending field path when validation fails.
     """
-    raw = load_raw_config(path, overrides)
+    raw = load_raw_config(path, overrides, model_path=model_path)
 
     if dataset_path is not None:
         raw.setdefault("dataset", {})
