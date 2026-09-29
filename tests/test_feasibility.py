@@ -399,7 +399,7 @@ class TestLogosOnAFreeT4:
         )
 
     def test_logos_at_its_longest_example_is_a_marginal_fit(self):
-        report = self.assess_at("kleos_logos_v001.yaml", 496)
+        report = self.assess_at("kleos_logos_v001.yaml", 448)
         assert 13.4 <= report.estimate.peak_allocated_gb <= 14.2
         assert report.tier is FeasibilityTier.ADAPTER_TRAIN
         assert report.fits and report.marginal
@@ -431,11 +431,11 @@ class TestLogosOnAFreeT4:
 
     def test_the_estimate_serializes_its_new_terms(self):
         payload = estimate_memory(
-            model("ministral3_14b"), TrainingConfig(), seq_length=496
+            model("ministral3_14b"), TrainingConfig(), seq_length=448
         ).to_dict()
         for key in ("peak_allocated_gb", "reserve_gb", "minimum_gb", "sequence_length"):
             assert key in payload
-        assert payload["sequence_length"] == 496
+        assert payload["sequence_length"] == 448
 
 
 class TestBudgets:
@@ -507,7 +507,7 @@ class TestPlanRunScript:
             "--simulate-gpu",
             "t4-colab",
             "--seq-length",
-            "496",
+            "448",
         )
         assert code == 0
         assert "MARGINAL" in out and "60,948,480" in out
@@ -522,7 +522,7 @@ class TestPlanRunScript:
             "--simulate-gpu",
             "t4-colab",
             "--seq-length",
-            "496",
+            "448",
         )
         assert code == 0
         assert "Ministral-3-14B" in out

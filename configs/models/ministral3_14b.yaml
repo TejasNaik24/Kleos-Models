@@ -67,8 +67,8 @@ model:
   is_multimodal: false
   context_limit: 262144
 
-  # As for Hermes. Under this tokenizer the longest KLEOS example is 492 tokens
-  # in train and 503 in test, so nothing truncates.
+  # As for Hermes. Under this tokenizer the longest KLEOS example is 442 tokens
+  # in train and 612 in test, so nothing truncates.
   max_seq_length: 1024
   dtype: auto
   attn_implementation: sdpa

@@ -14,7 +14,7 @@ Usage::
     # longest example in your data rather than max_seq_length:
     python scripts/plan_run.py --config configs/training/kleos_hermes_v006.yaml \
         --set-model configs/models/ministral3_14b.yaml \
-        --simulate-gpu t4-colab --seq-length 496
+        --simulate-gpu t4-colab --seq-length 448
 
 ``--seq-length`` matters: at batch size 1 the activation peak follows the longest
 example present, and ``scripts/train.py`` measures that itself before loading

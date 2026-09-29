@@ -41,7 +41,12 @@ Read the Deviations log before quoting any number from here: the run departed
 from the pre-registered protocol in three ways, and 22% of the test label space
 turned out to be unlearnable from the training split.
 
-**KLEOS Logos v0.0.1 is pre-registered as H8 (2026-09-24) and not yet trained.**
+**KLEOS Logos v0.0.1** was pre-registered as H8 on 2026-09-24 and trained on
+2026-09-27.
+
+- **H8b (primary), Logos vs Hermes, is inconclusive** (2026-09-29).
+- **H8a is pending:** Logos' base arm has not been evaluated yet.
+
 From H8 on, intervals resample groups rather than examples; see the protocol
 amendment below.
 
@@ -432,7 +437,7 @@ feasibility: [logos.md](logos.md).
 | **Dataset** | `kleos-policy-v0.0.6`, sealed, unchanged |
 | **Benchmark** | `benchmark.jsonl`, sha256 `a11ffad75f5147f9d0ddad7bad4bfc073dc730df2b19173ff642774233b4b266`, built from `test.jsonl` (`a4decaaf029b2273…`); greedy decoding, `max_new_tokens` 512, seed 42, grader `kleos_policy`; identical to Hermes' |
 | **Code** | The commit that adds this entry. The run's manifest records the commit it ran; a later code change must be declared as a deviation |
-| **Status** | **Pre-registered. Not run.** |
+| **Status** | Trained 2026-09-27; best checkpoint `checkpoint-175` (`eval_loss` 0.03824). **H8b: inconclusive** (2026-09-29, below). **H8a: pending** |
 
 ### H8a — Does fine-tuning help Logos?
 
@@ -492,6 +497,54 @@ configured batch size and a memory probe, both before the Trainer re-seeds.
 
 **What would falsify H8:** H8b's interval entirely below zero, or entirely within
 ±0.02.
+
+### H8b result — 2026-09-29
+
+**Inconclusive.** On the 271 answerable items, Logos − Hermes = **−0.0168**:
+
+| Arm (answerable subset) | Mean | Cluster 95% CI |
+| --- | --: | --- |
+| Hermes `arm2_finetuned` (re-reported) | 0.8976 | 0.8634–0.9301 |
+| Logos `arm2_finetuned` | 0.8808 | 0.8381–0.9191 |
+| **Logos − Hermes, paired** | **−0.0168** | **−0.0546 to +0.0177** (61 groups) |
+
+The interval spans zero and reaches beyond −0.02, so by the pre-registered rule
+H8b is neither better, worse nor equivalent. H8 is neither supported nor
+falsified.
+
+- **What the interval does say:** its upper end, +0.0177, is below +0.02. At the
+  95% level these data do not support a Logos advantage as large as the
+  equivalence margin. A Hermes lead of up to about 0.055 is not ruled out either.
+- **The confounds above still apply:** one training seed per model, so training
+  noise isn't in the interval.
+
+**Secondary rows. They are reported, not decisive, and the seven tasks are not
+corrected for multiple comparisons.**
+
+- **Should-decline subset** (78 items, 17 groups): −0.0111, cluster CI −0.0429 to
+  +0.0195.
+- **`recommendation_generation`** (n = 41): 0.4946 → 0.3906 (−0.1040). Regressed in
+  both bootstraps: examples p < 0.0005, groups p = 0.006.
+- **`workspace_reasoning`** (n = 46): −0.0142. Regressed by groups (p = 0.014),
+  not by examples.
+- **`notification_prioritization`** (n = 38): +0.0837. Improved by examples
+  (p = 0.007), not by groups.
+- **Every other task:** within ±0.021 and not significant in either bootstrap.
+- **Consistency by `group_id`,** oracle 1.000: Hermes 0.769 → Logos 0.833 over 78
+  groups, and 0.770 → 0.853 over the 61 answerable groups. No interval is
+  computed for it.
+- **Overall means** (descriptive): Hermes 0.8051, Logos 0.7896.
+
+**Provenance:**
+
+- **Hermes' side:** read from its frozen results (`arm2_finetuned.json`, sha256
+  `428400f5…`, as registered in its report). `rescore.py --mode annotate` wrote a
+  separate `.annotated.json`; stored scores reproduced with drift 0, and the
+  source is unmodified.
+- **Logos' side:** one uninterrupted evaluation pass, with 0 generations replayed
+  (D10).
+- **Both:** the same benchmark, sha256 `a11ffad7…`.
+- **Report:** `outputs/report_h8b_hermes_vs_logos/summary.md`.
 
 ---
 
@@ -553,6 +606,7 @@ Append one row per completed experiment. **Include failed and negative runs.**
 | 2026-09-22 | H2 | Mistral-Nemo-Instruct-2407 (QLoRA r=16) — **KLEOS Hermes** | kleos-policy-v0.0.6 (`3cc9a744…`) | `b2328857c6026dd7` | **Not measurable.** Same benchmark, 100% OOD. | same run |
 | 2026-09-22 | H3 | Mistral-Nemo-Instruct-2407 (QLoRA r=16) — **KLEOS Hermes** | kleos-policy-v0.0.6 (`3cc9a744…`) | `b2328857c6026dd7` | **Improved, still poor — identical to Ministral.** correct_agreement 0.000 → 0.333; 10/15 groups still flip; abstention table identical case for case. | same run |
 | 2026-09-24 | H8 | Ministral-3-14B-Instruct-2512-BF16, text tower (QLoRA r=16) — **KLEOS Logos v0.0.1** | kleos-policy-v0.0.6 (`3cc9a744…`) | `18008c6716a58afc` | **Pre-registered; not run.** | [logos.md](logos.md) |
+| 2026-09-29 | H8b | **KLEOS Logos v0.0.1** vs **KLEOS Hermes**, both `arm2_finetuned` | kleos-policy-v0.0.6 (`3cc9a744…`) | `18008c6716a58afc` (Logos) | **Inconclusive.** Answerable subset: Logos − Hermes −0.0168, cluster 95% CI −0.0546 to +0.0177 (271 items, 61 groups). Neither better, worse nor equivalent at ±0.02. | `outputs/report_h8b_hermes_vs_logos/summary.md`; [H8b result](#h8b-result--2026-09-29) |
 
 Run provenance: experiment id `kleos-v006-ministral8b-run1`, seed 42, 3 epochs
 (309 steps, effective batch 8, `max_seq_length` 1024), best checkpoint selected
@@ -600,6 +654,9 @@ happens.
 | 2026-09-15 | **D6.** A composite `kleos_policy` grader was added; it was not in the original protocol. | The benchmark needs ranking, deciding factor and abstention scored together, with `format_valid` reported **separately and excluded from the score**. Without that separation a format failure is indistinguishable from a judgment failure — which, given D2, is the difference between a real result and a wrong one. |
 | 2026-09-15 | **D7.** The v0.0.6 run used `revision: main` for the base model. The commit it resolved to is **not recoverable** from the preserved artifacts. | Nothing in the pipeline resolved or recorded a Hub commit sha — every code path echoes back the requested pointer. The Colab HF cache that held it was wiped. See "Base-model revision" below. Future runs are pinned; the historical record is **not** backfilled. |
 | 2026-09-18 | **D8.** Hermes training was interrupted after step 250 and resumed from `checkpoint-250` eighteen hours later, on a different T4 instance. Steps 251–309 ran in the second session. | The Colab runtime died mid-save; `validate_checkpoint` rejected the half-written `checkpoint-300`. Resume state was verified faithful: gradient-check loss bit-identical across sessions, scheduler lag carried over, and the two independent evaluations of step 300 agree to 1.4 × 10⁻⁵. **No effect on the result:** the selected adapter (`checkpoint-200`) was written before the interruption. D1–D6 apply to the Hermes run unchanged; D7 does not (its base is pinned). |
+| 2026-09-27 | **D9.** Logos training ran across four Colab sessions between 2026-09-24 and 2026-09-27, and resumed twice. Session 1 was disconnected after the step-125 evaluation, leaving `checkpoint-125` without weights; `validate_checkpoint` rejected it, so session 2 resumed from `checkpoint-100`. Session 2 hit the Google Drive storage quota partway through, and the free GPU usage limit ended it between steps 250 and 275. Session 3 made no progress. Session 4 resumed from `checkpoint-250` and finished. | Free-tier Colab limits. Both resume points were complete: `checkpoint-100` by its size (368 MB, a full checkpoint), and `checkpoint-250` file by file (weights, optimizer, scheduler, RNG and scaler state). **No effect on the selected adapter:** `checkpoint-175` was written in session 2. The final validation pass on the loaded best weights reproduced its `eval_loss` (0.0382), and the exported adapter is byte-identical to it (sha256 `f3e8dcdc…70a7`). `train_loss` in `metrics.json` (0.0007) is a resume artifact: transformers divides the last session's loss sum by all 309 steps. Do not quote it. `training.log` may lack killed sessions' lines (L-F3); `events.jsonl` does not. |
+| 2026-09-29 | **D10.** Logos `arm2_finetuned` was evaluated in three sessions. The generations of the first two never reached Drive; the third generated all 349 in one pass (`resume`: 0 replayed, 349 new). | Finding L-F3 ([logos.md](logos.md#10-findings-from-this-phase)): the partial file was held open, and Colab's Drive mount uploads only closed files. **No effect on the result**, which is a single uninterrupted run at the pre-registered commit. |
+| 2026-09-29 | **D11. Declared before it runs:** Logos `arm1_base_orchestrated` will run at a commit later than H8's, which contains the L-F3 fix. The fix opens and closes the partial file for every record instead of holding one handle for the run. | An arm takes 2–3 hours, longer than a free session reliably lasts, and without the fix a killed session loses all its work. The change touches file handling only: generation, prompts, grading, configs and the benchmark are unchanged. The arm's resume identity records the commit it ran. |
 
 ---
 

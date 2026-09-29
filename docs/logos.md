@@ -1,6 +1,11 @@
 # KLEOS Logos v0.0.1
 
-**Status (2026-09-24): selected, implemented, pre-registered. NOT TRAINED.**
+**Status (2026-09-29): trained 2026-09-27.**
+
+- **H8b, the primary comparison with Hermes, is INCONCLUSIVE.** Result:
+  [experiments.md](experiments.md#h8b-result--2026-09-29).
+- **H8a, Logos base vs fine-tuned, is pending:** Logos' base arm has not been
+  evaluated yet.
 
 Logos is the deeper of the two KLEOS models. Hermes (Mistral-Nemo 12B) is frozen and
 deployed; nothing on this page changes it. This page records which base Logos uses
@@ -103,15 +108,18 @@ All against the pinned revision, with the Docker image's pinned transformers 5.1
 | Text-only loading | On a tiny checkpoint in the official key layout, the text view loads **every** language weight exactly; `lm_head` stays untied; vision and projector keys are the only ones unused. **VERIFIED** (`tests/test_ministral3_text_view.py`) |
 | Tokenizer files | `tokenizer.json` `d5f60467…8135`, `tokenizer_config.json` `f59f7294…0d6d`, `chat_template.jinja` `2f545122…8970`. **VERIFIED**, pinned in `tests/test_revision_pinning.py` |
 | Chat template | Renders the system prompt in place (`[SYSTEM_PROMPT]…`), so Hermes' system-prompt merge (deviation D5) does not apply. Its default system prompt is used only when a conversation has none; every KLEOS example has one. **VERIFIED** |
-| `fix_mistral_regex` | transformers flags this tokenizer's pre-tokenizer regex as incorrect. Setting it to true changes tokenization in **0 of 1,350** v0.0.6 examples. Logos sets it explicitly so training and serving agree on user text. **VERIFIED** |
-| Sequence lengths | Longest training example **492 tokens** (496 after the collator pads to a multiple of 8), validation 480, test 503, through the repository's own formatter. Hermes' tokenizer gives 440. `max_seq_length` 1024 truncates nothing. **VERIFIED** |
+| `fix_mistral_regex` | transformers flags this tokenizer's pre-tokenizer regex as incorrect. Setting it to true changes the token ids of **0 of 1,350** formatted v0.0.6 examples. Logos sets it explicitly so training and serving agree on user text. **VERIFIED** (re-measured 2026-09-24 with the tokenizer class the Hub gives; see finding L-F2) |
+| Sequence lengths | Longest training example **442 tokens** (448 after the collator pads to a multiple of 8), validation 436, test 612, through the repository's own formatter. Hermes' tokenizer gives 440 for training. `max_seq_length` 1024 truncates nothing. **VERIFIED**, and confirmed by the Colab smoke run's own measurement |
 
 ---
 
 ## 4. Does it fit a free T4?
 
-**Short answer: probably, by a hair. Run the smoke test before committing a
-session.**
+**Short answer: yes, with a small margin, as measured by the smoke run on
+2026-09-24.** On a Colab T4 the longest batch peaked at **13.60 GiB allocated,
+13.96 GiB reserved**, leaving **0.34 GiB** once the optimizer state exists. That
+passes the 0.15 GiB gate. The estimate below came first and decided that the
+smoke run was worth running.
 
 The memory estimator (`src/kleos_models/models/feasibility.py`) was rebuilt for
 this phase (finding H-F10). It now counts what a QLoRA step on these models
@@ -129,30 +137,36 @@ For Logos at its longest batch (ESTIMATED):
 
 ```text
 $ python scripts/plan_run.py --config configs/training/kleos_logos_v001.yaml \
-      --simulate-gpu t4-colab --seq-length 496
+      --simulate-gpu t4-colab --seq-length 448
 
 ✓ ministral3_14b (mistralai/Ministral-3-14B-Instruct-2512-BF16): ADAPTER TRAIN (MARGINAL)
   base weights               10.85 GB (of which unquantized 5.00 GB)
   LoRA weights               0.227 GB (60,948,480 trainable params)
   gradients                  0.227 GB
   optimizer state            0.114 GB (paged, outside the allocator)
-  activations and logits      2.59 GB (batch 1 x seq 496)
+  activations and logits      2.47 GB (batch 1 x seq 448)
   ----------------------------------------
-  estimated peak allocated   13.89 GB
+  estimated peak allocated   13.77 GB
   + allocator reserve         0.50 GB
-  required                   14.39 GB
+  required                   14.27 GB
   budget:   14.41 GB
-  headroom: +0.03 GB
+  headroom: +0.14 GB
 ```
+
+MEASURED on the smoke run (`kleos-logos-smoke-001`, Tesla T4, 2026-09-24): the
+memory probe on the longest batch (1 x 448 tokens, fp16) peaked at 13.60 GiB
+allocated, so the estimate was 1.3% pessimistic. Reserved memory was 13.96 GiB,
+0.36 GiB of fragmentation slack under expandable segments, against Hermes' 0.49.
+The ten training steps peaked at 13.55 GiB.
 
 The budget is the 14.56 GiB torch reports on Colab's T4, less the 0.14 GiB Hermes'
 run used outside PyTorch's allocator. The 0.5 GiB reserve is the fragmentation
 slack Hermes' run showed (13.58 GiB reserved at a 13.09 GiB peak).
 
-**What that means.** Logos' peak is 0.80 GiB above Hermes': 0.60 GiB of extra 4-bit
-MLP weights, 0.03 GiB of extra LoRA state, and longer sequences under its tokenizer.
-It fits only if the allocator fragments no more than it did for Hermes. Two
-things follow:
+**What that means.** Logos' peak is about 0.5 GiB above Hermes': 0.60 GiB of extra
+4-bit MLP weights and 0.03 GiB of extra LoRA state, with sequences the same length
+(442 against 440 tokens). It fits only if the allocator fragments no more than it
+did for Hermes. Two things follow:
 
 1. **`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`** is set in the runbook.
    It changes how memory is allocated, not what is computed. It is recorded in the
@@ -323,7 +337,7 @@ Expect `Tesla T4`, `5.16.1`, `0.20.0`, `0.50.2` and `no KLEOS_ variables`.
 
 **7. Plan against the live GPU**
 ```
-!python scripts/plan_run.py --config configs/training/kleos_logos_v001.yaml --seq-length 496
+!python scripts/plan_run.py --config configs/training/kleos_logos_v001.yaml --seq-length 448
 ```
 
 **8. Smoke run** (10 steps at the real settings, scratch space on `/content`)
@@ -405,6 +419,39 @@ modules). `tests/test_vlm_targeting_finding.py` holds both as strict xfails, so 
 fix makes them fail until this entry is closed. A fix would match on a
 `language_model.` path segment rather than a prefix, and pass PEFT a regex (or
 explicit module names) instead of suffix lists.
+
+**L-F2 — The tokenizer class depends on `config.json` being present.** VERIFIED
+with transformers 5.16.1. From the Hub repository (config.json included),
+`AutoTokenizer` builds `TokenizersBackend`, which gives the longest training example
+as 442 tokens. From a folder of the tokenizer files alone it builds
+`LlamaTokenizer`, which splits the same text into about 12% more tokens with
+different ids: 492 for the same example. The first measurements for this page were
+made that way and have been corrected. Training and evaluation load from the Hub,
+and a tokenizer saved by training reloads as `TokenizersBackend` with identical
+ids, so runs are consistent. **Any serving package for Logos must load its
+tokenizer as `TokenizersBackend`**, never rebuild it from bare files; otherwise
+serving tokenizes differently from training.
+
+**L-F3 — Evaluation resume lost a killed session's work on Colab's Drive mount.**
+OBSERVED on Colab, 2026-09-28 and 29; the cause is INFERRED. Fixed in
+`src/kleos_models/evaluation/resume.py`.
+
+- **What happened:** `PartialWriter` kept `<output>.partial.jsonl` open for the whole
+  arm, appending and fsyncing each generation.
+  - A Logos arm2 session answered more than 100 questions before Colab killed the
+    runtime.
+  - The next session printed `resume : 0 generation(s) recorded`. Only the identity
+    header, which `start_partial` writes and closes on its own, had reached Drive.
+- **Why (inferred):** the evidence fits a mount that uploads a file only once it is
+  closed, whatever `fsync` does. Files that were written and then closed all
+  survived the same kills: checkpoints, headers and `events.jsonl`, which is opened
+  per event.
+- **The fix:** the writer now opens and closes the file for every record.
+  `tests/test_evaluation_resume.py` checks that no handle stays open between
+  records. File handling is the only change; generation is untouched.
+- **Also affected:** `training.log` is written through a `logging.FileHandler` held
+  open the same way. The log of a training session that was killed may be missing
+  from Drive. Its events, checkpoints and manifest are not affected.
 
 The other findings of this phase, H-F11 to H-F14, are about how the evaluation
 measures. They are recorded with the run they were found in:

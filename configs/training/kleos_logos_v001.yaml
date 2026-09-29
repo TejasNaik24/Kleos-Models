@@ -53,7 +53,7 @@ hypothesis: H8
 task: null
 
 model:
-  # Restated, as in Hermes' config: the longest example is 492 tokens under
+  # Restated, as in Hermes' config: the longest example is 442 tokens under
   # this tokenizer, so nothing truncates.
   max_seq_length: 1024
 

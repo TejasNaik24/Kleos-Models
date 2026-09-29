@@ -2,8 +2,8 @@
 
 An arm of the KLEOS benchmark takes two to three hours on a free T4, longer than
 a Colab session reliably lasts. Every finished generation is therefore appended
-to ``<output>.partial.jsonl`` and flushed to disk before the next one starts. A
-resumed run replays those generations and generates only the rest.
+to ``<output>.partial.jsonl``, flushed to disk and closed before the next one
+starts. A resumed run replays those generations and generates only the rest.
 
 Greedy decoding makes a replayed generation the one an uninterrupted run would
 have produced, so the finished result is the result of an uninterrupted run.
@@ -226,19 +226,25 @@ def load_partial(path: Path, identity: Mapping[str, Any]) -> PartialState:
 
 
 class PartialWriter:
-    """Append-only, fsynced record of finished generations."""
+    """Append-only, fsynced record of finished generations.
+
+    The file is opened and closed again for every record. Colab's Google Drive
+    mount uploads a file only once it is closed, and ``fsync`` does not change
+    that: a handle held open for the whole arm meant a killed runtime lost every
+    generation of its session (finding L-F3, docs/logos.md).
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._handle = path.open("a", encoding="utf-8")
 
     def append(self, record: Mapping[str, Any]) -> None:
-        self._handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
-        self._handle.flush()
-        os.fsync(self._handle.fileno())
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
 
     def close(self) -> None:
-        self._handle.close()
+        """Nothing is held open between records; kept so callers need not change."""
 
 
 class ResumingBackend:

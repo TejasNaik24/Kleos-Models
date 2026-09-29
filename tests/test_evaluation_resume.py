@@ -81,6 +81,28 @@ class TestPartialFile:
         assert state.generations[(42, "ex-1")]["text"] == "second"
         assert not state.dropped_torn_line
 
+    def test_no_handle_stays_open_between_appends(self, tmp_path, monkeypatch):
+        # Colab's Drive mount uploads a file only once it is closed. A handle held
+        # open for the whole arm lost every generation of a killed session (L-F3).
+        path = tmp_path / "p.jsonl"
+        start_partial(path, identity())
+        opened: list[Any] = []
+        real_open = Path.open
+
+        def tracking_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+            handle = real_open(self, *args, **kwargs)
+            opened.append(handle)
+            return handle
+
+        monkeypatch.setattr(Path, "open", tracking_open)
+        writer = PartialWriter(path)
+        for number in range(3):
+            writer.append(record(42, f"ex-{number}", "text"))
+            assert opened
+            assert all(handle.closed for handle in opened)
+        writer.close()
+        assert len(load_partial(path, identity()).generations) == 3
+
     def test_a_partial_file_is_never_replaced(self, tmp_path):
         path = tmp_path / "p.jsonl"
         start_partial(path, identity())

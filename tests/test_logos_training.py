@@ -58,7 +58,7 @@ def bundle(count: int = 4) -> DatasetBundle:
 
 
 class TestSequenceMeasurement:
-    @pytest.mark.parametrize(("raw", "padded"), [(1, 8), (8, 8), (9, 16), (492, 496), (440, 440)])
+    @pytest.mark.parametrize(("raw", "padded"), [(1, 8), (8, 8), (9, 16), (442, 448), (440, 440)])
     def test_padding_follows_the_collator(self, raw, padded):
         assert padded_length(raw) == padded
 
@@ -165,19 +165,19 @@ class TestTrainScript:
         monkeypatch.setattr(
             trainer,
             "measure_sequence_lengths",
-            lambda *a, **k: {"longest": 492, "longest_padded": 496, "examples_formatted": 4},
+            lambda *a, **k: {"longest": 442, "longest_padded": 448, "examples_formatted": 4},
         )
         assert train_script.main(self.args(dataset_dir, tmp_path, "--dry-run")) == 0
         manifest = json.loads((tmp_path / "out" / "logos-test" / "manifest.json").read_text())
-        assert manifest["feasibility"]["sequence_lengths"]["longest_padded"] == 496
-        assert manifest["feasibility"]["estimate"]["sequence_length"] == 496
+        assert manifest["feasibility"]["sequence_lengths"]["longest_padded"] == 448
+        assert manifest["feasibility"]["estimate"]["sequence_length"] == 448
 
     def _stub_training(self, monkeypatch) -> dict[str, Any]:
         calls: dict[str, Any] = {}
         monkeypatch.setattr(
             trainer,
             "measure_sequence_lengths",
-            lambda *a, **k: {"longest": 492, "longest_padded": 496, "examples_formatted": 4},
+            lambda *a, **k: {"longest": 442, "longest_padded": 448, "examples_formatted": 4},
         )
         from kleos_models.models import feasibility
 
@@ -207,7 +207,7 @@ class TestTrainScript:
         assert manifest.feasibility["policy"] == "record"
         assert not manifest.adjustments
         assert any("--feasibility record" in note for note in manifest.notes)
-        assert calls["longest_sequence"] == 496
+        assert calls["longest_sequence"] == 448
         assert calls["probe_memory"] is True
         assert calls["config"].model.max_seq_length == 1024  # untouched
 
@@ -251,11 +251,11 @@ def smoke_manifest(**changes: Any) -> dict[str, Any]:
             "gradient_check": {"lora_tensors": 560, "lora_tensors_with_nonzero_grad": 280},
             "memory_probe": {
                 "batch_size": 1,
-                "sequence_length": 496,
-                "peak_allocated_gb": 13.9,
-                "peak_reserved_gb": 14.1,
+                "sequence_length": 448,
+                "peak_allocated_gb": 13.60,
+                "peak_reserved_gb": 13.96,
                 "total_gb": 14.56,
-                "spare_after_optimizer_gb": 0.2,
+                "spare_after_optimizer_gb": 0.34,
             },
         },
     }
