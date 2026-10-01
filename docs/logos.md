@@ -1,11 +1,16 @@
 # KLEOS Logos v0.0.1
 
-**Status (2026-09-29): trained 2026-09-27.**
+**Status (2026-10-01): trained 2026-09-27 and evaluated. H8 is complete.**
 
-- **H8b, the primary comparison with Hermes, is INCONCLUSIVE.** Result:
-  [experiments.md](experiments.md#h8b-result--2026-09-29).
-- **H8a, Logos base vs fine-tuned, is pending:** Logos' base arm has not been
-  evaluated yet.
+- **H8b, the primary comparison with Hermes, is INCONCLUSIVE.** Logos − Hermes is
+  −0.0168 on the answerable items, cluster 95% CI −0.0546 to +0.0177.
+  Result: [experiments.md](experiments.md#h8b-result--2026-09-29).
+- **H8a, Logos base vs fine-tuned, is SUPPORTED.** 5 of 7 tasks improved by the
+  pre-registered cluster rule, and none regressed.
+  Result: [experiments.md](experiments.md#h8a-result--2026-10-01).
+- **Full run report:** [experiments/kleos-v006-ministral314b-run1-report.md](experiments/kleos-v006-ministral314b-run1-report.md).
+- **Not yet done:** Logos is not deployed. Deployment comes only after a decision
+  that Logos is worth serving beside Hermes (§7).
 
 Logos is the deeper of the two KLEOS models. Hermes (Mistral-Nemo 12B) is frozen and
 deployed; nothing on this page changes it. This page records which base Logos uses
@@ -449,6 +454,38 @@ OBSERVED on Colab, 2026-09-28 and 29; the cause is INFERRED. Fixed in
 - **The fix:** the writer now opens and closes the file for every record.
   `tests/test_evaluation_resume.py` checks that no handle stays open between
   records. File handling is the only change; generation is untouched.
+- **Confirmed on Colab, 2026-10-01:** with the fix (`ed5a987`), Logos' arm1
+  session was killed partway through. The next session found its 172
+  generations on Drive and resumed from them.
+
+**L-F4 — A fresh start into a folder that already holds checkpoints would delete
+the best one.** VERIFIED against transformers 5.16.1's `rotate_checkpoints`, on
+2026-09-25. Not fixed.
+
+- **The gap:** `scripts/train.py` has no guard against starting from step 0 in a
+  run folder that already holds checkpoints, for example by running the training
+  cell without `--resume-from-checkpoint`.
+- **What would happen:** transformers sorts checkpoints by step number. It
+  protects the newest and the *new* run's best, so the old run's best is not
+  protected. At the new run's first save, with Logos' folder as it stood
+  (checkpoint-25 beside 175, 225 and 250), rotation would have deleted
+  `checkpoint-175`, the selected adapter.
+- **What prevented it:** only the runbook's instruction to use cell 12.
+- **The fix:** refuse a fresh start where checkpoints exist unless the operator
+  says so explicitly.
+
+**L-F5 — `validate_checkpoint` does not check optimizer or scheduler state.**
+VERIFIED with transformers 5.16.1. Not fixed.
+
+- **What it requires:** `trainer_state.json` and a weights file. That is enough to
+  reject a checkpoint without weights, such as Logos' session-1 `checkpoint-125`
+  (H-F4 again).
+- **What it misses:** a checkpoint missing `optimizer.pt` or `scheduler.pt` passes.
+  transformers then skips loading both without a warning, and the run continues
+  with a fresh optimizer and a learning-rate schedule restarted from warmup.
+- **This run:** both resume points were checked by hand first (D9).
+- **The fix:** require the optimizer and scheduler files whenever a checkpoint is
+  used to resume.
 - **Also affected:** `training.log` is written through a `logging.FileHandler` held
   open the same way. The log of a training session that was killed may be missing
   from Drive. Its events, checkpoints and manifest are not affected.
