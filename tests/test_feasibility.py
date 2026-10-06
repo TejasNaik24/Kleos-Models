@@ -9,6 +9,8 @@ GPUs are simulated, so the whole matrix is testable without hardware.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from tests.conftest import CONFIGS_DIR
 
@@ -550,3 +552,93 @@ class TestPlanRunScript:
         with pytest.raises(SystemExit) as info:
             self.run(capsys, *argv)
         assert info.value.code == 2
+
+
+class TestTwoGPUs:
+    """Logos v0.0.2 on Kaggle's 2 x T4: the layers split across both GPUs.
+
+    The longest kleos-policy-v0.0.7 example is 736 tokens with the Reasoning
+    tokenizer (measured). On one T4 that is past the margin Logos v0.0.1 ran
+    with: v0.0.1 measured 13.60 GB and 0.35 GB spare at 448 tokens.
+    """
+
+    KAGGLE = "T4:14.56:7.5:2"
+    LONGEST = 736
+
+    @staticmethod
+    def logos_v002() -> tuple[Any, TrainingConfig]:
+        config = training_config("kleos_logos_v001.yaml")
+        return model("ministral3_14b_reasoning"), config.training
+
+    def assess_on(self, hardware: GPUInfo, seq: int | None = LONGEST):
+        model_config, training = self.logos_v002()
+        adapter = get_adapter(model_config)
+        return assess_feasibility(
+            model_config,
+            training,
+            gpu=hardware,
+            target_modules=adapter.resolve_target_modules(model_config.lora),
+            seq_length=seq,
+        )
+
+    def test_a_count_in_the_gpu_spec_sets_the_device_count(self):
+        spec = simulated_gpu(self.KAGGLE)
+        assert spec.device_count == 2
+        assert spec.total_memory_gb == pytest.approx(14.56)
+        assert simulated_gpu("T4:14.56:7.5").device_count == 1
+
+    @pytest.mark.parametrize("spec", ["T4:14.56:7.5:0", "T4:14.56:7.5:x", "T4:14.56:7.5:2:9"])
+    def test_a_malformed_count_is_refused(self, spec):
+        with pytest.raises(ValueError):
+            simulated_gpu(spec)
+
+    def test_one_t4_cannot_train_the_longest_example(self):
+        report = self.assess_on(T4_COLAB)
+        assert report.tier is FeasibilityTier.SMOKE
+        assert not report.fits
+        assert report.headroom_gb < 0
+        assert not report.estimate.device_peaks_gb
+
+    def test_two_t4s_fit_with_room(self):
+        report = self.assess_on(simulated_gpu(self.KAGGLE))
+        assert report.tier is FeasibilityTier.FULL_RESEARCH
+        assert not report.marginal
+        peaks = report.estimate.device_peaks_gb
+        assert len(peaks) == 2
+        # lm_head, its 16-bit copy and the logits sit on the last GPU.
+        assert peaks[1] > peaks[0]
+        assert report.estimate.peak_allocated_gb == pytest.approx(max(peaks))
+        assert max(peaks) < 10.0
+
+    def test_the_split_adds_only_each_gpus_working_layer(self):
+        model_config, training = self.logos_v002()
+        one = estimate_memory(model_config, training, seq_length=self.LONGEST)
+        two = estimate_memory(model_config, training, seq_length=self.LONGEST, devices=2)
+        three = estimate_memory(model_config, training, seq_length=self.LONGEST, devices=3)
+        per_device = sum(two.device_peaks_gb) - one.peak_allocated_gb
+        assert per_device > 0
+        assert sum(three.device_peaks_gb) == pytest.approx(one.peak_allocated_gb + 2 * per_device)
+
+    def test_one_device_is_the_estimate_it_always_was(self):
+        model_config, training = self.logos_v002()
+        default = estimate_memory(model_config, training, seq_length=self.LONGEST)
+        explicit = estimate_memory(model_config, training, seq_length=self.LONGEST, devices=1)
+        assert explicit.to_dict() == default.to_dict()
+        assert "device_peaks_gb" not in default.to_dict()
+
+    def test_a_fixed_device_map_is_one_gpu_however_many_are_visible(self):
+        model_config, training = self.logos_v002()
+        pinned = model_config.model_copy(update={"device_map": "cuda:0"})
+        report = assess_feasibility(
+            pinned, training, gpu=simulated_gpu(self.KAGGLE), seq_length=self.LONGEST
+        )
+        assert not report.estimate.device_peaks_gb
+
+    def test_the_split_is_shown_and_recorded(self):
+        report = self.assess_on(simulated_gpu(self.KAGGLE))
+        assert "GPU 1" in report.estimate.render()
+        assert len(report.estimate.to_dict()["device_peaks_gb"]) == 2
+
+    def test_the_gpu_line_states_capacity_per_gpu(self):
+        assert "14.56 GB per GPU" in simulated_gpu(self.KAGGLE).render()
+        assert "14.56 GB total" in simulated_gpu("T4:14.56:7.5").render()

@@ -366,7 +366,7 @@ class TestRunnerRecords:
 
     def test_version_two_fields_sit_beside_the_originals(self):
         payload = self.run().to_dict()
-        assert payload["schema_version"] == RESULTS_SCHEMA_VERSION == 2
+        assert payload["schema_version"] == RESULTS_SCHEMA_VERSION == 3
         assert payload["benchmark_sha256"] == "f" * 64
         assert payload["benchmark_fingerprint"] == targets_fingerprint(payload["results"])
         assert payload["generation_stats"]["responses"] == 6

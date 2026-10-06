@@ -55,6 +55,37 @@ class GenerationOutput:
         }
 
 
+def split_thinking(
+    ids: Sequence[int], begin: int, end: int
+) -> tuple[list[int] | None, list[int], bool]:
+    """Split a completion's token ids into its thinking span and its answer.
+
+    Returns ``(reasoning_ids, answer_ids, closed)``:
+
+    * ``[begin] trace [end] answer`` gives ``(trace, answer, True)``; only the
+      first ``end`` splits, so a marker inside the answer stays in it;
+    * a span opened by ``begin`` and never closed (the budget ran out while
+      thinking) gives ``(trace, [], False)``: there is no answer to grade;
+    * an ``end`` without a leading ``begin`` still splits;
+    * no marker at all gives ``(None, ids, True)``: the whole completion is the
+      answer.
+
+    Done on ids, before decoding, because both markers are special tokens and
+    decoding with ``skip_special_tokens=True`` would erase the boundary.
+    """
+    tokens = list(ids)
+    if tokens[:1] == [begin]:
+        body = tokens[1:]
+        if end in body:
+            cut = body.index(end)
+            return body[:cut], body[cut + 1 :], True
+        return body, [], False
+    if end in tokens:
+        cut = tokens.index(end)
+        return tokens[:cut], tokens[cut + 1 :], True
+    return None, tokens, True
+
+
 @dataclass
 class PreparedPrompt:
     """A rendered, tokenized prompt, ready for the model.
@@ -204,13 +235,47 @@ class HuggingFaceBackend(BaseBackend):
 
         return [int(token) for token in output_ids[0][prepared.prompt_length :].tolist()]
 
+    def _thinking_markers(self) -> tuple[int, int] | None:
+        """Ids of ``[THINK]`` and ``[/THINK]`` when the model thinks in them."""
+        if self.loaded.reasoning_mode is not ReasoningMode.THINKING:
+            return None
+        tokenizer = self.loaded.tokenizer
+        begin = tokenizer.convert_tokens_to_ids("[THINK]")
+        end = tokenizer.convert_tokens_to_ids("[/THINK]")
+        unknown = getattr(tokenizer, "unk_token_id", None)
+        if begin is None or end is None or unknown in (begin, end):
+            return None
+        return int(begin), int(end)
+
     def finish(self, prepared: PreparedPrompt, completion_ids: Sequence[int]) -> GenerationOutput:
         """Decode the completion and separate any reasoning span. CPU only."""
-        text = self.loaded.tokenizer.decode(list(completion_ids), skip_special_tokens=True)
+        tokenizer = self.loaded.tokenizer
+        metadata = {"backend": self.name, "reasoning_mode": self.loaded.reasoning_mode.value}
 
         # Reasoning models emit a thinking span. Separate it from the answer:
         # graders score the decision and its justification, not hidden
         # chain-of-thought (spec section 39).
+        markers = self._thinking_markers()
+        if markers is not None:
+            # [THINK]/[/THINK] are special tokens (Ministral 3 Reasoning), so
+            # split on ids: decoding first would erase the boundary and grade the
+            # trace as part of the answer.
+            reasoning_ids, answer_ids, closed = split_thinking(completion_ids, *markers)
+            return GenerationOutput(
+                text=tokenizer.decode(answer_ids, skip_special_tokens=True).strip(),
+                reasoning=(
+                    tokenizer.decode(reasoning_ids, skip_special_tokens=True).strip()
+                    if reasoning_ids is not None
+                    else None
+                ),
+                prompt_tokens=prepared.prompt_length,
+                completion_tokens=len(completion_ids),
+                # 'length': the budget ran out while thinking, so there is no answer.
+                finish_reason="stop" if closed else "length",
+                metadata=metadata,
+            )
+
+        text = tokenizer.decode(list(completion_ids), skip_special_tokens=True)
         reasoning: str | None = None
         answer = text
         if "</think>" in text:
@@ -223,7 +288,7 @@ class HuggingFaceBackend(BaseBackend):
             reasoning=reasoning,
             prompt_tokens=prepared.prompt_length,
             completion_tokens=len(completion_ids),
-            metadata={"backend": self.name, "reasoning_mode": self.loaded.reasoning_mode.value},
+            metadata=metadata,
         )
 
     def describe(self) -> dict[str, Any]:

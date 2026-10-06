@@ -12,7 +12,7 @@ model. The same logic is exercised against real Qwen and Mistral templates in
 from __future__ import annotations
 
 import pytest
-from tests.conftest import make_example
+from tests.conftest import FakeTokenizer, make_example
 
 from kleos_models.constants import IGNORE_INDEX
 from kleos_models.data.formatting import ConversationFormatter, messages_to_dicts
@@ -198,6 +198,84 @@ class TestReasoningStripping:
             ]
         )
         assert "SENTINEL" in supervised
+
+
+class TestReasoningTargets:
+    """Schema 1.1's ``reasoning`` field, for a model trained to think (Logos v0.0.2)."""
+
+    @staticmethod
+    def example(reasoning: str = "score alpha first", example_id: str = "test-000001"):
+        payload = make_example(example_id, assistant="1. alpha")
+        payload["version"] = "1.1"
+        payload["messages"][-1]["reasoning"] = reasoning
+        return TrainingExample.model_validate(payload)
+
+    @staticmethod
+    def supervised(tokenizer, result) -> str:
+        return tokenizer.decode(
+            [
+                t
+                for t, label in zip(result.input_ids, result.labels, strict=True)
+                if label != IGNORE_INDEX
+            ]
+        )
+
+    def test_messages_carry_reasoning_to_the_template(self):
+        messages = self.example().messages
+        assert messages_to_dicts(messages)[-1]["reasoning"] == "score alpha first"
+
+    def test_messages_without_reasoning_convert_as_before(self):
+        messages = build().messages
+        assert all("reasoning" not in payload for payload in messages_to_dicts(messages))
+
+    def test_the_trace_and_the_answer_are_both_supervised(self):
+        tokenizer = FakeTokenizer(renders_reasoning=True)
+        formatter = ConversationFormatter(tokenizer, max_seq_length=256, strip_reasoning=False)
+        result = formatter.format_example(self.example())
+        assert result is not None
+        supervised = self.supervised(tokenizer, result)
+        assert supervised.startswith("[THINK] score alpha first [/THINK] 1. alpha")
+
+    def test_a_model_not_trained_to_think_drops_the_trace_and_says_so(self, caplog):
+        tokenizer = FakeTokenizer(renders_reasoning=True)
+        formatter = ConversationFormatter(tokenizer, max_seq_length=256, strip_reasoning=True)
+        formatted, stats = formatter.format_dataset([self.example()])
+        assert "[THINK]" not in tokenizer.decode(formatted[0].input_ids)
+        assert stats.reasoning_dropped == 1
+        assert stats.summary()["reasoning_dropped"] == 1
+        assert "reasoning" in caplog.text
+
+    def test_a_run_without_reasoning_reports_nothing_new(self, fake_tokenizer):
+        formatter = ConversationFormatter(fake_tokenizer, max_seq_length=256)
+        _, stats = formatter.format_dataset([build()])
+        assert "reasoning_dropped" not in stats.summary()
+
+    # The prompt is about 20 tokens: 30 cuts the trace, 12 cuts the whole answer.
+    @pytest.mark.parametrize("max_seq_length", [30, 12])
+    def test_a_cut_reasoning_target_is_fatal_when_asked(self, max_seq_length):
+        tokenizer = FakeTokenizer(renders_reasoning=True)
+        formatter = ConversationFormatter(
+            tokenizer,
+            max_seq_length=max_seq_length,
+            strip_reasoning=False,
+            fail_on_target_truncation=True,
+        )
+        with pytest.raises(DataValidationError, match="max_seq_length"):
+            formatter.format_dataset([self.example("step " * 40)])
+
+    def test_a_cut_target_still_only_warns_by_default(self):
+        tokenizer = FakeTokenizer(renders_reasoning=True)
+        formatter = ConversationFormatter(tokenizer, max_seq_length=30, strip_reasoning=False)
+        _, stats = formatter.format_dataset([self.example("step " * 40)])
+        assert stats.target_truncated == 1
+
+    def test_a_whole_trace_passes_the_tripwire(self):
+        tokenizer = FakeTokenizer(renders_reasoning=True)
+        formatter = ConversationFormatter(
+            tokenizer, max_seq_length=256, strip_reasoning=False, fail_on_target_truncation=True
+        )
+        formatted, stats = formatter.format_dataset([self.example("step " * 40)])
+        assert len(formatted) == 1 and stats.target_truncated == 0
 
 
 class TestTruncation:

@@ -277,14 +277,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _peak_vram_gb() -> float | None:
-    """Peak allocated VRAM of this process, or None without CUDA."""
-    try:
-        import torch
-    except ImportError:
-        return None
-    if not torch.cuda.is_available():
-        return None
-    return round(torch.cuda.max_memory_allocated() / 1024**3, 2)
+    """Peak allocated VRAM of this process on its fullest GPU, or None without CUDA."""
+    from kleos_models.training.memory import peak_allocated_all_gb
+
+    peak = peak_allocated_all_gb()
+    return round(peak, 2) if peak is not None else None
 
 
 if __name__ == "__main__":

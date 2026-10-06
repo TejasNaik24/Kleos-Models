@@ -100,13 +100,16 @@ class FormattingStats:
     target_truncated: int = 0
     empty_targets: int = 0
     dropped: int = 0
+    #: Examples whose schema-1.1 ``reasoning`` field was removed because the
+    #: model is not trained to think (``strip_reasoning``).
+    reasoning_dropped: int = 0
     token_lengths: list[int] = field(default_factory=list)
     target_lengths: list[int] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         lengths = self.token_lengths or [0]
         targets = self.target_lengths or [0]
-        return {
+        summary: dict[str, Any] = {
             "examples_formatted": self.total,
             "dropped": self.dropped,
             "truncated": self.truncated,
@@ -116,6 +119,11 @@ class FormattingStats:
             "mean_tokens": round(sum(lengths) / len(lengths), 1),
             "mean_target_tokens": round(sum(targets) / len(targets), 1),
         }
+        # Only when it happened, so a run on data without reasoning records
+        # exactly what it recorded before schema 1.1.
+        if self.reasoning_dropped:
+            summary["reasoning_dropped"] = self.reasoning_dropped
+        return summary
 
 
 def messages_to_dicts(
@@ -127,6 +135,10 @@ def messages_to_dicts(
         payload: dict[str, str] = {"role": message.role, "content": message.content}
         if include_names and message.name:
             payload["name"] = message.name
+        if message.reasoning is not None:
+            # Reasoning templates (Ministral 3 Reasoning) render this key as the
+            # thinking span ahead of the answer; others ignore it.
+            payload["reasoning"] = message.reasoning
         result.append(payload)
     return result
 
@@ -151,9 +163,14 @@ class ConversationFormatter:
         template_kwargs: Extra kwargs forwarded to ``apply_chat_template`` — this
             is how reasoning-mode controls such as Qwen's ``enable_thinking``
             reach the template.
-        strip_reasoning: Remove ``<think>`` spans from assistant targets before
-            tokenizing. Keep this on: we train decision policy, not display
-            chain-of-thought.
+        strip_reasoning: Remove ``<think>`` spans and the schema-1.1
+            ``reasoning`` field from assistant targets before tokenizing. Keep
+            this on for a model that is not trained to think; a reasoning model
+            trained on policy-derived traces (Logos v0.0.2) turns it off.
+        fail_on_target_truncation: Raise from :meth:`format_dataset` if any
+            example loses supervised tokens, in part (truncation) or whole
+            (dropped). A reasoning run sets this: a trace cut short would teach
+            the model to stop thinking mid-thought, or to answer without one.
     """
 
     def __init__(
@@ -164,12 +181,14 @@ class ConversationFormatter:
         train_on_last_turn_only: bool = False,
         template_kwargs: dict[str, Any] | None = None,
         strip_reasoning: bool = True,
+        fail_on_target_truncation: bool = False,
     ) -> None:
         self.tokenizer = tokenizer
         self.max_seq_length = max_seq_length
         self.train_on_last_turn_only = train_on_last_turn_only
         self.template_kwargs = dict(template_kwargs or {})
         self.strip_reasoning = strip_reasoning
+        self.fail_on_target_truncation = fail_on_target_truncation
         self._warned_unstable_template = False
         self._merge_system: bool | None = None
 
@@ -404,6 +423,8 @@ class ConversationFormatter:
         formatted: list[FormattedExample] = []
 
         for example in examples:
+            if self.strip_reasoning and any(m.reasoning is not None for m in example.messages):
+                stats.reasoning_dropped += 1
             result = self.format_example(example)
             if result is None:
                 stats.dropped += 1
@@ -431,6 +452,23 @@ class ConversationFormatter:
             logger.warning(
                 "%d example(s) were dropped because they produced no supervised tokens.",
                 stats.dropped,
+            )
+        if stats.reasoning_dropped:
+            logger.warning(
+                "%d example(s) carry a reasoning trace this model is not trained to emit; "
+                "it was removed from the targets (model.reasoning.strip_thinking_from_targets).",
+                stats.reasoning_dropped,
+            )
+        if self.fail_on_target_truncation and (stats.target_truncated or stats.dropped):
+            raise DataValidationError(
+                f"{stats.target_truncated} example(s) lost part of their target to "
+                f"max_seq_length={self.max_seq_length}, and {stats.dropped} lost all of it. "
+                "A reasoning run trains on every trace whole.",
+                details=stats.summary(),
+                suggestions=[
+                    "Raise model.max_seq_length above the longest example "
+                    "(scripts/train.py measures it before loading weights).",
+                ],
             )
         return formatted, stats
 

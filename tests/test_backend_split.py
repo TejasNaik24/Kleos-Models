@@ -146,3 +146,62 @@ def test_a_prepared_prompt_survives_the_trip_to_a_gpu_worker(backend, messages):
     ids = backend.generate_ids(shipped, config)
     assert all(type(token) is int for token in ids)
     assert backend.finish(prepared, ids).text == backend.generate(messages, config).text
+
+
+# ---------------------------------------------------------------------------
+# A thinking model (Logos v0.0.2): the trace is split off on token ids
+# ---------------------------------------------------------------------------
+
+
+def build_thinking_backend() -> Any:
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import PreTrainedTokenizerFast
+
+    from kleos_models.inference.backends import HuggingFaceBackend
+
+    markers = ["[THINK]", "[/THINK]"]
+    vocab = {"<unk>": 0, "<pad>": 1, "</s>": 2}
+    for word in [*markers, *WORDS]:
+        vocab.setdefault(word, len(vocab))
+    core = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
+    core.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=core,
+        unk_token="<unk>",
+        pad_token="<pad>",
+        eos_token="</s>",
+        additional_special_tokens=markers,
+    )
+    backend = object.__new__(HuggingFaceBackend)
+    backend.name = "thinking-split-test"
+    backend.loaded = SimpleNamespace(
+        model=None, tokenizer=tokenizer, reasoning_mode=ReasoningMode.THINKING
+    )
+    return backend
+
+
+def ids_of(backend: Any, text: str) -> list[int]:
+    return backend.loaded.tokenizer.encode(text, add_special_tokens=False)
+
+
+def test_a_thinking_completion_grades_only_the_answer():
+    from kleos_models.inference.backends import PreparedPrompt
+
+    backend = build_thinking_backend()
+    ids = ids_of(backend, "[THINK] the deadline decides it [/THINK] migration first </s>")
+    output = backend.finish(PreparedPrompt(inputs={}, prompt_length=3), ids)
+    assert output.text == "migration first"
+    assert output.reasoning == "the deadline decides it"
+    assert output.finish_reason == "stop"
+    assert output.completion_tokens == len(ids)
+
+
+def test_a_thinking_completion_cut_off_mid_thought_has_no_answer():
+    from kleos_models.inference.backends import PreparedPrompt
+
+    backend = build_thinking_backend()
+    ids = ids_of(backend, "[THINK] the deadline decides")
+    output = backend.finish(PreparedPrompt(inputs={}, prompt_length=3), ids)
+    assert output.text == ""
+    assert output.reasoning == "the deadline decides"
+    assert output.finish_reason == "length"

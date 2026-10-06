@@ -20,8 +20,8 @@ from enum import Enum
 from typing import Any
 
 from kleos_models.constants import (
-    DATASET_SCHEMA_VERSION,
     REQUIRED_VARIATION_AXES,
+    SUPPORTED_SCHEMA_VERSIONS,
     VARIATION_AXES,
 )
 from kleos_models.data.schemas import TrainingExample
@@ -221,13 +221,13 @@ def validate_examples(
             f"{split_name} mixes schema versions: {dict(versions)}",
             versions=dict(versions),
         )
-    unknown_versions = set(versions) - {DATASET_SCHEMA_VERSION}
+    unknown_versions = set(versions) - set(SUPPORTED_SCHEMA_VERSIONS)
     if unknown_versions:
         report.add(
             Severity.WARNING,
             "unexpected_schema_version",
             f"examples declare schema version(s) {sorted(unknown_versions)}, "
-            f"current is {DATASET_SCHEMA_VERSION}",
+            f"supported are {list(SUPPORTED_SCHEMA_VERSIONS)}",
         )
 
     # --- required variation axes -------------------------------------------

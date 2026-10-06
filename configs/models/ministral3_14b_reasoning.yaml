@@ -1,0 +1,111 @@
+# ---------------------------------------------------------------------------
+# Ministral 3 14B Reasoning, text tower — base model for KLEOS Logos v0.0.2.
+#
+# WHY THIS MODEL
+# Logos v0.0.1 (the Instruct release of this model) was not measurably better
+# than Hermes (H8b: -0.0168, 95% CI -0.055 to +0.018). Logos is meant to be the
+# KLEOS model that thinks before it decides. Mistral publishes a Reasoning
+# release of Ministral 3 14B: the same architecture and text-tower shape, post-
+# trained to write its thinking before every answer (SOURCE, the model card at
+# the pinned revision: AIME 2025 0.850, GPQA Diamond 0.712; the card reports no
+# reasoning scores for the Instruct release, so there is no like-for-like
+# figure). Apache-2.0, ungated, published in BF16, so it runs on a T4 (compute
+# capability 7.5) with no -BF16 sibling needed. The card recommends sampling at
+# temperature 1; KLEOS evaluates greedily, as for every model (H9 states it).
+#
+# TEXT-ONLY VIEW, AS FOR v0.0.1
+# The checkpoint is a vision-language container (Mistral3ForConditionalGeneration,
+# model_type mistral3) whose text tower is 'ministral3'. `model_type:
+# ministral3_reasoning` selects the same text-only view as ministral3_14b.yaml
+# (Ministral3ForCausalLM, keys renamed on load, vision weights left on disk),
+# through Ministral3ReasoningTextAdapter, which adds what differs: the model
+# always thinks.
+#
+# Verified at the pinned revision: config.json's text tower is 40 layers, hidden
+# 5120, intermediate 16384, 32 heads / 8 KV heads, head_dim 128, vocab 131072,
+# max_position_embeddings 262144; 13,506,073,600 text parameters on the meta
+# device (transformers 5.16.1), lm_head untied; the weight index has separate
+# language_model.lm_head and embed_tokens tensors and no quantized ones. LoRA
+# r=16 on the seven projections: 280 modules, 60,948,480 trainable parameters,
+# exactly as for v0.0.1.
+#
+# THINKING
+# A completion is [THINK]trace[/THINK]answer</s>; [THINK] is token 34 and
+# [/THINK] token 35, both special. The chat template renders an assistant
+# message's `reasoning` field as that span, so kleos-policy-v0.0.7's policy-
+# derived traces (schema 1.1) are trained as the model's thinking and the
+# answer after it, all supervised. Evaluation splits the completion at token 35
+# and grades only the answer (inference/backends.py, split_thinking).
+# The template adds a default "how you should think" system prompt only when a
+# conversation has no system message; every KLEOS example and benchmark prompt
+# has one, so it never appears (measured; tests/test_ministral3_reasoning.py).
+#
+# TOKENIZER
+# tokenizer.json (577575...), tokenizer_config.json (f3a437...) and
+# chat_template.jinja (6b5044...) at the pinned revision; all three differ from
+# the Instruct release's, and tests/test_revision_pinning.py records them. As
+# for v0.0.1, transformers flags the pre-tokenizer regex as incorrect, so
+# `fix_mistral_regex: true`; on kleos-policy-v0.0.7 it changes 0 of 1,350
+# examples (measured).
+#
+# SEQUENCE LENGTH
+# Measured with this tokenizer on kleos-policy-v0.0.7: the longest example is
+# 736 tokens in train, 701 in validation and 612 in test; the longest thinking
+# span is 298 tokens (mean 181). 1024 truncates nothing, and a reasoning run
+# refuses to start if any target would be cut.
+# ---------------------------------------------------------------------------
+
+model:
+  name: ministral3_14b_reasoning
+  family: mistral
+  base_model: mistralai/Ministral-3-14B-Reasoning-2512
+  # Pinned to the revision audited 2026-10-06 (finding H-F1).
+  revision: 51f9210f3cd20f3452a80d5819d15dc61cc50630
+  trust_remote_code: false
+
+  # Selects the thinking text-only view; the checkpoint reports 'mistral3'.
+  model_type: ministral3_reasoning
+  architecture: Mistral3ForConditionalGeneration
+  parameter_count: 13.506e9
+  is_moe: false
+  is_multimodal: false
+  context_limit: 262144
+
+  max_seq_length: 1024
+  dtype: auto
+  attn_implementation: sdpa
+  # On two GPUs (Kaggle's 2 x T4) this spreads the layers across both; the
+  # Trainer must then run the model in place (model parallel), never wrapped in
+  # DataParallel. scripts/train.py checks that before step 1.
+  device_map: auto
+
+  fix_mistral_regex: true
+
+  reasoning:
+    # Thinking-only: requesting 'standard' raises.
+    supported: true
+    default_mode: thinking
+    # The traces ARE the training signal here, so they stay in the targets.
+    strip_thinking_from_targets: false
+
+  quantization:
+    mode: nf4
+    compute_dtype: auto
+    double_quant: true
+
+  lora:
+    # As for v0.0.1: the seven projections, 280 modules; lm_head and
+    # embed_tokens excluded.
+    target_modules: auto
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    task_type: CAUSAL_LM
+
+  notes: >-
+    Base model for KLEOS Logos v0.0.2: the text tower of Ministral 3 14B
+    Reasoning (Apache-2.0, December 2025), loaded without its vision encoder and
+    trained to think with kleos-policy-v0.0.7's policy-derived traces.
+    Attribution and a statement of modification are required when
+    redistributing a derivative.

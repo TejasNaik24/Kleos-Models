@@ -54,3 +54,10 @@ stopping cannot leak the OOD signal the test split is meant to measure.
 
 `filters.quality_statuses` defaults to `[reviewed]`. Widening it is a deliberate
 act that changes what the experiment measures — do it consciously and record it.
+
+## `kleos_policy_v006.yaml`, `kleos_policy_v007.yaml`
+
+The sealed KLEOS releases, consumed pre-split from outside this repository.
+v0.0.7 is v0.0.6 plus a policy-derived `reasoning` trace (schema 1.1) and a
+"What decided it" line on every train and validation answer; its `test.jsonl`
+is byte-identical to v0.0.6's, so both build the same benchmark (`a11ffad7…`).

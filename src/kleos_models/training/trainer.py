@@ -50,10 +50,11 @@ from kleos_models.training.memory import (
     diagnose_oom,
     free_memory,
     is_oom_error,
+    model_devices,
+    peak_allocated_all_gb,
     probe_training_peak,
     render_environment_report,
     reset_peak_memory,
-    snapshot_memory,
 )
 
 logger = get_logger(__name__)
@@ -171,6 +172,34 @@ class TrainingResult:
         return "\n".join(lines)
 
 
+def assert_model_parallel(trainer: Any, model: Any) -> None:
+    """Refuse a model spread over several GPUs unless the Trainer runs it in place.
+
+    With ``device_map: auto`` on two GPUs (Logos v0.0.2 on Kaggle) the layers
+    are split across both. transformers then marks the Trainer model parallel
+    and sets ``n_gpu`` to 1; otherwise it would wrap the model in
+    ``DataParallel``, which replicates it and cannot hold a 4-bit model. If that
+    ever changes upstream, this stops the run before step 1 instead.
+    """
+    devices = model_devices(model)
+    if len(devices) < 2:
+        return
+    is_model_parallel = bool(getattr(trainer, "is_model_parallel", False))
+    n_gpu = trainer.args.n_gpu
+    if not is_model_parallel or n_gpu != 1:
+        raise KleosError(
+            f"The model is spread over GPUs {devices}, but the Trainer is not running "
+            f"it model parallel (is_model_parallel={is_model_parallel}, n_gpu={n_gpu}).",
+            details={"devices": devices, "is_model_parallel": is_model_parallel, "n_gpu": n_gpu},
+            suggestions=[
+                "This transformers version no longer detects model parallelism from "
+                "hf_device_map; pin transformers==5.16.1 as the runbook does.",
+                "Or train on one GPU: set model.device_map to 'cuda:0' (the "
+                "feasibility check will say whether it fits).",
+            ],
+        )
+
+
 def format_split(
     examples: Sequence[TrainingExample],
     formatter: ConversationFormatter,
@@ -232,6 +261,7 @@ def measure_sequence_lengths(
         max_seq_length=config.model.max_seq_length,
         template_kwargs=adapter.chat_template_kwargs(mode),
         strip_reasoning=config.model.reasoning.strip_thinking_from_targets,
+        fail_on_target_truncation=not config.model.reasoning.strip_thinking_from_targets,
     )
     _, stats = formatter.format_dataset(bundle.train)
     summary = stats.summary()
@@ -338,6 +368,8 @@ def run_training(
                 max_seq_length=config.model.max_seq_length,
                 template_kwargs=loaded.chat_template_kwargs(),
                 strip_reasoning=config.model.reasoning.strip_thinking_from_targets,
+                # A run trained to think must see every trace whole.
+                fail_on_target_truncation=not config.model.reasoning.strip_thinking_from_targets,
             )
             train_dataset, train_stats = format_split(bundle.train, formatter, split_name="train")
             eval_dataset = None
@@ -445,6 +477,7 @@ def run_training(
             callbacks=callbacks,
             **trainer_tokenizer_kwarg(loaded.tokenizer),
         )
+        assert_model_parallel(trainer, model)
 
         # --- 11. train ------------------------------------------------------
         stage = "training"
@@ -466,9 +499,9 @@ def run_training(
             train_output = trainer.train(resume_from_checkpoint=resume_path)
 
         metrics: dict[str, Any] = dict(train_output.metrics)
-        peak = snapshot_memory()
-        if peak:
-            metrics["peak_memory_gb"] = round(peak.max_allocated_gb, 2)
+        peak_gb = peak_allocated_all_gb()
+        if peak_gb is not None:
+            metrics["peak_memory_gb"] = round(peak_gb, 2)
 
         # --- 12. evaluate ---------------------------------------------------
         if eval_dataset is not None:

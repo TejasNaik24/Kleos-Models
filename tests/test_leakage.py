@@ -282,3 +282,42 @@ class TestCommittedFixtures:
             "the committed fixtures leak between train and eval:\n"
             + "\n".join(f.detail or f.kind.value for f in report.cross_split_findings)
         )
+
+
+class TestReasoningTraces:
+    """Schema 1.1: train answers carry a reasoning trace, test answers do not.
+
+    The trace is generated text, not part of the conversation another split
+    could leak. Comparing with it would make a train copy of a test
+    conversation invisible, because only the train copy has a trace.
+    """
+
+    @staticmethod
+    def with_trace(example_id: str, trace: str = "score alpha first, then beta") -> TrainingExample:
+        payload = make_example(example_id, user="Rank alpha and beta.")
+        payload["version"] = "1.1"
+        payload["messages"][-1]["reasoning"] = trace
+        return TrainingExample.model_validate(payload)
+
+    def test_a_traced_train_copy_of_a_test_conversation_is_caught(self):
+        report = check_leakage(
+            {"train": [self.with_trace("train-001")], "test": [example("test-001")]}
+        )
+        findings = report.by_kind(LeakageKind.EXACT_DUPLICATE)
+        assert findings and findings[0].is_cross_split
+        assert report.fatal_findings
+
+    def test_two_copies_differing_only_in_their_trace_are_duplicates(self):
+        report = check_leakage(
+            {
+                "train": [self.with_trace("train-001", "one way")],
+                "validation": [self.with_trace("val-001", "another way")],
+            }
+        )
+        assert report.by_kind(LeakageKind.EXACT_DUPLICATE)
+
+    def test_the_content_hash_still_covers_the_trace(self):
+        assert (
+            self.with_trace("a-001", "one way").content_hash()
+            != self.with_trace("a-001", "another way").content_hash()
+        )

@@ -128,6 +128,19 @@
           "description": "Tool name for role='tool'.",
           "title": "Name"
         },
+        "reasoning": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "An assistant turn's reasoning (schema 1.1): a policy-derived trace a reasoning model learns to emit in its thinking span. Written only when present.",
+          "title": "Reasoning"
+        },
         "role": {
           "enum": [
             "system",

@@ -8,6 +8,7 @@ and run wherever the training extra is installed.
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures"
 EXAMPLES_DIR = REPO_ROOT / "data" / "examples"
 CONFIGS_DIR = REPO_ROOT / "configs"
+
+#: The sealed kleos-policy-v0.0.7 release, read in place from the sibling
+#: Kleos-Training-Data checkout (never copied into this public repository).
+V007_RELEASE = Path(
+    os.environ.get(
+        "KLEOS_V007_RELEASE",
+        REPO_ROOT.parent / "Kleos-Training-Data" / "releases" / "kleos-policy-v0.0.7",
+    )
+)
 
 
 def _available(module: str) -> bool:
@@ -36,6 +46,8 @@ def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
     skip_torch = pytest.mark.skip(reason='needs torch + transformers: pip install -e ".[train]"')
     skip_peft = pytest.mark.skip(reason='needs peft: pip install -e ".[train]"')
     skip_cuda = pytest.mark.skip(reason="needs a CUDA GPU")
+    skip_v007 = pytest.mark.skip(reason=f"needs the sealed v0.0.7 release at {V007_RELEASE}")
+    has_v007 = (V007_RELEASE / "train.jsonl").is_file()
 
     cuda_available = False
     if HAS_TORCH:
@@ -50,6 +62,8 @@ def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
             item.add_marker(skip_peft)
         if "requires_cuda" in item.keywords and not cuda_available:
             item.add_marker(skip_cuda)
+        if "requires_v007" in item.keywords and not has_v007:
+            item.add_marker(skip_v007)
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +221,11 @@ class FakeTokenizer:
     token counts easy to reason about in assertions.
     """
 
-    def __init__(self, *, supports_thinking: bool = False) -> None:
+    def __init__(self, *, supports_thinking: bool = False, renders_reasoning: bool = False) -> None:
         self.supports_thinking = supports_thinking
+        #: Render an assistant message's ``reasoning`` as Ministral 3 Reasoning's
+        #: template does: ``[THINK]reasoning[/THINK]`` ahead of the answer.
+        self.renders_reasoning = renders_reasoning
         self.pad_token_id = 0
         self.eos_token_id = 1
         self.pad_token = "<pad>"
@@ -227,7 +244,12 @@ class FakeTokenizer:
     ) -> str:
         if "enable_thinking" in kwargs and not self.supports_thinking:
             raise TypeError("this template does not accept enable_thinking")
-        parts = [f"<|{m['role']}|> {m['content']} <|end|>" for m in conversation]
+        parts = []
+        for m in conversation:
+            body = m["content"]
+            if self.renders_reasoning and m.get("reasoning"):
+                body = f"[THINK] {m['reasoning']} [/THINK] {body}"
+            parts.append(f"<|{m['role']}|> {body} <|end|>")
         if add_generation_prompt:
             parts.append("<|assistant|>")
         return " ".join(parts)

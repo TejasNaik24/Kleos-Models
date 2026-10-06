@@ -40,7 +40,7 @@ JSONL, one complete JSON object per line.
 | Field | Rule |
 | --- | --- |
 | `id` | Unique within the dataset version. 3-128 chars of `[A-Za-z0-9._:-]`. |
-| `version` | Schema version. Currently `"1.0"`. |
+| `version` | Schema version: `"1.0"`, or `"1.1"` for an example whose assistant message carries `reasoning` (below). This package writes `"1.0"` and reads both. |
 | `task` | One of the registered tasks (below). |
 | `messages` | At least 2. Ends with `assistant`. |
 | `variation_axes.domain` | Required. Every other axis is optional but reported. |
@@ -59,6 +59,24 @@ Enforced by the schema, because each violation produces broken supervision:
   ambiguous.
 - No empty or whitespace-only content.
 - `role: "tool"` requires a `name`.
+
+## Assistant reasoning (schema 1.1)
+
+From kleos-policy-v0.0.7, an assistant message may carry an optional
+`reasoning` field: the policy-derived trace behind its answer, written step by
+step. It is allowed only on assistant messages, never blank, and serialized only
+when present, so an example without it keeps its exact bytes and content hash.
+
+- A model trained to think (`model.reasoning.strip_thinking_from_targets: false`,
+  Logos v0.0.2) receives it through the chat template as its thinking span,
+  `[THINK]reasoning[/THINK]answer`, and is trained on all of it. Such a run
+  refuses to start if truncation would cut any supervised token.
+- Every other model has the field removed before tokenizing. The number of
+  examples affected is logged and recorded as `reasoning_dropped`.
+- It enters an example's content hash (and so the dataset hash) only when
+  present. Leakage detection compares conversations without it: only train and
+  validation carry traces, so a trace would hide a train copy of a test
+  conversation.
 
 ## Tasks
 

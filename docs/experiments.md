@@ -598,6 +598,115 @@ interval excludes zero. 5 of 7 tasks improved and none regressed:
 
 ---
 
+## H9 — Does a Logos trained to think beat Hermes?
+
+> Logos v0.0.2, Ministral 3 14B Reasoning fine-tuned to write the KLEOS
+> policies' own reasoning before it answers, makes better KLEOS decisions than
+> KLEOS Hermes.
+
+**Pre-registered 2026-10-06, before any Logos v0.0.2 training.** Design and
+runbook: [logos.md](logos.md#11-logos-v002-trained-to-think).
+
+| | |
+| --- | --- |
+| **KLEOS model** | **Logos v0.0.2**: `mistralai/Ministral-3-14B-Reasoning-2512` @ `51f9210f3cd20f3452a80d5819d15dc61cc50630`, text tower, QLoRA NF4 r=16 on all seven projections (280 modules, 60,948,480 trainable parameters) |
+| **Config** | [`configs/training/kleos_logos_v002.yaml`](../configs/training/kleos_logos_v002.yaml), `config_hash` **`d1961583546b5761dd854cfe845838ca91a87ea6189d54be617de21085e8cfa9`** with `--dataset /tmp/kleos-data/kleos-policy-v0.0.7 --output-dir /kaggle/working/outputs` and no `KLEOS_*` variables set |
+| **Experiment id** | `kleos-v007-ministral314breasoning-run1` |
+| **Dataset** | `kleos-policy-v0.0.7`, sealed (release content hash `b53afa4216bf6973…`). Train and validation answers carry a policy-derived reasoning trace (schema 1.1) and a "What decided it" line; `test.jsonl` is byte-identical to v0.0.6's (`a4decaaf029b2273…`) |
+| **Benchmark** | The H8 file, unchanged: sha256 `a11ffad75f5147f9d0ddad7bad4bfc073dc730df2b19173ff642774233b4b266`; greedy decoding, seed 42, grader `kleos_policy`, **`max_new_tokens` 1024**. Each completion is split at `[/THINK]` (token 35) and only the answer after it is graded |
+| **Hardware** | Kaggle, 2 × Tesla T4, the model's layers spread over both by `device_map: auto` (model parallel), through [the Kaggle notebooks](../notebooks/kaggle/). The dataset is copied to `/tmp`, which Kaggle never saves |
+| **Code** | The commit that adds this entry. The run's manifest records the commit it ran; a later code change must be declared as a deviation |
+| **Status** | **Pre-registered; not run** |
+
+### H9 — Is Logos v0.0.2 better than Hermes? (primary)
+
+| | |
+| --- | --- |
+| **Arms** | Hermes `arm2_finetuned` (stored, re-reported with `rescore.py --mode annotate`, as for H8b) vs Logos v0.0.2 `arm2_finetuned` |
+| **Primary population** | The **271 answerable** benchmark items (`reference.confident: true`, 61 groups), as in H8b |
+| **Primary metric** | Mean `kleos_policy` score, paired by `example_id` |
+| **Statistics** | Paired cluster bootstrap by `group_id`, 2,000 iterations, 95% CI of Logos v0.0.2 − Hermes |
+| **Decision rule** | **better**: CI entirely above 0. **worse**: entirely below 0. **equivalent**: entirely within ±0.02. Otherwise **inconclusive** |
+| **Command** | `compare.py --cross-model --primary-subset answerable --equivalence-margin 0.02` |
+
+**Why the answerable subset stays primary.** It is H8b's population, so H9 and
+H8b read on the same scale. v0.0.7 trains the four decline labels for the first
+time, so the 78 should-decline items are the row the new data was built to move.
+Making them primary now, knowing that, would pick the population most likely to
+flatter the result. They are reported as the first secondary row.
+
+**No arm1.** H9 does not ask whether fine-tuning helps; H8a answered that for
+this architecture. An arm costs about 7 GPU hours (ESTIMATED) of Kaggle's 30-hour
+weekly quota. Fine-tuning's own effect on v0.0.2 is therefore not measured.
+
+**Prediction:**
+
+- **Should-decline subset:** likely to improve, because its labels are now trained.
+- **Answerable subset (primary): unknown.** H8b found no effect of a stronger base
+  on v0.0.6. The traces add an explicit derivation of every decision, which may
+  help, or may only restate what the answers already taught.
+- **"Inconclusive" or "equivalent" is a publishable answer.** It would say the
+  reasoning traces did not move the decisions the benchmark measures.
+
+**Secondary, reported, not decisive:**
+
+- the should-decline subset and all 349 items;
+- Logos v0.0.2 vs Logos v0.0.1 `arm2_finetuned`, from v0.0.1's stored results;
+- per-task deltas with cluster intervals;
+- `generation_stats.thinking_truncated` (answers whose thinking never closed), the
+  trace length distribution, completion tokens and latency (thinking costs time);
+- `format_valid`, consistency by `group_id` with its oracle ceiling, and
+  faithfulness with the citation heuristic's gold floor.
+
+**Declared differences from Logos v0.0.1's run.** The training section is
+v0.0.1's, value for value (`tests/test_logos_v002_config.py`). What differs:
+
+- the base: the Reasoning release, with its own tokenizer files and chat template;
+  `fix_mistral_regex: true` changes 0 of 1,350 v0.0.7 examples (measured);
+- the data: kleos-policy-v0.0.7, with the traces supervised as the model's thinking.
+  The longest example is 736 tokens against 448, and a run that would cut any
+  supervised token refuses to start;
+- the evaluation's `max_new_tokens`, 1024 instead of 512;
+- the hardware: Kaggle's 2 × T4 instead of Colab's single T4, with the model spread
+  over both GPUs, a per-GPU memory probe and a refusal to train a split model under
+  `DataParallel`. One T4 does not hold the longest example at these settings
+  (estimated 14.46 GB peak against a 14.41 GB budget; 2 × T4: 6.38 and 8.53 GB);
+- **what selects the adapter.** The best checkpoint is still the one with the lowest
+  validation loss (`eval_loss`), but that loss now covers trace and answer together,
+  and the trace is 58% of the validation targets by characters (575 of 988 per
+  answer, on average). Selection therefore rewards predicting the trace more than
+  the answer, where v0.0.1's rewarded the answer alone. No answer-only loss is
+  recorded;
+- results schema 3, which stores each answer's trace and `finish_reason`.
+
+**Confounds, stated:**
+
+- **Two changes at once.** Against Hermes, both the base and the data differ.
+  Hermes is not retrained on v0.0.7 (decided 2026-10-06), so H9 can say whether
+  Logos v0.0.2 as built beats Hermes as shipped, but not which change did it. The
+  v0.0.1 comparison changes the base release and the data together too.
+- **The thinking budget.** Logos v0.0.2 gets 1,024 new tokens where Hermes had 512,
+  because its thinking spends them. A completion whose thinking never closes has
+  no answer and scores as given; how many did is reported.
+- **Greedy decoding on a reasoning model.** Mistral's model card recommends
+  sampling at temperature 1 for this release. Greedy decoding is kept so every KLEOS evaluation is deterministic and
+  comparable. A loop it causes shows as `thinking_truncated` or
+  `hit_max_new_tokens`.
+- **One seed each.** The cluster interval covers evaluation noise, not training
+  noise.
+- **Hardware and libraries.** transformers, peft, accelerate, bitsandbytes and
+  tokenizers are pinned as before; Kaggle's torch may differ from Colab's. The
+  split across two GPUs changes the order of floating-point work, not the
+  arithmetic.
+- **What the traces are.** They are written from the same policies that define the
+  benchmark's reference answers, as every KLEOS training answer is. H9 measures how
+  well a model learns those policies, not general reasoning.
+
+**What would falsify H9:** the interval entirely below zero, or entirely within
+±0.02.
+
+---
+
 ## Fixed experimental protocol
 
 Applies to every hypothesis above.
@@ -658,6 +767,7 @@ Append one row per completed experiment. **Include failed and negative runs.**
 | 2026-09-24 | H8 | Ministral-3-14B-Instruct-2512-BF16, text tower (QLoRA r=16) — **KLEOS Logos v0.0.1** | kleos-policy-v0.0.6 (`3cc9a744…`) | `18008c6716a58afc` | **Pre-registered; not run.** | [logos.md](logos.md) |
 | 2026-09-29 | H8b | **KLEOS Logos v0.0.1** vs **KLEOS Hermes**, both `arm2_finetuned` | kleos-policy-v0.0.6 (`3cc9a744…`) | `18008c6716a58afc` (Logos) | **Inconclusive.** Answerable subset: Logos − Hermes −0.0168, cluster 95% CI −0.0546 to +0.0177 (271 items, 61 groups). Neither better, worse nor equivalent at ±0.02. | `outputs/report_h8b_hermes_vs_logos/summary.md`; [H8b result](#h8b-result--2026-09-29) |
 | 2026-10-01 | H8a | Ministral-3-14B-Instruct-2512-BF16, text tower (QLoRA r=16) — **KLEOS Logos v0.0.1**, `arm1_base_orchestrated` vs `arm2_finetuned` | kleos-policy-v0.0.6 (`3cc9a744…`) | `18008c6716a58afc` | **Supported.** 5/7 tasks improved by group intervals; none regressed. `recommendation_generation` +0.0643 n.s.; `context_prioritization` not estimable by groups (8 items). Overall 0.4469 → 0.7896; answerable +0.3952 (cluster CI +0.3443 to +0.4438). | `outputs/kleos-v006-ministral314b-run1/report_logos_v001/summary.md`; [H8a result](#h8a-result--2026-10-01) |
+| 2026-10-06 | H9 | Ministral-3-14B-Reasoning-2512, text tower (QLoRA r=16) — **KLEOS Logos v0.0.2** | kleos-policy-v0.0.7 (`b53afa42…`) | `d1961583546b5761` | **Pre-registered; not run.** | [H9](#h9--does-a-logos-trained-to-think-beat-hermes) |
 
 Run provenance: experiment id `kleos-v006-ministral8b-run1`, seed 42, 3 epochs
 (309 steps, effective batch 8, `max_seq_length` 1024), best checkpoint selected

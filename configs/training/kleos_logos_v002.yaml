@@ -1,0 +1,95 @@
+# ---------------------------------------------------------------------------
+# KLEOS LOGOS v0.0.2 — Logos, trained to think. NOT YET TRAINED.
+#
+#   python scripts/train.py --config configs/training/kleos_logos_v002.yaml \
+#                           --dataset /tmp/kleos-data/kleos-policy-v0.0.7 \
+#                           --output-dir /kaggle/working/outputs \
+#                           --experiment-id kleos-v007-ministral314breasoning-run1
+#
+# Use exactly those two paths, with no KLEOS_* variable set: config_hash covers
+# the resolved dataset path and output directory, and the hash pre-registered
+# under H9 in docs/experiments.md is computed with them. The Kaggle notebook
+# (notebooks/kaggle/logos_v002_train.ipynb) copies the dataset to that path, in
+# /tmp, which Kaggle never saves, so the private release never reaches the
+# notebook's saved output.
+#
+# WHAT THIS RUN IS FOR
+# Logos v0.0.1 was not measurably better than Hermes (H8b inconclusive). Logos
+# v0.0.2 asks whether a reasoning base, trained on reasoning traces derived
+# from the KLEOS policies themselves, makes better KLEOS decisions than Hermes.
+# Three things change against v0.0.1, and only these:
+#
+#   model        Ministral 3 14B *Reasoning* (configs/models/
+#                ministral3_14b_reasoning.yaml): the same text tower, post-
+#                trained to think. It always writes [THINK]...[/THINK] first.
+#   data         kleos-policy-v0.0.7: v0.0.6 plus a policy-derived reasoning
+#                trace on every train/validation answer, trained as the
+#                model's thinking, and the four decline labels v0.0.6 never
+#                trained. The split and test.jsonl are v0.0.6's, unchanged.
+#   evaluation   max_new_tokens 1024, room for the trace before the answer
+#                (configs/evaluation/kleos_logos_v002.yaml).
+#
+# The training section below is v0.0.1's, value for value
+# (tests/test_logos_v002_config.py). Sequences are longer (the longest example
+# is 736 tokens with the trace, against 448), which one 16 GB T4 cannot hold at
+# these settings; the run uses Kaggle's 2 x T4, with the model's layers spread
+# over both GPUs by device_map: auto (run in place, never DataParallel).
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/ministral3_14b_reasoning.yaml
+  # The sealed release, referenced not copied. Read-only; never regenerated.
+  dataset: ../datasets/kleos_policy_v007.yaml
+  evaluation: ../evaluation/kleos_logos_v002.yaml
+
+name: kleos-logos-v002-ministral3-14b-reasoning
+description: >-
+  KLEOS Logos v0.0.2. QLoRA adapter on the text tower of Ministral 3 14B
+  Reasoning (Apache-2.0) over the sealed kleos-policy-v0.0.7 release, trained
+  to think with policy-derived reasoning traces, with Logos v0.0.1's recipe.
+  Engineering defaults, not tuned hyperparameters. NOT YET TRAINED.
+tags: [kleos, logos, policy, v0.0.7, qlora, mistral, ministral3, reasoning, apache-2.0]
+hypothesis: H9
+
+task: null
+
+model:
+  # Measured: the longest v0.0.7 example is 736 tokens with this tokenizer, so
+  # nothing truncates; a reasoning run refuses to start if any target would be cut.
+  max_seq_length: 1024
+
+training:
+  # Logos v0.0.1's values, unchanged (see the header).
+  num_train_epochs: 3.0
+  max_steps: -1
+
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  per_device_eval_batch_size: 1
+  max_grad_norm: 1.0
+  weight_decay: 0.0
+  optim: paged_adamw_8bit
+  gradient_checkpointing: true
+  precision: auto
+
+  # 820 examples at an effective batch of 8: ~103 steps per epoch, ~309 total.
+  logging_steps: 5
+  save_strategy: steps
+  save_steps: 25
+  save_total_limit: 3
+  eval_strategy: steps
+  eval_steps: 25
+
+  # Best checkpoint by VALIDATION loss; the test split plays no part.
+  load_best_model_at_end: true
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+
+  # A compared run must not silently change shape.
+  strict_config: true
+
+  allow_full_finetune: false

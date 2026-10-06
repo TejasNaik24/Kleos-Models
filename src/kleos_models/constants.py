@@ -18,6 +18,11 @@ from typing import Final
 #: written against so old artifacts remain interpretable.
 DATASET_SCHEMA_VERSION: Final[str] = "1.0"
 
+#: Schema versions this package reads. 1.1 adds one optional field, an assistant
+#: message's ``reasoning`` (kleos-policy-v0.0.7 onward); a 1.0 example is a valid
+#: 1.1 example without it. This package still writes 1.0.
+SUPPORTED_SCHEMA_VERSIONS: Final[tuple[str, ...]] = ("1.0", "1.1")
+
 #: Version of the preprocessing/formatting logic. Bump when formatting changes
 #: in a way that would alter tokenized output for identical source examples.
 PREPROCESSING_VERSION: Final[str] = "1.0"

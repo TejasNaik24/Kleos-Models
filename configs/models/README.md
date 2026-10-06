@@ -10,6 +10,7 @@ them unchanged — everything family-specific lives in the model-family adapter
 | `ministral_8b` | `mistralai/Ministral-8B-Instruct-2410` | 8.0B dense | none | yes (4-bit) |
 | `mistral_nemo_12b` | `mistralai/Mistral-Nemo-Instruct-2407` | 12.2B dense | none | yes (4-bit; 13.09 GiB measured) — **KLEOS Hermes** |
 | `ministral3_14b` | `mistralai/Ministral-3-14B-Instruct-2512-BF16` | 13.5B text tower of a 13.9B VLM | none | yes (4-bit, tight: ~13.7 GiB estimated) — **KLEOS Logos** |
+| `ministral3_14b_reasoning` | `mistralai/Ministral-3-14B-Reasoning-2512` | 13.5B text tower of a 13.9B VLM | always on | **no** at 736 tokens on one T4; yes on 2 × T4 (8.5 GiB on the fuller GPU, estimated) — **KLEOS Logos v0.0.2** |
 | `mistral_small_3_2` | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | 24B VLM | none | **no** — needs A100 |
 | `qwen3_30b_a3b_thinking` | `Qwen/Qwen3-30B-A3B-Thinking-2507` | 30.5B MoE / 3.3B active | always on | **no** — needs A100 |
 
@@ -29,7 +30,10 @@ the checkpoint's keys renamed (`language_model.model.*` -> `model.*`,
 `language_model.lm_head.*` -> `lm_head.*`). The 0.44B-parameter vision tower
 stays on disk, and the load refuses to continue if any text weight is missing,
 mismatched or unexpected. Use the `-BF16` repository: the default one is FP8,
-which a T4 cannot run, and a pre-quantized container is refused.
+which a T4 cannot run, and a pre-quantized container is refused. The Reasoning
+release (`ministral3_14b_reasoning.yaml`, `model_type: ministral3_reasoning`)
+opens through the same view, published in BF16, and always thinks: it writes
+`[THINK]...[/THINK]` before its answer, and evaluation grades only the answer.
 
 **Qwen3-30B-A3B is MoE and thinking-only.** LoRA targets attention only —
 targeting 128 experts across 48 layers would create ~18,400 adapter modules — and

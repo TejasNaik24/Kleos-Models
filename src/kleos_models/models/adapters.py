@@ -45,7 +45,7 @@ import copy
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from kleos_models.config import (
@@ -321,7 +321,9 @@ class ModelFamilyAdapter(ABC):
                 details={"family": self.family, "capability": capability.value},
                 suggestions=[
                     "Set model.reasoning.default_mode to 'thinking'.",
-                    "For a switchable model, use Qwen/Qwen3-8B instead.",
+                    "For answers without thinking, use a checkpoint whose reasoning "
+                    "capability is not thinking-only (for Ministral 3, the Instruct "
+                    "release: configs/models/ministral3_14b.yaml).",
                     "Comparing a thinking-only model against a non-thinking one is a "
                     "valid experiment, but it must be configured deliberately and "
                     "recorded in the manifest.",
@@ -897,6 +899,38 @@ class Ministral3TextAdapter(ModelFamilyAdapter):
 
 # ---------------------------------------------------------------------------
 # Registry
+class Ministral3ReasoningTextAdapter(Ministral3TextAdapter):
+    """The text tower of Ministral 3 *Reasoning*: the same view, always thinking.
+
+    ``mistralai/Ministral-3-14B-Reasoning-2512`` has the Instruct release's
+    architecture and text-tower shape, so it opens through the same text-only
+    view and takes the same LoRA targets. It differs in behaviour: it writes
+    ``[THINK]...[/THINK]`` before every answer. Its chat template renders an
+    assistant message's ``reasoning`` field as that span, which is how KLEOS
+    Logos v0.0.2 is trained on policy-derived traces (schema 1.1).
+
+    Selected by ``model_type: ministral3_reasoning``, a selector like
+    ``ministral3`` (the checkpoint itself reports ``mistral3``).
+    """
+
+    model_types = ("ministral3_reasoning",)
+
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return replace(
+            super().capabilities,
+            reasoning=ReasoningCapability.ALWAYS_ON,
+            notes=[
+                "Text tower of Ministral 3 Reasoning, loaded as Ministral3ForCausalLM "
+                "through the Instruct release's text-only view.",
+                "Always thinks: completions are [THINK]trace[/THINK]answer. The "
+                "trace is split off at the [/THINK] token before grading.",
+                "The chat template adds a default thinking system prompt only to a "
+                "conversation without a system message; KLEOS prompts always have one.",
+            ],
+        )
+
+
 # ---------------------------------------------------------------------------
 
 #: Concrete adapters, in resolution order.
@@ -905,6 +939,7 @@ _ADAPTER_CLASSES: tuple[type[ModelFamilyAdapter], ...] = (
     QwenDenseAdapter,
     Mistral3VLMAdapter,
     Ministral3TextAdapter,
+    Ministral3ReasoningTextAdapter,
     MistralDenseAdapter,
 )
 
@@ -940,6 +975,8 @@ def _infer_model_type(config: ModelConfig) -> str:
         return "qwen3_moe"
     if "mistral-small-3" in name or "mistral-small-24b" in name:
         return "mistral3"
+    if "ministral-3-" in name and "reasoning" in name:
+        return "ministral3_reasoning"
     if "ministral-3-" in name:
         return "ministral3"
     if "qwen3" in name or "qwen-3" in name:

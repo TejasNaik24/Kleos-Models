@@ -1,0 +1,23 @@
+# ---------------------------------------------------------------------------
+# Evaluation for KLEOS Logos v0.0.2: Logos v0.0.1's (= Hermes') with ONE change.
+#
+# Same benchmark (built from test.jsonl, which kleos-policy-v0.0.7 carries
+# byte-identical to v0.0.6: benchmark sha256 a11ffad7...), same grader, same
+# greedy decoding, same seed, same arms.
+#
+# The change: max_new_tokens 512 -> 1024. Logos v0.0.2 always thinks before it
+# answers, and the thinking counts against the budget. Measured with its
+# tokenizer on v0.0.7: training traces run to 298 tokens (mean 181), and the
+# longest benchmark answer is 199 tokens. 1024 leaves room for more than twice
+# the longest trace plus the longest answer (2 x 298 + 199 = 795). The trace is
+# split off at [/THINK] and only the answer is
+# graded; a completion whose thinking never closes has no answer, scores as
+# given, and is counted in generation_stats.thinking_truncated. Declared under
+# H9 in docs/experiments.md.
+# ---------------------------------------------------------------------------
+
+extends: kleos_logos_v001.yaml
+
+evaluation:
+  generation:
+    max_new_tokens: 1024

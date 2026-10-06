@@ -67,7 +67,9 @@ from kleos_models.logging_utils import get_logger
 logger = get_logger(__name__)
 
 #: Layout version of saved results. Version 2 adds fields; it changes none.
-RESULTS_SCHEMA_VERSION = 2
+#: Version 3 adds each record's finish_reason and, when the model thought, its
+#: reasoning; again it changes none.
+RESULTS_SCHEMA_VERSION = 3
 
 
 @dataclass
@@ -97,6 +99,10 @@ class ExampleResult:
     details: dict[str, Any] = field(default_factory=dict)
     group_id: str | None = None
     subset: str | None = None
+    #: A thinking model's trace, split off before grading (schema 3).
+    reasoning: str | None = None
+    #: 'length' when the budget ran out while thinking, leaving no answer.
+    finish_reason: str = "stop"
 
     def to_dict(self, *, include_response: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -120,6 +126,7 @@ class ExampleResult:
             "had_reasoning": self.had_reasoning,
             "group_id": self.group_id,
             "subset": self.subset,
+            "finish_reason": self.finish_reason,
             # What the grader extracted from the response (finding H-F7): the
             # predicted ranking, label and confidence behind the score.
             "details": json.loads(json.dumps(self.details, default=str)),
@@ -128,6 +135,9 @@ class ExampleResult:
             payload["faithfulness"] = self.faithfulness
         if include_response:
             payload["response"] = self.response
+            # The trace is model text too, so it is withheld with the response.
+            if self.reasoning is not None:
+                payload["reasoning"] = self.reasoning
         return payload
 
 
@@ -445,6 +455,8 @@ def run_evaluation(
                     details=grade.details,
                     group_id=example.metadata.group_id,
                     subset=subset_of(example.reference),
+                    reasoning=output.reasoning,
+                    finish_reason=output.finish_reason,
                 )
             )
 

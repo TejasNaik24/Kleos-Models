@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------------------
+# Logos v0.0.2 smoke test — "does Ministral 3 14B Reasoning fit and run here?"
+#
+# NOT a research configuration. Ten steps prove the thinking text view loads
+# every weight, LoRA attaches where expected, the traces are supervised, the
+# loop trains, checkpoints and resumes — and measure peak VRAM on every GPU.
+# Loss values mean nothing and must never be reported. On Kaggle's 2 x T4:
+#
+#     python scripts/train.py --config configs/training/debug_logos_v002.yaml \
+#                             --dataset /tmp/kleos-data/kleos-policy-v0.0.7 \
+#                             --output-dir /tmp/logos-v002-smoke \
+#                             --experiment-id kleos-logos-v002-smoke-001
+#
+# The model and data are NOT overridden: seq 1024, LoRA r=16/alpha=32, NF4 with
+# double-quant, fix_mistral_regex, the thinking text view, v0.0.7 with its
+# traces. Only the step count shrinks. The estimated peak is ~8.5 GiB on the
+# GPU holding lm_head (6.4 GiB on the other); the memory probe's reading of the
+# tighter GPU is the go/no-go gate for the real run (docs/logos.md).
+# ---------------------------------------------------------------------------
+
+extends: ../base.yaml
+includes:
+  model: ../models/ministral3_14b_reasoning.yaml
+  dataset: ../datasets/kleos_policy_v007.yaml
+  evaluation: ../evaluation/kleos_logos_v002.yaml
+
+name: kleos-debug-logos-v002
+description: Ten-step pipeline and memory check on Ministral 3 14B Reasoning. Not a research run.
+tags: [debug, smoke, logos, ministral3, reasoning, mistral]
+
+task: null
+
+model:
+  max_seq_length: 1024
+
+training:
+  max_steps: 10
+  num_train_epochs: 1
+  learning_rate: 2.0e-4
+  per_device_train_batch_size: 1
+  # 2 rather than 8: accumulation changes how many micro-batches make a step,
+  # not peak activation memory.
+  gradient_accumulation_steps: 2
+  gradient_checkpointing: true
+  optim: paged_adamw_8bit
+  precision: auto
+
+  # A checkpoint at step 5, so the runbook can prove resume works.
+  logging_steps: 1
+  save_strategy: steps
+  save_steps: 5
+  save_total_limit: 2
+  eval_strategy: steps
+  eval_steps: 5
+  load_best_model_at_end: false
+
+  # Strict on purpose: this run measures memory at the real settings, so it
+  # must never shrink itself to fit.
+  strict_config: true
+  allow_full_finetune: false
+
+evaluation:
+  max_examples: 4

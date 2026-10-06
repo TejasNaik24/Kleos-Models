@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------------------
+# KLEOS behavioural policy dataset, release v0.0.7 (sealed). Data for Logos v0.0.2.
+#
+# v0.0.6 plus two things, built by Kleos-Training-Data from the same scenarios,
+# decisions and split:
+#   * every train and validation answer carries a policy-derived `reasoning`
+#     trace (schema 1.1): the scores, checks and gaps the policy computed,
+#     written out step by step, 327-878 characters. A reasoning model is trained
+#     to emit it inside its thinking span.
+#   * every train and validation answer names its deciding factor in a final
+#     "What decided it: <label>." line, so the four decline labels v0.0.6 never
+#     trained (deviation D3) now occur in training: request_ambiguous 45 / 15,
+#     stale_explicit_conflict 32 / 12, missing_input 25 / 5,
+#     insufficient_separation 22 / 4 (train / validation).
+#
+# The split is v0.0.6's, unchanged: format_holdout on format=json.
+#     train / validation : prose, bullets, slack_thread  (820 / 181; 0 json)
+#     test               : json only                     (349)
+# test.jsonl is BYTE-IDENTICAL to v0.0.6's (sha256 a4decaaf...), so the
+# benchmark built from it is the same file (sha256 a11ffad7...). Test examples
+# carry no reasoning and stay schema 1.0.
+#
+# As for v0.0.6, the `split` block only records how the release was partitioned
+# upstream; the release ships pre-split and is never re-split here.
+#
+# The directory lives OUTSIDE version control. On Kaggle, point --dataset at
+# the copy the training notebook makes (notebooks/kaggle/).
+# ---------------------------------------------------------------------------
+
+dataset:
+  version: kleos-policy-v0.0.7
+  path: ${env:KLEOS_DATASET_PATH:data/processed/kleos-policy-v0.0.7}
+
+  filters:
+    # A tripwire, as in v0.0.6: every example is quality_status=reviewed.
+    quality_statuses:
+      - reviewed
+    min_messages: 2
+
+  split:
+    # Provenance only, identical to v0.0.6's.
+    strategy: format_holdout
+    seed: 42
+    holdout_values:
+      - json
+    train_fraction: 0.607
+    validation_fraction: 0.134
+    test_fraction: 0.259
+
+  packing: false
+  shuffle: true
+  require_manifest: true
+  allow_unreviewed: false

@@ -20,7 +20,15 @@ import re
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from kleos_models.constants import (
     DATASET_SCHEMA_VERSION,
@@ -58,6 +66,16 @@ def contains_reasoning(text: str) -> bool:
     return "</think>" in text.lower()
 
 
+def _without_reasoning(message: Message) -> Message:
+    """An assistant message with its ``<think>`` spans and reasoning field removed."""
+    update: dict[str, Any] = {}
+    if contains_reasoning(message.content):
+        update["content"] = strip_reasoning(message.content)
+    if message.reasoning is not None:
+        update["reasoning"] = None
+    return message.model_copy(update=update) if update else message
+
+
 class Message(BaseModel):
     """One conversation turn."""
 
@@ -66,6 +84,14 @@ class Message(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
     name: str | None = Field(default=None, description="Tool name for role='tool'.")
+    reasoning: str | None = Field(
+        default=None,
+        description=(
+            "An assistant turn's reasoning (schema 1.1): a policy-derived trace a "
+            "reasoning model learns to emit in its thinking span. Written only when "
+            "present."
+        ),
+    )
 
     @field_validator("content")
     @classmethod
@@ -74,11 +100,34 @@ class Message(BaseModel):
             raise ValueError("message content must not be empty or whitespace-only")
         return value
 
+    @field_validator("reasoning")
+    @classmethod
+    def _reasoning_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("reasoning must not be empty or whitespace-only when present")
+        return value
+
     @model_validator(mode="after")
     def _tool_needs_name(self) -> Message:
         if self.role == "tool" and not self.name:
             raise ValueError("messages with role='tool' require a 'name'")
         return self
+
+    @model_validator(mode="after")
+    def _reasoning_on_assistant_only(self) -> Message:
+        if self.reasoning is not None and self.role != "assistant":
+            raise ValueError("reasoning is allowed only on assistant messages")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_reasoning(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # An example without reasoning must serialize byte for byte as it did
+        # before schema 1.1 (write_jsonl keeps None values, so 'name': null stays),
+        # or every earlier release would change its bytes when rewritten.
+        data: dict[str, Any] = handler(self)
+        if self.reasoning is None:
+            data.pop("reasoning", None)
+        return data
 
 
 class VariationAxes(BaseModel):
@@ -240,10 +289,23 @@ class TrainingExample(BaseModel):
         """Assistant message contents, in order."""
         return [m.content for m in self.messages if m.role == "assistant"]
 
-    def conversation_text(self, *, include_assistant: bool = True) -> str:
-        """Flat text view used for duplicate and leakage detection."""
+    def conversation_text(
+        self, *, include_assistant: bool = True, include_reasoning: bool = True
+    ) -> str:
+        """Flat text view used for duplicate and leakage detection.
+
+        ``include_reasoning=False`` leaves out schema-1.1 reasoning traces. Leakage
+        detection uses that view: a trace is generated alongside the answer, and
+        only train and validation carry one, so comparing with it would hide a
+        train copy of a test conversation.
+        """
         parts = [
             f"{m.role}: {m.content}"
+            + (
+                f"\n{m.role} reasoning: {m.reasoning}"
+                if include_reasoning and m.reasoning is not None
+                else ""
+            )
             for m in self.messages
             if include_assistant or m.role != "assistant"
         ]
@@ -274,14 +336,11 @@ class TrainingExample(BaseModel):
         """Return a copy with reasoning removed from every assistant turn.
 
         Applied before tokenization so hidden chain-of-thought never becomes a
-        training target.
+        training target. Removes both ``<think>`` spans in the content and the
+        schema-1.1 ``reasoning`` field: a model that is not trained to think must
+        not be trained on a trace it would never emit.
         """
-        messages = [
-            m.model_copy(update={"content": strip_reasoning(m.content)})
-            if m.role == "assistant" and contains_reasoning(m.content)
-            else m
-            for m in self.messages
-        ]
+        messages = [_without_reasoning(m) if m.role == "assistant" else m for m in self.messages]
         return self.model_copy(update={"messages": messages})
 
 

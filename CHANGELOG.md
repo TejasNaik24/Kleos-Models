@@ -11,6 +11,41 @@ suite — are marked **[research-affecting]**.
 
 ## [Unreleased]
 
+### Added
+
+- **KLEOS Logos v0.0.2**, pre-registered as H9 (`docs/experiments.md`, `docs/logos.md` §11):
+  - `configs/models/ministral3_14b_reasoning.yaml` (Ministral 3 14B Reasoning @ `51f9210f`);
+  - `configs/training/kleos_logos_v002.yaml` (config hash `d1961583…`) and `debug_logos_v002.yaml`;
+  - `configs/evaluation/kleos_logos_v002.yaml`;
+  - `configs/datasets/kleos_policy_v007.yaml`.
+- **Schema 1.1:** an optional assistant `reasoning` field (kleos-policy-v0.0.7). It is
+  serialized only when present; earlier releases keep their bytes and hashes.
+- `Ministral3ReasoningTextAdapter` (`model_type: ministral3_reasoning`): the text-only
+  view, thinking-only.
+- **[research-affecting, thinking models only] Thinking split:** in thinking mode a
+  completion is split at the `[/THINK]` token before decoding, and only the answer
+  is graded (`split_thinking`). Non-thinking runs decode exactly as before.
+- **Kaggle notebooks** for Logos v0.0.2 (`notebooks/kaggle/`,
+  `scripts/build_kaggle_notebooks.py`).
+- **Two-GPU support** (`device_map: auto`):
+  - a per-GPU memory probe that gates on the tighter GPU;
+  - a refusal to train a split model unless the Trainer runs it model parallel;
+  - per-GPU feasibility estimates (`--simulate-gpu NAME:GIB:CC:COUNT`);
+  - the device map recorded in the manifest.
+
+### Changed
+
+- **Results schema 3.** Each record adds `finish_reason` and,
+  when the model thought, its `reasoning`. `generation_stats` adds
+  `thinking_truncated` and `reasoning_chars`. Nothing existing changes, and
+  single-GPU estimates and manifests are byte-identical.
+- **A reasoning-supervised run refuses to start** if truncation would cut a target.
+  Other runs drop and count the `reasoning` field.
+- **Leakage detection ignores reasoning traces.** Only train and validation carry
+  them, so comparing with them would hide a train copy of a test conversation.
+  Content and dataset hashes still cover them.
+- **The thinking-only error message no longer suggests a Qwen model.**
+
 ## [0.1.0] — 2026-08-14
 
 Initial release: the complete research infrastructure. No KLEOS fine-tuning

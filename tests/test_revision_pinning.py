@@ -276,3 +276,55 @@ class TestLogosIsPinned:
     def test_the_model_config_records_the_tokenizer_hashes(self):
         header = (CONFIGS_DIR / "models" / "ministral3_14b.yaml").read_text(encoding="utf-8")
         assert "tests/test_revision_pinning.py" in header
+
+
+#: The base revision KLEOS Logos v0.0.2 trains against, audited 2026-10-06.
+LOGOS_V002_PINNED_SHA = "51f9210f3cd20f3452a80d5819d15dc61cc50630"
+#: sha256 of the Reasoning release's tokenizer files at that revision. All three
+#: differ from the Instruct release's above; the template is vendored.
+LOGOS_V002_TOKENIZER_SHA256 = {
+    "tokenizer.json": "577575622324b2e099e2648be26bdeb5e5815ffe66d7004e9e3ddbf421db6bf1",
+    "tokenizer_config.json": "f3a437d1214f6b61c8eae19d1256b0ebbf567793f6dcc1f63f4a30b829f85235",
+    "chat_template.jinja": "6b5044075f09f4daa57beebe2d989d9fbe67dea351f220e1a84e19ddc893f2c2",
+}
+
+
+class TestLogosV002IsPinned:
+    """KLEOS Logos v0.0.2: Ministral 3 14B Reasoning, audited 2026-10-06."""
+
+    CONFIG = CONFIGS_DIR / "models" / "ministral3_14b_reasoning.yaml"
+
+    def test_base_and_revision(self):
+        config = load_model_config(self.CONFIG)
+        assert config.base_model == "mistralai/Ministral-3-14B-Reasoning-2512"
+        assert config.revision == LOGOS_V002_PINNED_SHA
+        assert is_pinned_revision(config.revision)
+
+    def test_it_uses_no_other_models_sha(self):
+        revision = load_model_config(self.CONFIG).revision
+        assert revision not in (PINNED_SHA, HERMES_PINNED_SHA, LOGOS_PINNED_SHA)
+
+    def test_no_other_model_config_uses_its_sha(self):
+        for path in sorted((CONFIGS_DIR / "models").glob("*.yaml")):
+            if path == self.CONFIG:
+                continue
+            assert load_model_config(path).revision != LOGOS_V002_PINNED_SHA, path.name
+
+    def test_the_vendored_chat_template_is_the_pinned_one(self):
+        import hashlib
+
+        from tests.conftest import REPO_ROOT
+
+        template = REPO_ROOT / "tests" / "fixtures" / "ministral3_reasoning_chat_template.jinja"
+        digest = hashlib.sha256(template.read_bytes()).hexdigest()
+        assert digest == LOGOS_V002_TOKENIZER_SHA256["chat_template.jinja"]
+
+    def test_the_tokenizer_files_differ_from_v001s(self):
+        for name, digest in LOGOS_V002_TOKENIZER_SHA256.items():
+            assert digest != LOGOS_TOKENIZER_SHA256[name], name
+
+    def test_the_model_config_records_the_tokenizer_hashes(self):
+        header = self.CONFIG.read_text(encoding="utf-8")
+        assert "tests/test_revision_pinning.py" in header
+        for digest in LOGOS_V002_TOKENIZER_SHA256.values():
+            assert digest[:6] in header

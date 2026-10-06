@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import gc
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -74,14 +75,96 @@ def snapshot_memory() -> MemorySnapshot | None:
 
 
 def reset_peak_memory() -> None:
-    """Reset peak-memory tracking, so a phase's peak is attributable to it."""
+    """Reset peak-memory tracking on every GPU, so a phase's peak is attributable to it."""
     try:
         import torch
 
         if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
+            for index in range(torch.cuda.device_count()):
+                torch.cuda.reset_peak_memory_stats(index)
     except ImportError:
         pass
+
+
+def peak_allocated_all_gb() -> float | None:
+    """The fullest GPU's peak allocation, or ``None`` without CUDA.
+
+    On one GPU this is ``torch.cuda.max_memory_allocated``. A model spread over
+    several GPUs (``device_map: auto``) is limited by whichever fills first.
+    """
+    try:
+        import torch
+    except ImportError:
+        return None
+    if not torch.cuda.is_available():
+        return None
+    peaks = [torch.cuda.max_memory_allocated(i) for i in range(torch.cuda.device_count())]
+    return max(peaks, default=0) / BYTES_PER_GB
+
+
+def model_devices(model: Any) -> list[int]:
+    """The CUDA devices holding the model's parameters, in ascending order."""
+    return sorted(
+        {
+            parameter.device.index
+            for parameter in model.parameters()
+            if parameter.device.type == "cuda" and parameter.device.index is not None
+        }
+    )
+
+
+@dataclass(frozen=True)
+class DeviceReading:
+    """One GPU's memory at the peak of the probe's training passes, in GiB."""
+
+    index: int
+    peak_allocated_gb: float
+    peak_reserved_gb: float
+    total_gb: float
+    free_at_peak_gb: float
+    #: Paged optimizer state for the trainable parameters on this GPU, which
+    #: bitsandbytes allocates outside PyTorch's allocator at the first step.
+    paged_optimizer_gb: float
+
+    @property
+    def spare_after_optimizer_gb(self) -> float:
+        return self.free_at_peak_gb - self.paged_optimizer_gb
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "peak_allocated_gb": round(self.peak_allocated_gb, 3),
+            "peak_reserved_gb": round(self.peak_reserved_gb, 3),
+            "total_gb": round(self.total_gb, 3),
+            "free_at_peak_gb": round(self.free_at_peak_gb, 3),
+            "paged_optimizer_gb": round(self.paged_optimizer_gb, 3),
+            "spare_after_optimizer_gb": round(self.spare_after_optimizer_gb, 3),
+        }
+
+
+def probe_result(
+    readings: Sequence[DeviceReading],
+    *,
+    batch_size: int,
+    sequence_length: int,
+    precision: str,
+) -> dict[str, Any]:
+    """The memory probe's record, gated on the GPU with the least to spare.
+
+    With one GPU the record is exactly what it always was. With several, its
+    top-level figures are the tightest GPU's (``scripts/check_smoke_gate.py``
+    gates on them unchanged), and every GPU's figures are listed beside them.
+    """
+    tightest = min(readings, key=lambda r: r.spare_after_optimizer_gb)
+    result: dict[str, Any] = {
+        "batch_size": batch_size,
+        "sequence_length": sequence_length,
+        "precision": precision,
+        **tightest.to_dict(),
+    }
+    if len(readings) > 1:
+        result["gated_on_device"] = tightest.index
+        result["devices"] = [{"index": r.index, **r.to_dict()} for r in readings]
+    return result
 
 
 def free_memory() -> None:
@@ -133,12 +216,17 @@ def probe_training_peak(
     batch = collator([dataset[i] for i in longest[:size]])
     device = next(model.parameters()).device
     batch = {key: value.to(device) for key, value in batch.items()}
+    # A model spread over several GPUs (device_map: auto) is measured on each;
+    # on one GPU, exactly as before.
+    spread = model_devices(model)
+    measured = [torch.device("cuda", index) for index in spread] if len(spread) > 1 else [device]
 
     was_training = model.training
     model.train()
     model.zero_grad(set_to_none=True)
     free_memory()
-    torch.cuda.reset_peak_memory_stats(device)
+    for target in measured:
+        torch.cuda.reset_peak_memory_stats(target)
     try:
         for _ in range(2):
             autocast = (
@@ -149,10 +237,19 @@ def probe_training_peak(
             with autocast:
                 loss = model(**batch).loss
             loss.backward()
-        torch.cuda.synchronize(device)
-        free_bytes, total_bytes = torch.cuda.mem_get_info(device)
-        peak_allocated = torch.cuda.max_memory_allocated(device) / BYTES_PER_GB
-        peak_reserved = torch.cuda.max_memory_reserved(device) / BYTES_PER_GB
+        raw: list[tuple[Any, int, int, float, float]] = []
+        for target in measured:
+            torch.cuda.synchronize(target)
+            free_bytes, total_bytes = torch.cuda.mem_get_info(target)
+            raw.append(
+                (
+                    target,
+                    free_bytes,
+                    total_bytes,
+                    torch.cuda.max_memory_allocated(target) / BYTES_PER_GB,
+                    torch.cuda.max_memory_reserved(target) / BYTES_PER_GB,
+                )
+            )
     finally:
         model.zero_grad(set_to_none=True)
         if not was_training:
@@ -160,32 +257,45 @@ def probe_training_peak(
         free_memory()
 
     # bitsandbytes' paged optimizer allocates its state outside PyTorch's
-    # allocator at the first optimizer step, from what is free now.
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    paged_gb = trainable * 2 / BYTES_PER_GB if "paged" in training_config.optim else 0.0
-    free_at_peak = free_bytes / BYTES_PER_GB
-    result = {
-        "batch_size": int(batch["input_ids"].shape[0]),
-        "sequence_length": int(batch["input_ids"].shape[1]),
-        "precision": "bf16" if bf16 else "fp16" if fp16 else "fp32",
-        "peak_allocated_gb": round(peak_allocated, 3),
-        "peak_reserved_gb": round(peak_reserved, 3),
-        "total_gb": round(total_bytes / BYTES_PER_GB, 3),
-        "free_at_peak_gb": round(free_at_peak, 3),
-        "paged_optimizer_gb": round(paged_gb, 3),
-        "spare_after_optimizer_gb": round(free_at_peak - paged_gb, 3),
-    }
-    logger.info(
-        "Memory probe (longest batch %d x %d tokens, %s): peak %.2f GB allocated, "
-        "%.2f GB reserved of %.2f GB; %.2f GB spare once the optimizer state exists.",
-        result["batch_size"],
-        result["sequence_length"],
-        result["precision"],
-        peak_allocated,
-        peak_reserved,
-        result["total_gb"],
-        result["spare_after_optimizer_gb"],
+    # allocator at the first optimizer step, from what is free now, on the GPU
+    # that holds each trainable parameter.
+    paged = "paged" in training_config.optim
+    readings = []
+    for target, free_bytes, total_bytes, peak_allocated, peak_reserved in raw:
+        trainable = sum(
+            p.numel()
+            for p in model.parameters()
+            if p.requires_grad and (len(measured) == 1 or p.device == target)
+        )
+        readings.append(
+            DeviceReading(
+                index=target.index if target.index is not None else 0,
+                peak_allocated_gb=peak_allocated,
+                peak_reserved_gb=peak_reserved,
+                total_gb=total_bytes / BYTES_PER_GB,
+                free_at_peak_gb=free_bytes / BYTES_PER_GB,
+                paged_optimizer_gb=trainable * 2 / BYTES_PER_GB if paged else 0.0,
+            )
+        )
+    result = probe_result(
+        readings,
+        batch_size=int(batch["input_ids"].shape[0]),
+        sequence_length=int(batch["input_ids"].shape[1]),
+        precision="bf16" if bf16 else "fp16" if fp16 else "fp32",
     )
+    for entry in result.get("devices", [result]):
+        logger.info(
+            "Memory probe (longest batch %d x %d tokens, %s)%s: peak %.2f GB allocated, "
+            "%.2f GB reserved of %.2f GB; %.2f GB spare once the optimizer state exists.",
+            result["batch_size"],
+            result["sequence_length"],
+            result["precision"],
+            f" on GPU {entry['index']}" if "index" in entry else "",
+            entry["peak_allocated_gb"],
+            entry["peak_reserved_gb"],
+            entry["total_gb"],
+            entry["spare_after_optimizer_gb"],
+        )
     return result
 
 

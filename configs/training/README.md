@@ -10,6 +10,8 @@
 | `debug_nemo.yaml` | Ten steps at Hermes' real model settings: the T4 memory check. |
 | `kleos_logos_v001.yaml` | **KLEOS Logos v0.0.1** on Ministral 3 14B. Hermes' recipe, eval/save every 25 steps, strict. Not yet trained. |
 | `debug_logos.yaml` | Ten steps at Logos' real model settings: the go/no-go memory gate (`docs/logos.md`). |
+| `kleos_logos_v002.yaml` | **KLEOS Logos v0.0.2** on Ministral 3 14B Reasoning over kleos-policy-v0.0.7, trained to think. v0.0.1's recipe; Kaggle 2 × T4. Pre-registered as H9; not yet trained. |
+| `debug_logos_v002.yaml` | Ten steps at Logos v0.0.2's real settings: the per-GPU memory gate (`docs/logos.md` §11). |
 
 ## These hyperparameters are not tuned
 

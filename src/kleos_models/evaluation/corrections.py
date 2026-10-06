@@ -265,6 +265,15 @@ def generation_stats(
     }
     if all("response" in r for r in records):
         stats["empty_responses"] = sum(1 for r in records if not str(r["response"]).strip())
+    # Schema 3 onwards. A thinking model whose budget ran out mid-thought has no
+    # answer; it is graded as given (empty) and counted here.
+    if records and all("finish_reason" in r for r in records):
+        stats["thinking_truncated"] = sum(1 for r in records if r["finish_reason"] == "length")
+    traces = [str(r["reasoning"]) for r in records if r.get("reasoning") is not None]
+    if traces:
+        # Over the answers that thought, with how many did.
+        stats["reasoning_responses"] = len(traces)
+        stats["reasoning_chars"] = _distribution([len(trace) for trace in traces])
     return stats
 
 

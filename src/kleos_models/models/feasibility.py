@@ -145,8 +145,9 @@ class GPUInfo:
         free = (
             f"{self.free_memory_gb:.1f} GB free" if self.free_memory_gb > 0 else "free not measured"
         )
+        capacity = "per GPU" if self.device_count > 1 else "total"
         return (
-            f"{self.name} | {self.total_memory_gb:.2f} GB total, "
+            f"{self.name} | {self.total_memory_gb:.2f} GB {capacity}, "
             f"{free} | compute capability "
             f"{self.capability_string} | bf16 {'yes' if self.bf16_supported else 'NO'} | "
             f"CUDA {self.cuda_version or 'unknown'}"
@@ -402,6 +403,21 @@ KNOWN_SHAPES: dict[str, dict[str, Any]] = {
         "tie_word_embeddings": False,
         "vision_parameter_count": 438_958_080,
     },
+    # KLEOS Logos v0.0.2: the Reasoning release of the same model. config.json @
+    # 51f9210f has the Instruct text tower's shape exactly; 13,506,073,600 text
+    # parameters counted on the meta device (transformers 5.16.1), lm_head untied.
+    "mistralai/Ministral-3-14B-Reasoning-2512": {
+        "parameter_count": 13_506_073_600,
+        "hidden_size": 5120,
+        "num_layers": 40,
+        "intermediate_size": 16384,
+        "vocab_size": 131072,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 8,
+        "head_dim": 128,
+        "tie_word_embeddings": False,
+        "vision_parameter_count": 438_958_080,
+    },
     # Text 23,572,403,200 + vision 438,958,080 = 24.0B total.
     "mistralai/Mistral-Small-3.2-24B-Instruct-2506": {
         "parameter_count": 23_572_403_200,
@@ -448,13 +464,22 @@ class MemoryEstimate:
     #: activation budget computed independently of the training batch size.
     inference_weights_gb: float = 0.0
     inference_activations_gb: float = 0.0
+    #: Peak allocation on each GPU when ``device_map: auto`` spreads the model
+    #: over several (:func:`device_peaks`). Empty for one GPU.
+    device_peaks_gb: tuple[float, ...] = ()
 
     @property
     def paged_gb(self) -> float:
-        return self.optimizer_gb if self.paged_optimizer else 0.0
+        """Paged optimizer state taken from one GPU's budget."""
+        if not self.paged_optimizer:
+            return 0.0
+        return self.optimizer_gb / max(1, len(self.device_peaks_gb))
 
     @property
     def peak_allocated_gb(self) -> float:
+        """The peak on the fullest GPU; with one GPU, the whole step's peak."""
+        if self.device_peaks_gb:
+            return max(self.device_peaks_gb)
         optimizer = 0.0 if self.paged_optimizer else self.optimizer_gb
         return (
             self.base_weights_gb
@@ -503,10 +528,21 @@ class MemoryEstimate:
             "inference_gb": round(self.inference_gb, 2),
             "confidence": self.confidence,
             "assumptions": self.assumptions,
+            **(
+                {"device_peaks_gb": [round(peak, 2) for peak in self.device_peaks_gb]}
+                if self.device_peaks_gb
+                else {}
+            ),
         }
 
     def render(self) -> str:
         optimizer_note = " (paged, outside the allocator)" if self.paged_optimizer else ""
+        per_gpu = [
+            f"    on GPU {index}                {peak:6.2f} GB"
+            for index, peak in enumerate(self.device_peaks_gb)
+        ]
+        if per_gpu:
+            per_gpu.insert(0, f"  split over {len(self.device_peaks_gb)} GPUs (device_map: auto):")
         return "\n".join(
             [
                 f"  base weights              {self.base_weights_gb:6.2f} GB "
@@ -518,6 +554,7 @@ class MemoryEstimate:
                 f"  activations and logits    {self.activations_gb:6.2f} GB "
                 f"(batch {self.batch_size} x seq {self.sequence_length})",
                 f"  {'-' * 40}",
+                *per_gpu,
                 f"  estimated peak allocated  {self.peak_allocated_gb:6.2f} GB "
                 f"(confidence: {self.confidence})",
                 f"  + allocator reserve       {self.reserve_gb:6.2f} GB",
@@ -551,6 +588,20 @@ class MemoryTerms:
     activations: float
     inference_weights: float
     inference_activations: float
+    # How ``activations`` and ``unquantized_weights`` divide when the layers are
+    # spread over several GPUs (:func:`device_peaks`). Their sum is unchanged.
+    #: The fp32 ``embed_tokens`` (part of ``unquantized_weights``).
+    embedding_weights: float = 0.0
+    #: Activations that scale with the number of layers on a GPU: checkpointed
+    #: layer boundaries, or every layer's activations without checkpointing.
+    layered_activations: float = 0.0
+    #: Activations every GPU holds once: the layer being recomputed under
+    #: checkpointing and one dequantized weight.
+    working_activations: float = 0.0
+    #: fp32 logits at the loss, on the GPU holding lm_head.
+    logits: float = 0.0
+    #: The 16-bit autocast copy of lm_head, on the same GPU.
+    head_cast: float = 0.0
 
 
 def memory_terms(
@@ -625,7 +676,42 @@ def memory_terms(
         activations=layer_activations + logits + head_cast + dequantized_weight,
         inference_weights=quantized_weights + unquantized_params * 2.0,
         inference_activations=float(inference_activations),
+        embedding_weights=shape.vocab_size * hidden * upcast_bytes,
+        layered_activations=boundaries + (0.0 if gradient_checkpointing else one_layer * layers),
+        working_activations=(one_layer if gradient_checkpointing else 0.0) + dequantized_weight,
+        logits=logits,
+        head_cast=head_cast,
     )
+
+
+def device_peaks(terms: MemoryTerms, devices: int, *, paged: bool) -> tuple[float, ...]:
+    """Peak allocation on each GPU when ``device_map: auto`` spreads the layers, in bytes.
+
+    Assumes what accelerate's balanced map does for a decoder: the layers, and
+    so the quantized weights, adapters and their optimizer state, are divided
+    evenly; ``embed_tokens`` sits on the first GPU; the final norm, ``lm_head``,
+    its 16-bit autocast copy and the fp32 logits on the last. Every GPU holds one
+    working layer. The map is computed at load time, before the k-bit upcast, so
+    it does not see the fp32 embeddings; the trainer's per-GPU memory probe
+    measures what really happens before step 1.
+
+    The GPUs together hold the single-GPU peak plus ``devices - 1`` extra working
+    layers.
+    """
+    count = max(1, devices)
+    spread = (
+        terms.quantized_weights
+        + terms.lora_weights
+        + terms.gradients
+        + (0.0 if paged else terms.optimizer)
+        + terms.layered_activations
+    )
+    shared = spread / count + terms.working_activations
+    first = terms.embedding_weights
+    last = terms.unquantized_weights - terms.embedding_weights + terms.logits + terms.head_cast
+    if count == 1:
+        return (shared + first + last,)
+    return (shared + first, *([shared] * (count - 2)), shared + last)
 
 
 @dataclass(frozen=True)
@@ -719,6 +805,7 @@ def estimate_memory(
     seq_length: int | None = None,
     batch_size: int | None = None,
     loads_vision_tower: bool | None = None,
+    devices: int = 1,
 ) -> MemoryEstimate:
     """Estimate peak training VRAM for a configuration.
 
@@ -730,6 +817,9 @@ def estimate_memory(
             known (``scripts/train.py`` measures it before loading weights).
         loads_vision_tower: Whether a vision tower is resident. Defaults to
             ``model.is_multimodal`` (a text-only view loads none).
+        devices: GPUs the model is spread over (``device_map: auto``). Above 1,
+            the estimate is per GPU and its peak is the fullest GPU's
+            (:func:`device_peaks`); at 1 it is exactly the single-GPU estimate.
 
     The arithmetic is deliberately explicit rather than a fitted heuristic, so a
     user can see which term is dominating and change the right knob.
@@ -811,6 +901,15 @@ def estimate_memory(
         )
     )
 
+    split: tuple[float, ...] = ()
+    if devices > 1:
+        split = tuple(peak / BYTES_PER_GB for peak in device_peaks(terms, devices, paged=paged))
+        assumptions.append(
+            f"layers spread over {devices} GPUs by device_map=auto: embeddings on the "
+            "first, lm_head and the logits on the last, one working layer on each; "
+            "the figures below are per GPU and the peak is the fullest GPU's"
+        )
+
     confidence = "medium" if shape.source != "generic" else "low"
     if model_config.parameter_count is None and shape.source == "generic":
         assumptions.append(
@@ -838,6 +937,7 @@ def estimate_memory(
         inference_activations_gb=terms.inference_activations / BYTES_PER_GB,
         confidence=confidence,
         assumptions=assumptions,
+        device_peaks_gb=split,
     )
 
 
@@ -959,12 +1059,16 @@ def assess_feasibility(
             ``model.max_seq_length`` (see :func:`estimate_memory`).
     """
     gpu = gpu or probe_gpu()
+    # device_map: auto spreads the layers over every visible GPU; any other map
+    # (or none) keeps the model on one.
+    devices = gpu.device_count if model_config.device_map == "auto" else 1
     estimate = estimate_memory(
         model_config,
         training_config,
         shape=shape,
         target_modules=target_modules,
         seq_length=seq_length,
+        devices=devices,
     )
 
     budget = memory_budget_gb(gpu, paged_gb=estimate.paged_gb)
@@ -1001,6 +1105,7 @@ def assess_feasibility(
         target_modules=target_modules,
         seq_length=min(512, seq_length or model_config.max_seq_length),
         batch_size=1,
+        devices=devices,
     )
 
     if estimate.inference_gb > memory_budget_gb(gpu):
@@ -1242,11 +1347,13 @@ GPU_PRESETS: dict[str, GPUInfo] = {
 
 
 def simulated_gpu(spec: str) -> GPUInfo:
-    """A GPU to plan against: a preset name, or ``NAME:TOTAL_GIB:MAJOR.MINOR``.
+    """A GPU to plan against: a preset name, or ``NAME:TOTAL_GIB:MAJOR.MINOR[:COUNT]``.
 
     The custom form is for hardware without a measured preset, e.g.
     ``L4:22.0:8.9``; its budget is the stated total less the measured
-    non-allocator overhead.
+    non-allocator overhead. ``COUNT`` identical GPUs (default 1), e.g.
+    ``T4:14.56:7.5:2`` for Kaggle's 2 x T4, are planned per GPU with the model
+    spread over them.
 
     Raises:
         ValueError: for an unknown preset or a malformed custom spec.
@@ -1254,25 +1361,28 @@ def simulated_gpu(spec: str) -> GPUInfo:
     if spec in GPU_PRESETS:
         return GPU_PRESETS[spec]
     parts = spec.split(":")
-    if len(parts) != 3:
+    if len(parts) not in (3, 4):
         raise ValueError(
             f"Unknown GPU {spec!r}. Use a preset ({', '.join(sorted(GPU_PRESETS))}) "
-            "or NAME:TOTAL_GIB:MAJOR.MINOR, e.g. L4:22.0:8.9."
+            "or NAME:TOTAL_GIB:MAJOR.MINOR[:COUNT], e.g. L4:22.0:8.9 or T4:14.56:7.5:2."
         )
-    name, total, capability = parts
+    name, total, capability = parts[:3]
     try:
         total_gb = float(total)
         major, minor = (int(x) for x in capability.split("."))
+        count = int(parts[3]) if len(parts) == 4 else 1
     except ValueError as exc:
         raise ValueError(f"Malformed GPU spec {spec!r}: {exc}") from exc
     if total_gb <= 0:
         raise ValueError(f"GPU memory must be positive in {spec!r}.")
+    if count < 1:
+        raise ValueError(f"GPU count must be at least 1 in {spec!r}.")
     return GPUInfo(
         available=True,
-        name=f"{name} (simulated)",
+        name=f"{name} (simulated)" if count == 1 else f"{count} x {name} (simulated)",
         total_memory_gb=total_gb,
         free_memory_gb=0.0,
         compute_capability=(major, minor),
-        device_count=1,
+        device_count=count,
         source=f"custom spec {spec!r}: stated capacity, not measured",
     )

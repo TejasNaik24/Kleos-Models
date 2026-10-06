@@ -11,6 +11,9 @@
 - **Full run report:** [experiments/kleos-v006-ministral314b-run1-report.md](experiments/kleos-v006-ministral314b-run1-report.md).
 - **Not yet done:** Logos is not deployed. Deployment comes only after a decision
   that Logos is worth serving beside Hermes (§7).
+- **Next: Logos v0.0.2** (2026-10-06): the Reasoning release of the same model,
+  trained on kleos-policy-v0.0.7's policy-derived reasoning traces, on Kaggle's
+  2 × T4. Pre-registered as H9, not yet trained: [§11](#11-logos-v002-trained-to-think).
 
 Logos is the deeper of the two KLEOS models. Hermes (Mistral-Nemo 12B) is frozen and
 deployed; nothing on this page changes it. This page records which base Logos uses
@@ -493,3 +496,184 @@ VERIFIED with transformers 5.16.1. Not fixed.
 The other findings of this phase, H-F11 to H-F14, are about how the evaluation
 measures. They are recorded with the run they were found in:
 [experiments/kleos-v006-mistralnemo12b-run1-report.md](experiments/kleos-v006-mistralnemo12b-run1-report.md#11-findings).
+
+---
+
+## 11. Logos v0.0.2: trained to think
+
+**Status (2026-10-06): built and pre-registered as
+[H9](experiments.md#h9--does-a-logos-trained-to-think-beat-hermes). Not yet
+trained.** Logos v0.0.1 was not measurably better than Hermes (H8b). v0.0.2
+changes what Logos is trained to do: it writes out the policy's reasoning before
+it answers, and it learns the four decline labels v0.0.6 never taught.
+
+### 11.1 What changes
+
+| | Logos v0.0.1 | Logos v0.0.2 |
+| --- | --- | --- |
+| Base | Ministral 3 14B Instruct (BF16) @ `3cea74c1` | Ministral 3 14B **Reasoning** @ `51f9210f` |
+| Data | kleos-policy-v0.0.6 | **kleos-policy-v0.0.7**: v0.0.6 plus a policy-derived trace on every train and validation answer, and a "What decided it" line |
+| What is trained | the answer | `[THINK]trace[/THINK]answer</s>`, all supervised |
+| Longest example | 448 tokens | 736 tokens |
+| Hardware | Colab, 1 × T4 | Kaggle, **2 × T4**, layers spread over both |
+| Evaluation | `max_new_tokens` 512 | 1024; the trace is split off at `[/THINK]`, only the answer is graded |
+| Recipe | Hermes' | v0.0.1's, value for value |
+
+**The base, VERIFIED at the pinned revision:**
+
+- the same architecture and text-tower shape as v0.0.1: 13,506,073,600 text
+  parameters, untied `lm_head`, and the same 280 LoRA modules with 60,948,480
+  trainable parameters;
+- its own tokenizer files and chat template: `tokenizer.json` `577575…`,
+  `chat_template.jinja` `6b5044…`, `tokenizer_config.json` `f3a437…`.
+
+The template renders an assistant message's `reasoning` field as the thinking
+span. It adds its default "how you should think" system prompt only to a
+conversation without a system message. Every v0.0.7 example and every benchmark
+prompt has one, so it never appears (VERIFIED).
+
+**The model card** (SOURCE): AIME 2025 0.850 and GPQA Diamond 0.712 for this
+release; it reports no reasoning scores for the Instruct release.
+
+### 11.2 What the code now does
+
+- **Data contract.** Schema 1.1 adds an optional assistant `reasoning` field. It is
+  written only when present, so every earlier release keeps its bytes and hashes.
+- **Formatting.**
+  - For a model trained to think (`strip_thinking_from_targets: false`), the field
+    goes to the chat template.
+  - A run that would cut any supervised token refuses to start.
+  - For any other model the field is dropped and counted.
+- **Model.** `Ministral3ReasoningTextAdapter` (`model_type: ministral3_reasoning`)
+  is v0.0.1's text-only view with a thinking-only capability. It refuses
+  `standard` mode.
+- **Evaluation.**
+  - In thinking mode the completion is split on token 35 (`[/THINK]`) before
+    decoding, so the graders never read the trace.
+  - A completion whose thinking never closes has an empty answer and
+    `finish_reason: length`. `generation_stats.thinking_truncated` counts them.
+  - Results schema 3 stores each trace beside its answer.
+- **Two GPUs.**
+  - The memory probe measures every GPU and gates on the tighter one.
+  - The run refuses to train a model spread over GPUs unless the Trainer runs it
+    model parallel. transformers 5.16.1 does (VERIFIED in its source); the check
+    stops the run if that ever changes.
+  - The manifest records where each part of the model landed.
+
+### 11.3 Does it fit?
+
+ESTIMATED with the repository's estimator: seven LoRA targets, batch 1, the
+longest example (736 tokens), paged 8-bit AdamW.
+
+| Hardware | Tier | Peak allocated |
+| --- | --- | --- |
+| 1 × T4 (Colab) | smoke: does not fit | 14.46 GB against a 14.41 GB budget |
+| 2 × T4 (Kaggle) | full research | 6.38 GB on GPU 0, **8.53 GB** on GPU 1 (`lm_head`, its 16-bit copy and the logits) |
+
+**The measured anchor agrees.** v0.0.1 measured 13.60 GB with 0.35 GB spare at 448
+tokens, and the estimator was 0.14 GB optimistic there.
+
+Reproduce:
+`python scripts/plan_run.py --config configs/training/kleos_logos_v002.yaml --seq-length 736 --simulate-gpu T4:14.56:7.5:2`.
+
+The smoke run's per-GPU memory probe is the go/no-go gate, as in §4.
+
+### 11.4 Kaggle runbook
+
+**Prerequisites:**
+
+1. The code from this phase is committed and **pushed**; Kaggle clones it.
+   Note the full commit sha.
+2. A Kaggle account with phone verification, which GPUs and internet access need.
+   Free GPU quota is about 30 hours a week.
+3. A **private** Kaggle dataset holding the six files of
+   `Kleos-Training-Data/releases/kleos-policy-v0.0.7`:
+   - train, validation and test `.jsonl`;
+   - `manifest.json`, `provenance.json`, `RELEASE.lock`.
+
+   (New Dataset → upload the files → Private.)
+4. **Once, 2 minutes, no GPU:** run `notebooks/kaggle/output_probe.ipynb` (Save & Run
+   All). It writes a marker and then fails on purpose. In any notebook, Add Input →
+   its output: if `probe/marker.txt` is there, a failed or stopped version's output
+   can be attached, and the resume steps below work. If it is not, a run that
+   stops must start over; tell Claude before relying on resume.
+
+**Training.** ESTIMATED 5–6 hours, smoke run included.
+
+1. Import `notebooks/kaggle/logos_v002_train.ipynb` (File → Import Notebook).
+2. Settings → Accelerator → **GPU T4 x2**; Settings → **Internet on**; Settings →
+   Environment → **Pin to original environment** (a resumed evaluation must run
+   the same library versions, or it refuses to resume).
+3. Add Input → the dataset.
+4. In the first code cell, set `COMMIT` to the full sha.
+5. **Save Version → Save & Run All (Commit).** The notebook runs unattended, in
+   this order:
+   1. checks the hardware and disk;
+   2. clones at `COMMIT` and pins the libraries;
+   3. copies the dataset to the pre-registered path, in `/tmp`, which Kaggle
+      never saves, and checks `test.jsonl`;
+   4. refuses to run unless `config_hash` is `d1961583…`;
+   5. plans against the live GPUs;
+   6. runs the 10-step smoke test and the memory gate;
+   7. trains.
+
+   It stops at the first failure. A long command is stopped at 11¼ hours, before
+   Kaggle's 12-hour limit, so the version still ends normally and saves its
+   output; the last cell then says NOT FINISHED. The adapter lands in the finished
+   version's output, at `outputs/kleos-v007-ministral314breasoning-run1/adapter`.
+6. **If it stopped** (12-hour limit, error, quota):
+   1. Add Input → this notebook's previous version **output**.
+   2. Save & Run All again.
+
+   The checkpoints are copied back and training resumes from the latest complete
+   one. A checkpoint missing optimizer or scheduler state is set aside with an
+   `L-F5` line. The notebook always resumes with `auto`, never a fresh start over
+   checkpoints (L-F4).
+
+**Evaluation.** ESTIMATED 7–8 hours.
+
+1. Import `notebooks/kaggle/logos_v002_evaluate.ipynb`, with the same settings
+   (including the pinned environment) and dataset.
+2. Add Input → the training notebook's finished output.
+3. Set `COMMIT` to the same sha.
+4. **Save & Run All.** The notebook:
+   1. rebuilds the benchmark and checks its sha (`a11ffad7…`);
+   2. evaluates `arm2_finetuned` with `--resume`.
+5. **If it stopped,** also attach this notebook's previous output. Its partial file
+   is restored, and finished generations are replayed, not regenerated.
+
+Both notebooks keep the dataset, weights and code in `/tmp`, which Kaggle never
+saves, and publish nothing. Only `outputs/` reaches a version's saved output.
+
+### 11.5 The H9 comparison (on your own machine, CPU only)
+
+1. Download `outputs/kleos-v007-ministral314breasoning-run1/arm2_finetuned.json`
+   from the evaluation notebook's output.
+2. Take Hermes' annotated arm2 from Drive:
+   `outputs/kleos-v006-mistralnemo12b-run1/arm2_finetuned.annotated.json`, made in
+   §9 cell 17.
+3. Run the primary comparison:
+
+```
+.venv/bin/python scripts/compare.py --cross-model \
+    --base <hermes>/arm2_finetuned.annotated.json \
+    --finetuned <logos-v002>/arm2_finetuned.json \
+    --primary-subset answerable --equivalence-margin 0.02 \
+    --report outputs/report_h9_hermes_vs_logos_v002
+```
+
+The same command with `--base` set to Logos v0.0.1's `arm2_finetuned.json` gives
+the secondary v0.0.1 vs v0.0.2 row.
+
+`compare.py` notes that the decoding settings differ (`max_new_tokens` 1024 against
+512). That difference is declared under H9.
+
+### 11.6 Risks for this run
+
+- **First run of this code on two GPUs.** The per-GPU probe loop and the
+  model-parallel check can only execute on real GPUs. The smoke run is their first
+  execution, and it stops before training if either fails.
+- **Kaggle is not Colab.** Its torch version and disk were not measured here. The
+  notebook prints both and refuses to start with less than 30 GB free in `/tmp`.
+- **Greedy decoding on a reasoning model** can loop until `max_new_tokens`. Such
+  answers are counted, not hidden (H9, confounds).

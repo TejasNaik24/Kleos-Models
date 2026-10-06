@@ -335,7 +335,13 @@ def _to_items(examples: Iterable[TrainingExample | EvaluationExample], split: st
 
     items: list[_Item] = []
     for example in examples:
-        text = example.conversation_text()
+        # Without schema-1.1 reasoning traces: only train and validation carry
+        # them, so a copied conversation must still match its test original.
+        text = (
+            example.conversation_text(include_reasoning=False)
+            if isinstance(example, TrainingExample)
+            else example.conversation_text()
+        )
         items.append(
             _Item(
                 id=example.id,

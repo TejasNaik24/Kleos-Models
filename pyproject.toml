@@ -163,6 +163,7 @@ markers = [
   "requires_peft: test needs peft installed (skipped otherwise)",
   "requires_cuda: test needs a CUDA GPU (skipped otherwise)",
   "slow: test builds a tiny model and runs real training steps",
+  "requires_v007: test reads the sealed kleos-policy-v0.0.7 release (skipped when absent)",
 ]
 filterwarnings = [
   "ignore::DeprecationWarning:pkg_resources.*",

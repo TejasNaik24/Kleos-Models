@@ -94,7 +94,7 @@ class TestHashNeutralField:
     @pytest.mark.parametrize("path", sorted(MODELS.glob("*.yaml")), ids=lambda p: p.stem)
     def test_existing_model_configs_do_not_serialize_the_flag(self, path):
         config = load_model_config(path)
-        if path.stem == "ministral3_14b":
+        if path.stem in ("ministral3_14b", "ministral3_14b_reasoning"):
             assert config.model_dump()["fix_mistral_regex"] is True
             return
         assert "fix_mistral_regex" not in config.model_dump()

@@ -128,6 +128,21 @@ def load_hf_config(config: ModelConfig) -> Any:
         ) from exc
 
 
+def spread_device_map(model: Any) -> dict[str, str] | None:
+    """Where each part of a model sits, when it spans more than one GPU.
+
+    ``None`` for a model on one GPU (or none), so a single-GPU run records
+    exactly what it always did.
+    """
+    device_map = getattr(model, "hf_device_map", None)
+    if not device_map:
+        return None
+    gpus = {str(device) for device in device_map.values() if str(device) not in ("cpu", "disk")}
+    if len(gpus) < 2:
+        return None
+    return {str(name): str(device) for name, device in device_map.items()}
+
+
 def resolve_fix_mistral_regex(
     config: ModelConfig, requested: bool | None = None
 ) -> tuple[bool | None, str]:
@@ -403,6 +418,10 @@ def load_model(
     if regex_source != "unset":
         load_metadata["fix_mistral_regex"] = regex_flag
         load_metadata["fix_mistral_regex_source"] = regex_source
+    spread = spread_device_map(model)
+    if spread is not None:
+        # device_map: auto over several GPUs: record where each part landed.
+        load_metadata["hf_device_map"] = spread
 
     loaded = LoadedModel(
         model=model,
