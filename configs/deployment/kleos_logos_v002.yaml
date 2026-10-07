@@ -16,8 +16,8 @@ deployment:
   adapter_path: ${env:KLEOS_ADAPTER_PATH:}
   source_checkpoint: checkpoint-175
   selection_metric: eval_loss
-  selection_value: null
-  adapter_sha256: null
+  selection_value: 0.029344497248530388
+  adapter_sha256: e49724f6554db662769fbe9b9431105dbc12f8f75cecd6e0e00728ea3f04dc4f
   trainable_parameters: 60948480
   dataset_version: kleos-policy-v0.0.7
   dataset_sha256: 5d02a5afd7be18e57f13b7d86fa8c31a1b008dd9e1927f4fa506356649699c48
@@ -27,11 +27,11 @@ deployment:
     source: frozen_package
     fix_mistral_regex: true
     padding_side: right
-    pad_token: null
+    pad_token: "<pad>"
     files_sha256:
-      tokenizer.json: null
-      tokenizer_config.json: null
-      chat_template.jinja: null
+      tokenizer.json: 577575622324b2e099e2648be26bdeb5e5815ffe66d7004e9e3ddbf421db6bf1
+      tokenizer_config.json: ce7ea8d28bb4ba4350064186dcf3a6dcef497b728f55b1ceee379412a8af36b2
+      chat_template.jinja: 6b5044075f09f4daa57beebe2d989d9fbe67dea351f220e1a84e19ddc893f2c2
   runtime:
     quantization_mode: nf4
     double_quant: true

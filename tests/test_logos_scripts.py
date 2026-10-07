@@ -57,6 +57,26 @@ class TestPackageReadme:
         assert "kleos-v007-ministral314breasoning-run1-report.md" in text
         assert "kleos-v006-mistralnemo12b-run1-report.md" not in text
 
+    def test_hermes_null_revision_wording_is_kept(self):
+        text = build.deployment_readme(FIELDS, HERMES_PROFILE, original_revision=None)
+        assert text == build.DEPLOYMENT_README.format(**FIELDS)
+
+    def test_a_research_copy_that_already_pins_the_revision_is_not_called_null(self):
+        # Logos' research adapter_config.json already records the pinned revision.
+        text = build.deployment_readme(
+            FIELDS, load_profile(LOGOS_RECORD), original_revision=FIELDS["base_revision"]
+        )
+        assert "revision: null" not in text
+        assert "already pins the base\nrevision" in text
+        assert "deliberate difference" not in text
+
+    def test_a_different_research_revision_is_named(self):
+        text = build.deployment_readme(
+            FIELDS, load_profile(LOGOS_RECORD), original_revision="0" * 40
+        )
+        assert "revision: null" not in text
+        assert "0" * 40 in text
+
 
 def fake_hub(monkeypatch, stored: str | None) -> None:
     module = types.ModuleType("huggingface_hub")

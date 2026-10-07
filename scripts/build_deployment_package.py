@@ -130,10 +130,46 @@ python scripts/serve_hermes.py --host 127.0.0.1 --port 8000
 """
 _HERMES_REPORT = "docs/experiments/kleos-v006-mistralnemo12b-run1-report.md"
 
+#: DEPLOYMENT_README's account of the adapter config, true of Hermes' research
+#: copy, which recorded no revision.
+_NULL_REVISION = """\
+This directory is a **deployment artifact**, not the research artifact. It is a
+copy, with one deliberate difference recorded in `manifest.json`:
+`adapter/adapter_config.json` pins the base revision, where the research copy
+records `revision: null` (finding H-F1). The research artifact is unchanged.
+"""
 
-def deployment_readme(fields: dict[str, Any], profile: ServingProfile) -> str:
-    """The package's README. Hermes' is rendered exactly as it always was."""
+
+def _revision_note(original_revision: str | None, base_revision: str) -> str:
+    """What the README says about the research copy's adapter revision."""
+    if original_revision is None:
+        return _NULL_REVISION
+    if original_revision == base_revision:
+        return (
+            "This directory is a **deployment artifact**, not the research artifact. It is a\n"
+            "copy. The research copy of `adapter/adapter_config.json` already pins the base\n"
+            "revision, so it is only rewritten with sorted keys and two-space indentation.\n"
+            "The research artifact is unchanged.\n"
+        )
+    return _NULL_REVISION.replace(
+        "`revision: null` (finding H-F1)", f"`revision: {original_revision}`"
+    )
+
+
+def deployment_readme(
+    fields: dict[str, Any], profile: ServingProfile, original_revision: str | None = None
+) -> str:
+    """The package's README. Hermes' is rendered exactly as it always was.
+
+    ``original_revision`` is the research copy's adapter revision: ``None`` for
+    Hermes, whose README therefore keeps its words.
+    """
     text = DEPLOYMENT_README.format(**fields)
+    if _NULL_REVISION not in text:
+        raise KleosError("The package README template changed; update deployment_readme().")
+    text = text.replace(
+        _NULL_REVISION, _revision_note(original_revision, str(fields["base_revision"]))
+    )
     if not profile.space_only:
         return text
     if _HERMES_SERVE not in text or _HERMES_REPORT not in text:
@@ -370,6 +406,7 @@ def main(argv: list[str] | None = None) -> int:
                 "fix_mistral_regex": manifest.tokenizer.fix_mistral_regex,
             },
             profile,
+            pinned["original_revision"],
         ),
         encoding="utf-8",
     )
