@@ -24,8 +24,11 @@ Nine examples plus one warm repeat is sized to fit a free account's daily
 allowance with margin. The run stops at the first quota refusal and keeps what
 it measured; it never loops against a spent quota.
 
-Environment: HERMES_API_KEY (the Space's key), HF_TOKEN (read access; required
-for a private Space, and it attributes the GPU time to that account).
+Environment: the model's API key (``HERMES_API_KEY`` for Hermes, ``LOGOS_API_KEY``
+for Logos: the Space's key) and a Hugging Face token with read access, required
+for a private Space and charged for the GPU time: HF_TOKEN if set, otherwise the
+token stored by ``hf auth login``. ``--record`` selects the model (Hermes' by
+default). For a thinking model the trace is compared as well as the answer.
 
 Usage::
 
@@ -51,6 +54,7 @@ from kleos_models.data.loaders import load_evaluation_examples
 from kleos_models.errors import ConfigError
 from kleos_models.serving.client import HermesClient, HermesClientSettings
 from kleos_models.serving.manifest import load_expected_identity
+from kleos_models.serving.profile import HERMES_PROFILE, ServingProfile, load_profile
 from kleos_models.serving.smoke import (
     api_messages,
     judge_response,
@@ -62,8 +66,33 @@ from kleos_models.serving.smoke import (
 DEFAULT_RECORD = REPO_ROOT / "configs" / "deployment" / "kleos_hermes_v006.yaml"
 
 
-def check_identity(status: dict[str, Any], expected: dict[str, Any]) -> list[str]:
-    """Differences between what the Space reports and the serving record."""
+def _hf_token() -> str | None:
+    """The owner's token for a private Space: HF_TOKEN, else the stored login.
+
+    GPU time is charged to this account; for the owner's own smoke test that
+    is intended.
+    """
+    token = os.environ.get("HF_TOKEN")
+    if token:
+        return token
+    try:
+        from huggingface_hub import get_token
+    except ImportError:
+        return None
+    return get_token()
+
+
+def check_identity(
+    status: dict[str, Any],
+    expected: dict[str, Any],
+    profile: ServingProfile = HERMES_PROFILE,
+) -> list[str]:
+    """Differences between what the Space reports and the serving record.
+
+    Beyond the weights and runtime: the token budget the Space serves must be
+    the one the model was evaluated with, and a thinking model's Space must
+    send its trace (contract version 2).
+    """
     model = status.get("model") or {}
     problems = []
     for key in ("adapter_sha256", "base_model", "base_revision"):
@@ -71,7 +100,64 @@ def check_identity(status: dict[str, Any], expected: dict[str, Any]) -> list[str
             problems.append(f"{key}: Space {model.get(key)!r}, record {expected.get(key)!r}")
     if (status.get("runtime") or {}) != expected.get("runtime"):
         problems.append(f"runtime: Space {status.get('runtime')!r}, record {expected['runtime']!r}")
+    served = (status.get("limits") or {}).get("max_new_tokens")
+    wanted = (expected.get("generation") or {}).get("max_new_tokens")
+    if wanted is not None and served != wanted:
+        problems.append(f"max_new_tokens: Space serves {served!r}, record evaluated {wanted!r}")
+    if bool(status.get("reasoning")) != profile.reasoning:
+        problems.append(
+            f"reasoning: Space reports {bool(status.get('reasoning'))}, record expects "
+            f"{profile.reasoning}"
+        )
     return problems
+
+
+def check_reference(
+    payload: Any, expected: dict[str, Any], profile: ServingProfile = HERMES_PROFILE
+) -> list[str]:
+    """Reasons the reference is not the evaluation the record describes.
+
+    Checked before any GPU call: comparing against another evaluation's outputs
+    (Logos v0.0.1's results share the file name) spends a day's quota on a
+    false STOP. The token budget is compared when the reference states it, and
+    a thinking model's reference must carry a trace for every answer.
+    """
+    records = load_reference(payload) if isinstance(payload, dict) else {}
+    if not records:
+        return ["the reference holds no per-example results"]
+    problems = []
+    used = (payload.get("generation") or {}).get("max_new_tokens")
+    wanted = (expected.get("generation") or {}).get("max_new_tokens")
+    if used is not None and wanted is not None and used != wanted:
+        problems.append(
+            f"max_new_tokens: the reference was generated with {used!r}, the record "
+            f"evaluated {wanted!r}"
+        )
+    if profile.reasoning:
+        untraced = sum("reasoning" not in record for record in records.values())
+        if untraced:
+            problems.append(
+                f"{untraced} of {len(records)} reference answers carry no thinking trace"
+            )
+    return problems
+
+
+def smoke_outcome(
+    summary: dict[str, Any], suite_size: int, stopped: str | None, profile: ServingProfile
+) -> str:
+    """The run's verdict: pass, incomplete, untraced or differs.
+
+    "untraced" is a thinking model's run in which not every answer's trace was
+    compared: it verifies nothing, whatever the answers did.
+    """
+    if summary["compared"] != suite_size or stopped is not None:
+        return "incomplete"
+    if profile.reasoning and summary["reasoning_compared"] != summary["compared"]:
+        return "untraced"
+    traces_match = summary["reasoning_matches"] == summary["reasoning_compared"]
+    if summary["exact_matches"] == summary["compared"] and traces_match:
+        return "pass"
+    return "differs"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,22 +189,39 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     setup_logging(args)
 
-    api_key = os.environ.get("HERMES_API_KEY")
+    profile = load_profile(args.record)
+    expected = load_expected_identity(args.record)
+    reference_payload = json.loads(args.reference.read_text(encoding="utf-8"))
+    reference_problems = check_reference(reference_payload, expected, profile)
+    if reference_problems:
+        print(f"\n✗ {args.reference} is not the {profile.display_name} evaluation to compare with:")
+        for problem in reference_problems:
+            print(f"    {problem}")
+        print("  Nothing was sent to the Space.\n")
+        return 1
+    key_name = profile.env("API_KEY")
+    api_key = os.environ.get(key_name)
     if not api_key:
-        raise ConfigError("HERMES_API_KEY is not set.", suggestions=["Use the Space's key."])
+        raise ConfigError(
+            f"{key_name} is not set.",
+            suggestions=["Use the Space's key; export it in this shell with `read -s`."],
+        )
     client = HermesClient(
         HermesClientSettings(
             enabled=True,
             provider="zerogpu",
             space=args.space,
             api_key=api_key,
-            hf_token=os.environ.get("HF_TOKEN") or None,
+            hf_token=_hf_token(),
             timeout=args.timeout,
             connect_wait=args.connect_wait,
+            key_header=profile.key_header,
+            env_prefix=profile.env_prefix,
+            contract_version=profile.contract_version,
         )
     )
 
-    print_header("Hermes on ZeroGPU — frozen-output smoke test")
+    print_header(f"{profile.short_name} on ZeroGPU — frozen-output smoke test")
 
     # 1. Identity, before spending any GPU time.
     started = time.perf_counter()
@@ -127,8 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     if not status.get("ok"):
         print(f"\n✗ The Space is not ready: {status.get('status')} — {status.get('message')}\n")
         return 1
-    expected = load_expected_identity(args.record)
-    problems = check_identity(status, expected)
+    problems = check_identity(status, expected, profile)
     versions = status.get("versions") or {}
     print(f"  space     : {args.space} (status answered in {status_wall:.1f}s)")
     print(f"  adapter   : {status['model'].get('adapter_sha256', '')[:16]}…")
@@ -150,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.only:
         wanted = {part.strip() for part in args.only.split(",") if part.strip()}
         suite = [e for e in suite if str(e.id) in wanted]
-    reference = load_reference(json.loads(args.reference.read_text(encoding="utf-8")))
+    reference = load_reference(reference_payload)
     print(f"\n  suite     : {len(suite)} example(s); reference records: {len(reference)}\n")
 
     records: list[dict[str, Any]] = []
@@ -191,6 +293,9 @@ def main(argv: list[str] | None = None) -> int:
 
         exact = record.get("exact", {})
         verdict = "match" if exact.get("match") else f"DIFFERS@{exact.get('first_difference')}"
+        trace = record.get("reasoning_exact")
+        if trace is not None and exact.get("match") and not trace.get("match"):
+            verdict = f"TRACE@{trace.get('first_difference')}"
         tokens = "=" if record.get("prompt_tokens_match") else "≠"
         cold = "cold" if record["diagnostics"].get("cold_start") else "warm"
         print(
@@ -211,9 +316,16 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     m = summary["measurements"]
+    version = "v0.0.6" if not profile.reasoning else profile.display_name
     print(
-        f"\n  exact     : {summary['exact_matches']}/{summary['compared']} reproduce the frozen v0.0.6 output"
+        f"\n  exact     : {summary['exact_matches']}/{summary['compared']} reproduce the frozen "
+        f"{version} output"
     )
+    if summary["reasoning_compared"]:
+        print(
+            f"  trace     : {summary['reasoning_matches']}/{summary['reasoning_compared']} "
+            "reproduce the frozen thinking trace"
+        )
     print(
         f"  prompt tok: {summary['prompt_token_matches']}/{summary['compared']} equal the evaluation's"
     )
@@ -247,15 +359,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"\n  written   : {args.output}")
 
-    if summary["empty"]:
+    if summary["empty"] and not profile.reasoning:
         print("\n✗ Some responses were empty. The Space is not serving correctly.\n")
         return 1
-    complete = summary["compared"] == len(suite) and stopped is None
-    if complete and summary["exact_matches"] == summary["compared"]:
-        print("\n✓ The ZeroGPU Space reproduces the frozen Hermes v0.0.6 outputs exactly.\n")
+    if summary["empty"]:
+        # A thinking model's answer is empty when its thinking never closed:
+        # model behaviour, judged against the evaluation like any other answer.
+        print(f"\n  ! {summary['empty']} answer(s) empty: the thinking never closed.")
+    outcome = smoke_outcome(summary, len(suite), stopped, profile)
+    if outcome == "pass":
+        print(
+            f"\n✓ The ZeroGPU Space reproduces the frozen {profile.display_name} outputs exactly.\n"
+        )
         return 0
-    if not complete:
+    if outcome == "incomplete":
         print("\n! Incomplete run. Finish it later with --only <remaining ids>.\n")
+        return 2
+    if outcome == "untraced":
+        print(
+            f"\n! Traces were compared for {summary['reasoning_compared']} of "
+            f"{summary['compared']} answers, so this run does not verify the Space.\n"
+        )
         return 2
     print(
         "\n! STOP: responses differ from the frozen evaluation. Do not retrain and do not\n"

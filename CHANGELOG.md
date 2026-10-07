@@ -32,8 +32,29 @@ suite — are marked **[research-affecting]**.
   - a refusal to train a split model unless the Trainer runs it model parallel;
   - per-GPU feasibility estimates (`--simulate-gpu NAME:GIB:CC:COUNT`);
   - the device map recorded in the manifest.
+- **Logos v0.0.2 serving** (built and tested, not deployed; `docs/deployment.md`):
+  - **Serving profiles** (`serving/profile.py`): a deployment record's optional
+    `serving` block names the model's secrets prefix, key header, Space folder,
+    baked base files and reply options. Without one, every value is Hermes'.
+  - `configs/deployment/kleos_logos_v002.yaml` and `deploy/zerogpu-space-logos/`:
+    a private ZeroGPU Space for Logos (`LOGOS_*`, `X-Logos-Key`, 1,024 tokens).
+  - **Reply contract version 2:** adds `reasoning`, the trace beside the answer.
+    A Logos request must start with a system message. Hermes stays on version 1.
+  - `scripts/fill_deployment_record.py`: completes a record from its frozen
+    training run, after checking the run is the one the record describes.
+  - The reference client serves either model (`from_env(prefix=, key_header=,
+    contract_version=)`); its own refusals name the model and carry its version.
+  - The smoke test compares each trace as well as each answer, passes a thinking
+    model only when every trace was compared, and refuses a reference from another
+    evaluation before it contacts the Space.
 
 ### Changed
+
+- **`finish_reason` in a served reply honours the backend's never-closed signal:**
+  "length" when the budget filled or the thinking never closed (L-F7). Hermes'
+  replies are unchanged.
+- **Upload, Space staging and the smoke test use the stored `hf auth login` token**
+  when `HF_TOKEN` is unset.
 
 - **Results schema 3.** Each record adds `finish_reason` and,
   when the model thought, its `reasoning`. `generation_stats` adds

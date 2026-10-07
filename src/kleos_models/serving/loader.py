@@ -85,8 +85,11 @@ class LoadedDeployment:
         """Generate one response under the frozen decoding contract."""
         config = self.generation_config(max_new_tokens)
         output = self.backend.generate(messages, config)
-        # The backend always reports "stop"; a truncated answer must say so.
-        output.finish_reason = finish_reason(output.completion_tokens, config.max_new_tokens)
+        # A plain backend always reports "stop"; a truncated answer must say so.
+        # A thinking backend reports "length" when its thinking never closed.
+        output.finish_reason = finish_reason(
+            output.completion_tokens, config.max_new_tokens, output.finish_reason
+        )
         return output
 
     # The three steps of generate(), exposed for hosts that bill GPU time

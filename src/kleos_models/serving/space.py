@@ -36,6 +36,7 @@ from kleos_models.serving.manifest import (
     DeploymentManifest,
     verify_package,
 )
+from kleos_models.serving.profile import profile_from_record
 
 _PINNED = re.compile(r"^[0-9a-f]{40}$")
 
@@ -187,7 +188,11 @@ def parse_front_matter(text: str) -> dict[str, Any]:
 
 
 def check_space_readme(readme: str, record: dict[str, Any]) -> list[str]:
-    """Problems with the Space configuration against the serving record."""
+    """Problems with the Space configuration against the serving record.
+
+    ``record`` is the record's ``deployment:`` mapping. The files to preload
+    are its serving profile's ``base_files``: Hermes' Nemo shards by default.
+    """
     config = parse_front_matter(readme)
     problems: list[str] = []
     for key, want in {**SPACE_SDK, "app_file": "app.py"}.items():
@@ -208,11 +213,12 @@ def check_space_readme(readme: str, record: dict[str, Any]) -> list[str]:
     if commit != record["revision"]:
         problems.append(f"preload commit is {commit!r}, the record pins {record['revision']!r}")
     listed = set(files.split(","))
-    if listed != BASE_PRELOAD_FILES:
+    expected = set(profile_from_record(record).base_files)
+    if listed != expected:
         problems.append(
             "preload files differ from the base checkpoint's shards and configs: "
-            f"extra {sorted(listed - BASE_PRELOAD_FILES)}, "
-            f"missing {sorted(BASE_PRELOAD_FILES - listed)}"
+            f"extra {sorted(listed - expected)}, "
+            f"missing {sorted(expected - listed)}"
         )
     return problems
 
@@ -254,6 +260,7 @@ def stage_space(
 
     record_text = Path(record_path).read_text(encoding="utf-8")
     record = (yaml.safe_load(record_text) or {}).get("deployment") or {}
+    record_name = profile_from_record(record).record_file
     readme = (source / "README.md").read_text(encoding="utf-8")
     problems = check_space_readme(readme, record)
     if problems:
@@ -267,11 +274,11 @@ def stage_space(
     shutil.copyfile(source / "app.py", out / "app.py")
     template = (source / REQUIREMENTS_TEMPLATE).read_text(encoding="utf-8")
     (out / "requirements.txt").write_text(render_requirements(template, commit), encoding="utf-8")
-    (out / RECORD_NAME).write_text(record_text, encoding="utf-8")
+    (out / record_name).write_text(record_text, encoding="utf-8")
 
     staged = sorted(out.iterdir())
     names = sorted(path.name for path in staged)
-    if names != sorted(STAGED_FILES):
+    if names != sorted((*STAGED_FILES[:-1], record_name)):
         raise ConfigError(f"Unexpected files staged: {names}")
     for path in staged:
         hits = scan_sensitive_content(path.read_text(encoding="utf-8"))

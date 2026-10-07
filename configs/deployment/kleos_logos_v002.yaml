@@ -1,0 +1,91 @@
+# ---------------------------------------------------------------------------
+# KLEOS Logos v0.0.2: what the deployment package and the Space must match.
+# Built from run kleos-v007-ministral314breasoning-run1 (H9: better than Hermes).
+# The `null` values (adapter hash, selection value, pad token, tokenizer file
+# hashes) are read from the downloaded training output by
+#   python scripts/fill_deployment_record.py --run <run dir> --record <this file> --write
+# Until then the package cannot be built: the identity check requires them.
+# ---------------------------------------------------------------------------
+deployment:
+  name: kleos-logos
+  version: v0.0.2
+  experiment_id: kleos-v007-ministral314breasoning-run1
+  base_model: mistralai/Ministral-3-14B-Reasoning-2512
+  revision: 51f9210f3cd20f3452a80d5819d15dc61cc50630
+  auto_class: AutoModelForCausalLM
+  adapter_path: ${env:KLEOS_ADAPTER_PATH:}
+  source_checkpoint: checkpoint-175
+  selection_metric: eval_loss
+  selection_value: null
+  adapter_sha256: null
+  trainable_parameters: 60948480
+  dataset_version: kleos-policy-v0.0.7
+  dataset_sha256: 5d02a5afd7be18e57f13b7d86fa8c31a1b008dd9e1927f4fa506356649699c48
+  split_strategy: format_holdout
+  training_config_hash: d1961583546b5761dd854cfe845838ca91a87ea6189d54be617de21085e8cfa9
+  tokenizer:
+    source: frozen_package
+    fix_mistral_regex: true
+    padding_side: right
+    pad_token: null
+    files_sha256:
+      tokenizer.json: null
+      tokenizer_config.json: null
+      chat_template.jinja: null
+  runtime:
+    quantization_mode: nf4
+    double_quant: true
+    compute_dtype: float16
+    attn_implementation: sdpa
+    max_seq_length: 1024
+  generation:
+    temperature: 0.0
+    top_p: 1.0
+    do_sample: false
+    max_new_tokens: 1024
+    repetition_penalty: 1.0
+  limits:
+    max_new_tokens: 1024
+    max_input_chars: 24000
+    max_messages: 64
+    request_timeout_seconds: 120
+  serving:
+    display_name: "Logos v0.0.2"
+    env_prefix: LOGOS
+    key_header: x-logos-key
+    space_dir: deploy/zerogpu-space-logos
+    record_file: logos_record.yaml
+    research_report: docs/experiments/kleos-v007-ministral314breasoning-run1-report.md
+    space_only: true
+    base_files:
+      - config.json
+      - generation_config.json
+      - model.safetensors.index.json
+      - model-00001-of-00006.safetensors
+      - model-00002-of-00006.safetensors
+      - model-00003-of-00006.safetensors
+      - model-00004-of-00006.safetensors
+      - model-00005-of-00006.safetensors
+      - model-00006-of-00006.safetensors
+    reply:
+      reasoning: true
+      require_system_message: true
+    gpu:
+      base_seconds: 10
+      tokens_per_second: 12
+      min_seconds: 15
+      max_seconds: 60
+  notes:
+    - "H9: better than Hermes on the 271 answerable benchmark items (+0.0409, cluster
+       95% CI +0.0040 to +0.0780); one training run; base and data changed together."
+    - "Always thinks: completions are [THINK]trace[/THINK]answer. The reply's `text`
+       is the answer and `reasoning` the trace; only the answer was graded."
+    - "Greedy decoding can loop: 6 of 349 evaluation answers repeated a phrase until
+       the 1,024-token budget. Served as evaluated; such a reply is marked `length`
+       or aborted at the GPU-time cap, and KLEOS falls back."
+    - "Outputs prose/bullets with a 'What decided it' line, NOT JSON (format_valid 0.0
+       on all 349 held-out examples, as for Hermes)."
+    - "Requests must start with a system message, as every training and benchmark
+       prompt did; without one the Reasoning template injects its own thinking prompt."
+    - "Base model is Apache-2.0. Attribution and a statement of modification are
+       required when redistributing a derivative."

@@ -11,9 +11,10 @@
 - **Full run report:** [experiments/kleos-v006-ministral314b-run1-report.md](experiments/kleos-v006-ministral314b-run1-report.md).
 - **Not yet done:** Logos is not deployed. Deployment comes only after a decision
   that Logos is worth serving beside Hermes (§7).
-- **Next: Logos v0.0.2** (2026-10-06): the Reasoning release of the same model,
+- **Logos v0.0.2** (2026-10-06): the Reasoning release of the same model,
   trained on kleos-policy-v0.0.7's policy-derived reasoning traces, on Kaggle's
-  2 × T4. Pre-registered as H9, not yet trained: [§11](#11-logos-v002-trained-to-think).
+  2 × T4. **H9: better than Hermes.** Answerable subset +0.0409, cluster 95% CI
+  +0.0040 to +0.0780: [§11](#11-logos-v002-trained-to-think).
 
 Logos is the deeper of the two KLEOS models. Hermes (Mistral-Nemo 12B) is frozen and
 deployed; nothing on this page changes it. This page records which base Logos uses
@@ -253,6 +254,13 @@ comparable with every v0.0.6 number. Logos v0.0.2 would train on it.
 ---
 
 ## 7. Deployment (later: only after Logos is validated)
+
+**Update, 2026-10-06: built for Logos v0.0.2, not v0.0.1.** One serving codebase
+now reads a per-model profile from the deployment record, and Logos gets its own
+private ZeroGPU Space, with the trace in a version 2 reply. Built and tested
+here, not yet deployed:
+[deployment.md](deployment.md#logos-v002-on-zerogpu). The rest of this section is
+the v0.0.1-era plan, kept as written.
 
 Nothing below is built yet. The model must first pass H8, and nothing spends
 ZeroGPU quota during development.
@@ -501,9 +509,10 @@ measures. They are recorded with the run they were found in:
 
 ## 11. Logos v0.0.2: trained to think
 
-**Status (2026-10-06): built and pre-registered as
-[H9](experiments.md#h9--does-a-logos-trained-to-think-beat-hermes). Not yet
-trained.** Logos v0.0.1 was not measurably better than Hermes (H8b). v0.0.2
+**Status (2026-10-06): trained and evaluated. [H9](experiments.md#h9-result--2026-10-06)
+is supported: Logos v0.0.2 is measurably better than Hermes.** Full report:
+[experiments/kleos-v007-ministral314breasoning-run1-report.md](experiments/kleos-v007-ministral314breasoning-run1-report.md).
+Not deployed yet. Logos v0.0.1 was not measurably better than Hermes (H8b). v0.0.2
 changes what Logos is trained to do: it writes out the policy's reasoning before
 it answers, and it learns the four decline labels v0.0.6 never taught.
 
@@ -577,6 +586,18 @@ Reproduce:
 `python scripts/plan_run.py --config configs/training/kleos_logos_v002.yaml --seq-length 736 --simulate-gpu T4:14.56:7.5:2`.
 
 The smoke run's per-GPU memory probe is the go/no-go gate, as in §4.
+
+**Measured on the run:**
+
+| | GPU 0 | GPU 1 |
+| --- | --- | --- |
+| Peak allocated | 4.75 GB | **10.16 GB** |
+| Spare after optimizer state | — | 4.0 GB |
+
+- The gate passed easily.
+- The total matched the estimate, but the split did not. `device_map: auto` put the
+  embedding and 9 layers on GPU 0, and 31 layers and `lm_head` on GPU 1
+  (finding L-F6).
 
 ### 11.4 Kaggle runbook
 
@@ -677,3 +698,31 @@ the secondary v0.0.1 vs v0.0.2 row.
   notebook prints both and refuses to start with less than 30 GB free in `/tmp`.
 - **Greedy decoding on a reasoning model** can loop until `max_new_tokens`. Such
   answers are counted, not hidden (H9, confounds).
+
+### 11.7 Result
+
+Measured on the run, with ESTIMATED figures from §11.4 alongside:
+
+- **Training:** 4.4 hours (about 4.9 with setup), one session. `checkpoint-175` was
+  selected (epoch 1.70, validation loss 0.0293).
+- **Evaluation:** 5.2 hours, 53.8 s per answer. Every answer thought first, and
+  none ran out of budget while thinking.
+- **[H9](experiments.md#h9-result--2026-10-06): better than Hermes.** Answerable
+  subset 0.8976 → 0.9385 (+0.0409, cluster 95% CI +0.0040 to +0.0780). Overall
+  0.8051 → 0.8596.
+- **Against Logos v0.0.1:** answerable +0.0577, should-decline +0.1131, and no task
+  regressed.
+- **Kaggle quota used:** about 10.5 GPU hours of the weekly 30.
+
+Three findings, L-F6 to L-F8, are recorded in the
+[run report](experiments/kleos-v007-ministral314breasoning-run1-report.md#10-findings):
+
+- **L-F6:** the two-GPU split was uneven.
+- **L-F7:** 6 answers looped after their trace until the token budget ran out, yet
+  `finish_reason` still reads "stop". **Resolved in serving:** a served reply
+  says "length" whenever the budget filled or the thinking never closed. The
+  evaluation code and its stored results are unchanged.
+- **L-F8:** the evaluation shows no progress while it runs.
+
+Its §11 lists what serving a thinking model still needs. That serving is now
+built: [deployment.md](deployment.md#logos-v002-on-zerogpu).

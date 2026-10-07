@@ -33,10 +33,13 @@ from typing import Any
 from kleos_models.logging_utils import get_logger
 from kleos_models.serving.status import (
     CONTRACT_VERSION,
+    REASONING_CONTRACT_VERSION,
+    SUPPORTED_CONTRACT_VERSIONS,
     HermesStatus,
     classify_exception,
     error_response,
     ok_response,
+    public_messages,
     status_for_http,
 )
 from kleos_models.serving.zerogpu import KEY_HEADER
@@ -80,10 +83,34 @@ class HermesClientSettings:
     #: The shared secret the Space (X-Hermes-Key) or service (Bearer) checks.
     api_key: str | None = None
     connect_wait: float = DEFAULT_CONNECT_WAIT_SECONDS
+    #: The header the Space reads the shared secret from: the model's own
+    #: (``x-hermes-key`` for Hermes, ``x-logos-key`` for Logos).
+    key_header: str = KEY_HEADER
+    #: The prefix of this model's settings, for naming them in problems().
+    env_prefix: str = "HERMES"
+    #: The model's reply contract: 1 for Hermes, 2 for a model that returns its
+    #: trace (Logos). The client's own refusals carry it too.
+    contract_version: int = CONTRACT_VERSION
+
+    @property
+    def model_name(self) -> str:
+        """The name this client's own refusals use: Hermes, Logos."""
+        return self.env_prefix.capitalize()
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> HermesClientSettings:
+    def from_env(
+        cls,
+        env: Mapping[str, str] | None = None,
+        *,
+        prefix: str = "HERMES",
+        key_header: str = KEY_HEADER,
+        contract_version: int = CONTRACT_VERSION,
+    ) -> HermesClientSettings:
+        """Read one model's settings, ``<prefix>_ENABLED`` and so on."""
         source = os.environ if env is None else env
+
+        def name(suffix: str) -> str:
+            return f"{prefix}_{suffix}"
 
         def number(name: str, cast: Callable[[str], Any], default: Any) -> Any:
             raw = (source.get(name) or "").strip()
@@ -94,29 +121,35 @@ class HermesClientSettings:
                 return default
 
         return cls(
-            enabled=(source.get(ENV_ENABLED) or "").strip().lower() in _TRUTHY,
-            provider=(source.get(ENV_PROVIDER) or "zerogpu").strip().lower(),
-            space=(source.get(ENV_SPACE) or "").strip() or None,
-            base_url=(source.get(ENV_BASE_URL) or "").strip().rstrip("/") or None,
-            timeout=number(ENV_TIMEOUT, float, DEFAULT_TIMEOUT_SECONDS),
-            max_output_tokens=number(ENV_MAX_OUTPUT_TOKENS, int, None),
-            hf_token=(source.get(ENV_HF_TOKEN) or "").strip() or None,
-            api_key=(source.get(ENV_API_KEY) or "").strip() or None,
+            enabled=(source.get(name("ENABLED")) or "").strip().lower() in _TRUTHY,
+            provider=(source.get(name("PROVIDER")) or "zerogpu").strip().lower(),
+            space=(source.get(name("SPACE")) or "").strip() or None,
+            base_url=(source.get(name("BASE_URL")) or "").strip().rstrip("/") or None,
+            timeout=number(name("TIMEOUT"), float, DEFAULT_TIMEOUT_SECONDS),
+            max_output_tokens=number(name("MAX_OUTPUT_TOKENS"), int, None),
+            hf_token=(source.get(name("HF_TOKEN")) or "").strip() or None,
+            api_key=(source.get(name("API_KEY")) or "").strip() or None,
+            key_header=key_header,
+            env_prefix=prefix,
+            contract_version=contract_version,
         )
 
     def problems(self) -> list[str]:
         """Configuration errors. Names only — never values."""
+        prefix = self.env_prefix
         found: list[str] = []
         if self.provider not in PROVIDERS:
-            found.append(f"{ENV_PROVIDER} must be one of {PROVIDERS}")
+            found.append(f"{prefix}_PROVIDER must be one of {PROVIDERS}")
         if self.provider == "zerogpu" and not self.space:
-            found.append(f"{ENV_SPACE} is not set")
+            found.append(f"{prefix}_SPACE is not set")
         if self.provider == "http" and not self.base_url:
-            found.append(f"{ENV_BASE_URL} is not set")
+            found.append(f"{prefix}_BASE_URL is not set")
         if not self.api_key:
-            found.append(f"{ENV_API_KEY} is not set")
+            found.append(f"{prefix}_API_KEY is not set")
         if self.timeout <= 0:
-            found.append(f"{ENV_TIMEOUT} must be positive")
+            found.append(f"{prefix}_TIMEOUT must be positive")
+        if self.contract_version not in SUPPORTED_CONTRACT_VERSIONS:
+            found.append(f"the contract version must be one of {SUPPORTED_CONTRACT_VERSIONS}")
         return found
 
 
@@ -151,24 +184,47 @@ def classify_call_error(error: BaseException) -> tuple[HermesStatus, int | None]
     return classify_exception(error)
 
 
-def validate_contract(result: Any, request_id: str, *, answer: bool = True) -> dict[str, Any]:
+def _carries_its_reasoning(result: dict[str, Any]) -> bool:
+    """A version 2 answer states its trace, even if there was none (``None``)."""
+    if result.get("contract_version") != REASONING_CONTRACT_VERSION:
+        return True
+    return "reasoning" in result and (
+        result["reasoning"] is None or isinstance(result["reasoning"], str)
+    )
+
+
+def validate_contract(
+    result: Any,
+    request_id: str,
+    *,
+    answer: bool = True,
+    messages: Mapping[HermesStatus, str] | None = None,
+    contract_version: int = CONTRACT_VERSION,
+) -> dict[str, Any]:
     """Pass a contract response through; replace anything else with model_error.
 
     A response KLEOS cannot interpret must not reach it as if it were one.
     ``answer`` requires a successful response to carry text (generate, not status).
+    ``messages`` and ``contract_version`` are the calling model's, for the refusal.
     """
     statuses = {status.value for status in HermesStatus}
     if (
         isinstance(result, dict)
-        and result.get("contract_version") == CONTRACT_VERSION
+        and result.get("contract_version") in SUPPORTED_CONTRACT_VERSIONS
         and result.get("status") in statuses
         and isinstance(result.get("ok"), bool)
         and result["ok"] is (result["status"] == HermesStatus.READY.value)
         and (not (answer and result["ok"]) or isinstance(result.get("text"), str))
+        and (not (answer and result["ok"]) or _carries_its_reasoning(result))
     ):
         return result
     logger.error("Hermes returned a response outside the contract (request_id=%s).", request_id)
-    return error_response(HermesStatus.MODEL_ERROR, request_id=request_id)
+    return error_response(
+        HermesStatus.MODEL_ERROR,
+        request_id=request_id,
+        messages=messages,
+        contract_version=contract_version,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +240,7 @@ def _gradio_client(settings: HermesClientSettings) -> Any:
         # False, not None: None would fall back to a token cached on the host
         # by `hf auth login`, silently charging someone else's quota.
         token=settings.hf_token or False,
-        headers={KEY_HEADER: settings.api_key or ""},
+        headers={settings.key_header: settings.api_key or ""},
         verbose=False,
         download_files=False,
     )
@@ -207,6 +263,9 @@ class HermesClient:
         self._space: Any | None = None
         self._connecting: Future[Any] | None = None
         self._executor: ThreadPoolExecutor | None = None
+        name = self.settings.model_name
+        # Only the refusals use these; "ready" replies come from the model's own server.
+        self._messages = public_messages(name, name)
         self._problems = self.settings.problems() if self.settings.enabled else []
         if self._problems:
             logger.error("Hermes is enabled but misconfigured: %s", "; ".join(self._problems))
@@ -249,9 +308,19 @@ class HermesClient:
 
     # -- shared --------------------------------------------------------------
 
+    def _refuse(self, status: HermesStatus, request_id: str, **kwargs: Any) -> dict[str, Any]:
+        """A refusal the client makes itself, in its model's words and contract version."""
+        return error_response(
+            status,
+            request_id=request_id,
+            messages=self._messages,
+            contract_version=self.settings.contract_version,
+            **kwargs,
+        )
+
     def _unavailable(self, request_id: str) -> dict[str, Any] | None:
         if not self.settings.enabled or self._problems:
-            return error_response(HermesStatus.DISABLED, request_id=request_id)
+            return self._refuse(HermesStatus.DISABLED, request_id)
         return None
 
     # -- zerogpu -------------------------------------------------------------
@@ -293,7 +362,7 @@ class HermesClient:
     ) -> dict[str, Any]:
         client, status = self._connect()
         if client is None:
-            return error_response(status, request_id=request_id)
+            return self._refuse(status, request_id)
         args = () if payload is None else (payload,)
         job = None
         try:
@@ -313,8 +382,14 @@ class HermesClient:
                 type(exc).__name__,
                 status.value,
             )
-            return error_response(status, request_id=request_id, retry_after_seconds=retry_after)
-        return validate_contract(result, request_id, answer=payload is not None)
+            return self._refuse(status, request_id, retry_after_seconds=retry_after)
+        return validate_contract(
+            result,
+            request_id,
+            answer=payload is not None,
+            messages=self._messages,
+            contract_version=self.settings.contract_version,
+        )
 
     # -- http ----------------------------------------------------------------
 
@@ -339,12 +414,17 @@ class HermesClient:
             logger.warning(
                 "Hermes service unreachable request_id=%s (%s)", request_id, type(exc).__name__
             )
-            return error_response(status, request_id=request_id)
+            return self._refuse(status, request_id)
 
         if response.status_code != 200:
-            return error_response(status_for_http(response.status_code), request_id=request_id)
+            return self._refuse(status_for_http(response.status_code), request_id)
         try:
             body = response.json()
+            # A thinking model's service sends its trace; the reply then says so
+            # (contract version 2). Without one it is the version 1 reply. A body
+            # that is not an object fails below, as a TypeError.
+            traced = isinstance(body, dict) and "reasoning" in body
+            reasoning = body.get("reasoning") if traced else None
             return ok_response(
                 text=str(body["text"]),
                 finish_reason=str(body["finish_reason"]),
@@ -352,10 +432,12 @@ class HermesClient:
                 completion_tokens=int(body["completion_tokens"]),
                 model=dict(body["model"]),
                 request_id=str(body.get("request_id") or request_id),
+                reasoning=None if reasoning is None else str(reasoning),
+                contract_version=REASONING_CONTRACT_VERSION if traced else CONTRACT_VERSION,
             )
         except (ValueError, KeyError, TypeError):
             logger.error("Hermes service returned an unreadable body (request_id=%s).", request_id)
-            return error_response(HermesStatus.MODEL_ERROR, request_id=request_id)
+            return self._refuse(HermesStatus.MODEL_ERROR, request_id)
 
     def _get_http_ready(self, request_id: str) -> dict[str, Any]:
         try:
@@ -364,13 +446,13 @@ class HermesClient:
                 headers={"Authorization": f"Bearer {self.settings.api_key}"},
             )
         except Exception:
-            return error_response(HermesStatus.DISABLED, request_id=request_id)
+            return self._refuse(HermesStatus.DISABLED, request_id)
         if response.status_code != 200:
-            return error_response(status_for_http(response.status_code), request_id=request_id)
+            return self._refuse(status_for_http(response.status_code), request_id)
         try:
             body = dict(response.json())
         except (ValueError, TypeError):
-            return error_response(HermesStatus.MODEL_ERROR, request_id=request_id)
+            return self._refuse(HermesStatus.MODEL_ERROR, request_id)
         return {
             "contract_version": CONTRACT_VERSION,
             "ok": True,

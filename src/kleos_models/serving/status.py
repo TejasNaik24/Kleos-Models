@@ -15,11 +15,17 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from enum import Enum
 from typing import Any
 
 #: Bumped only on a breaking change to the response shape.
 CONTRACT_VERSION = 1
+#: A reply that also carries the model's thinking trace (`reasoning`). Served by
+#: a thinking model such as Logos v0.0.2; version 1 replies never carry it.
+REASONING_CONTRACT_VERSION = 2
+#: What a client accepts.
+SUPPORTED_CONTRACT_VERSIONS = (CONTRACT_VERSION, REASONING_CONTRACT_VERSION)
 
 
 class HermesStatus(str, Enum):
@@ -43,21 +49,31 @@ class HermesStatus(str, Enum):
     DISABLED = "disabled"
 
 
-#: Messages safe to show a KLEOS user. No provider names, quotas, paths or ids.
-PUBLIC_MESSAGES: dict[HermesStatus, str] = {
-    HermesStatus.READY: "Hermes v0.0.6 is available.",
-    HermesStatus.STARTING: "Hermes is starting a free GPU worker.",
-    HermesStatus.QUOTA_EXHAUSTED: (
-        "Hermes' free GPU quota is currently exhausted. Please try again later."
-    ),
-    HermesStatus.QUEUE_UNAVAILABLE: (
-        "Hermes is temporarily busy. Try again later or continue with the default model."
-    ),
-    HermesStatus.MODEL_ERROR: "Hermes could not generate a response.",
-    HermesStatus.INVALID_REQUEST: "The request to Hermes was not valid.",
-    HermesStatus.UNAUTHORIZED: "unauthorized",
-    HermesStatus.DISABLED: "Hermes is currently unavailable.",
-}
+def public_messages(short_name: str, display_name: str) -> dict[HermesStatus, str]:
+    """Messages safe to show a KLEOS user, for one model.
+
+    No provider names, quotas, paths or ids. ``short_name`` is "Hermes" or
+    "Logos"; ``display_name`` carries the version ("Hermes v0.0.6").
+    """
+    possessive = short_name + ("'" if short_name.endswith("s") else "'s")
+    return {
+        HermesStatus.READY: f"{display_name} is available.",
+        HermesStatus.STARTING: f"{short_name} is starting a free GPU worker.",
+        HermesStatus.QUOTA_EXHAUSTED: (
+            f"{possessive} free GPU quota is currently exhausted. Please try again later."
+        ),
+        HermesStatus.QUEUE_UNAVAILABLE: (
+            f"{short_name} is temporarily busy. Try again later or continue with the default model."
+        ),
+        HermesStatus.MODEL_ERROR: f"{short_name} could not generate a response.",
+        HermesStatus.INVALID_REQUEST: f"The request to {short_name} was not valid.",
+        HermesStatus.UNAUTHORIZED: "unauthorized",
+        HermesStatus.DISABLED: f"{short_name} is currently unavailable.",
+    }
+
+
+#: Hermes v0.0.6's messages, exactly as they have always been.
+PUBLIC_MESSAGES: dict[HermesStatus, str] = public_messages("Hermes", "Hermes v0.0.6")
 
 #: Statuses where the same request may succeed later without changes.
 RETRYABLE = frozenset(
@@ -75,31 +91,52 @@ def ok_response(
     request_id: str,
     timings: dict[str, Any] | None = None,
     diagnostics: dict[str, Any] | None = None,
+    reasoning: str | None = None,
+    contract_version: int = CONTRACT_VERSION,
 ) -> dict[str, Any]:
-    """A successful generation, in the contract's shape."""
-    return {
-        "contract_version": CONTRACT_VERSION,
+    """A successful generation, in the contract's shape.
+
+    Version 2 adds ``reasoning``: the trace a thinking model wrote before its
+    answer, or ``None`` when it wrote none. ``text`` is always the answer alone.
+    A version 1 reply has no ``reasoning`` key at all.
+    """
+    reply: dict[str, Any] = {
+        "contract_version": contract_version,
         "ok": True,
         "status": HermesStatus.READY.value,
         "text": text,
-        "finish_reason": finish_reason,
-        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
-        "model": model,
-        "request_id": request_id,
-        "timings": timings or {},
-        "diagnostics": diagnostics or {},
     }
+    if contract_version == REASONING_CONTRACT_VERSION:
+        reply["reasoning"] = reasoning
+    reply.update(
+        {
+            "finish_reason": finish_reason,
+            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+            "model": model,
+            "request_id": request_id,
+            "timings": timings or {},
+            "diagnostics": diagnostics or {},
+        }
+    )
+    return reply
 
 
-def finish_reason(completion_tokens: int, max_new_tokens: int) -> str:
-    """``"length"`` when the completion used its whole token budget, else ``"stop"``.
+def finish_reason(completion_tokens: int, max_new_tokens: int, backend_reason: str = "stop") -> str:
+    """``"length"`` when the completion was cut off, else ``"stop"``.
 
     Decoding is greedy with no stop strings, so generation ends either on the
     end-of-sequence token or at the budget. A completion that fills the budget
     was almost certainly cut off — for Hermes that usually means unfinished
     JSON, which KLEOS should treat as incomplete rather than parse.
+
+    ``backend_reason`` is the backend's own verdict. A thinking model's
+    backend says ``"length"`` when the thinking never closed: there is no
+    answer, even if the budget was not filled. Hermes' backend always says
+    ``"stop"``, so for Hermes this is the budget rule alone.
     """
-    return "length" if completion_tokens >= max_new_tokens else "stop"
+    if completion_tokens >= max_new_tokens or backend_reason == "length":
+        return "length"
+    return "stop"
 
 
 def error_response(
@@ -108,6 +145,8 @@ def error_response(
     request_id: str | None,
     message: str | None = None,
     retry_after_seconds: int | None = None,
+    messages: Mapping[HermesStatus, str] | None = None,
+    contract_version: int = CONTRACT_VERSION,
 ) -> dict[str, Any]:
     """A non-answer, in the contract's shape.
 
@@ -117,10 +156,10 @@ def error_response(
     if status is HermesStatus.READY:
         raise ValueError("error_response cannot carry the ready status")
     return {
-        "contract_version": CONTRACT_VERSION,
+        "contract_version": contract_version,
         "ok": False,
         "status": status.value,
-        "message": message or PUBLIC_MESSAGES[status],
+        "message": message or (messages or PUBLIC_MESSAGES)[status],
         "retryable": status in RETRYABLE,
         "retry_after_seconds": retry_after_seconds,
         "request_id": request_id,

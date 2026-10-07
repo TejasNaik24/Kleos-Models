@@ -616,7 +616,8 @@ runbook: [logos.md](logos.md#11-logos-v002-trained-to-think).
 | **Benchmark** | The H8 file, unchanged: sha256 `a11ffad75f5147f9d0ddad7bad4bfc073dc730df2b19173ff642774233b4b266`; greedy decoding, seed 42, grader `kleos_policy`, **`max_new_tokens` 1024**. Each completion is split at `[/THINK]` (token 35) and only the answer after it is graded |
 | **Hardware** | Kaggle, 2 × Tesla T4, the model's layers spread over both by `device_map: auto` (model parallel), through [the Kaggle notebooks](../notebooks/kaggle/). The dataset is copied to `/tmp`, which Kaggle never saves |
 | **Code** | The commit that adds this entry. The run's manifest records the commit it ran; a later code change must be declared as a deviation |
-| **Status** | **Pre-registered; not run** |
+| **Status** | Trained 2026-10-06 on Kaggle (4.4 h, one session); best checkpoint `checkpoint-175` (`eval_loss` 0.0293). Evaluated 2026-10-06. **H9: better** (below) |
+| **Full report** | [experiments/kleos-v007-ministral314breasoning-run1-report.md](experiments/kleos-v007-ministral314breasoning-run1-report.md) |
 
 ### H9 — Is Logos v0.0.2 better than Hermes? (primary)
 
@@ -705,6 +706,68 @@ v0.0.1's, value for value (`tests/test_logos_v002_config.py`). What differs:
 **What would falsify H9:** the interval entirely below zero, or entirely within
 ±0.02.
 
+### H9 result — 2026-10-06
+
+**Better.** On the 271 answerable items, Logos v0.0.2 − Hermes = **+0.0409**:
+
+| Arm (answerable subset) | Mean | Cluster 95% CI |
+| --- | --: | --- |
+| Hermes `arm2_finetuned` (annotated) | 0.8976 | 0.8634–0.9301 |
+| Logos v0.0.2 `arm2_finetuned` | 0.9385 | 0.9083–0.9663 |
+| **Logos v0.0.2 − Hermes, paired** | **+0.0409** | **+0.0040 to +0.0780** (61 groups, p = 0.031) |
+
+The interval lies entirely above zero, so by the pre-registered rule H9 is
+**supported**: Logos v0.0.2 makes better KLEOS decisions than Hermes as shipped.
+
+**How to read it:**
+
+- **The gain is real but its size is uncertain.** The lower end, +0.004, is close
+  to zero, and each model is a single training run, so training noise is not in
+  the interval.
+- **It does not say which change did it.** The base model and the data changed
+  together, and Hermes was not retrained on v0.0.7.
+
+**Secondary rows. They are reported, not decisive, and the seven tasks are not
+corrected for multiple comparisons.**
+
+- **Should-decline subset** (78 items, 17 groups): 0.4835 → 0.5855 (+0.1020).
+  Cluster CI −0.0018 to +0.2062: not significant by groups.
+- **Per task, by groups:**
+  - **improved:** `notification_prioritization` +0.1324 (p < 0.0005),
+    `recommendation_generation` +0.0893 (p = 0.002) and
+    `memory_conflict_resolution` +0.0737 (p = 0.048);
+  - **not significant:** `tool_routing` +0.0330, `workspace_reasoning` +0.0172 and
+    `mission_control_briefing` −0.0153;
+  - **not estimable by groups:** `context_prioritization` (8 items).
+- **Logos v0.0.1 → v0.0.2** (same benchmark; also changes the base release and
+  the data together):
+  - answerable +0.0577 (cluster CI +0.0234 to +0.0952);
+  - should-decline +0.1131 (+0.0028 to +0.2296, p = 0.046);
+  - no task regressed.
+- **Thinking:**
+  - 349 of 349 answers carried a trace, averaging 549 characters;
+  - none ran out of budget while thinking (`thinking_truncated` 0);
+  - 6 answers looped after the trace until the 1,024-token budget ran out. They
+    were scored as given (L-F7 in the report).
+- **Consistency by `group_id`,** oracle 1.000: 0.769 → 0.833 over all groups, and
+  0.770 → 0.869 over the answerable groups.
+- **`format_valid`:** 0.0 for all three models, unchanged (D2, D6).
+- **Overall means** (descriptive): Hermes 0.8051, Logos v0.0.1 0.7896, Logos
+  v0.0.2 0.8596.
+
+**Provenance:**
+
+- **Logos v0.0.2's side:**
+  - one uninterrupted pass at `a17ace7`, the pre-registration commit, with 0
+    generations replayed;
+  - `config_hash` matched before training;
+  - the results file's `benchmark_fingerprint` was verified after download.
+- **Hermes' side:** its annotated results, read-only (sha256 `99fdcdc3…`).
+- **Both:** the same benchmark, sha256 `a11ffad7…`.
+- **Reports:** `outputs/report_h9_hermes_vs_logos_v002/summary.md` and
+  `outputs/report_h9_logos_v001_vs_v002/summary.md`.
+- **Deviations:** D12 and D13.
+
 ---
 
 ## Fixed experimental protocol
@@ -768,6 +831,7 @@ Append one row per completed experiment. **Include failed and negative runs.**
 | 2026-09-29 | H8b | **KLEOS Logos v0.0.1** vs **KLEOS Hermes**, both `arm2_finetuned` | kleos-policy-v0.0.6 (`3cc9a744…`) | `18008c6716a58afc` (Logos) | **Inconclusive.** Answerable subset: Logos − Hermes −0.0168, cluster 95% CI −0.0546 to +0.0177 (271 items, 61 groups). Neither better, worse nor equivalent at ±0.02. | `outputs/report_h8b_hermes_vs_logos/summary.md`; [H8b result](#h8b-result--2026-09-29) |
 | 2026-10-01 | H8a | Ministral-3-14B-Instruct-2512-BF16, text tower (QLoRA r=16) — **KLEOS Logos v0.0.1**, `arm1_base_orchestrated` vs `arm2_finetuned` | kleos-policy-v0.0.6 (`3cc9a744…`) | `18008c6716a58afc` | **Supported.** 5/7 tasks improved by group intervals; none regressed. `recommendation_generation` +0.0643 n.s.; `context_prioritization` not estimable by groups (8 items). Overall 0.4469 → 0.7896; answerable +0.3952 (cluster CI +0.3443 to +0.4438). | `outputs/kleos-v006-ministral314b-run1/report_logos_v001/summary.md`; [H8a result](#h8a-result--2026-10-01) |
 | 2026-10-06 | H9 | Ministral-3-14B-Reasoning-2512, text tower (QLoRA r=16) — **KLEOS Logos v0.0.2** | kleos-policy-v0.0.7 (`b53afa42…`) | `d1961583546b5761` | **Pre-registered; not run.** | [H9](#h9--does-a-logos-trained-to-think-beat-hermes) |
+| 2026-10-06 | H9 | **KLEOS Logos v0.0.2** vs **KLEOS Hermes**, both `arm2_finetuned` | kleos-policy-v0.0.7 (`b53afa42…`) | `d1961583546b5761` (Logos) | **Supported: better.** Answerable subset: Logos − Hermes +0.0409, cluster 95% CI +0.0040 to +0.0780 (271 items, 61 groups). Overall 0.8051 → 0.8596. | `outputs/report_h9_hermes_vs_logos_v002/summary.md`; [H9 result](#h9-result--2026-10-06); [report](experiments/kleos-v007-ministral314breasoning-run1-report.md) |
 
 Run provenance: experiment id `kleos-v006-ministral8b-run1`, seed 42, 3 epochs
 (309 steps, effective batch 8, `max_seq_length` 1024), best checkpoint selected
@@ -818,6 +882,8 @@ happens.
 | 2026-09-27 | **D9.** Logos training ran across four Colab sessions between 2026-09-24 and 2026-09-27, and resumed twice. Session 1 was disconnected after the step-125 evaluation, leaving `checkpoint-125` without weights; `validate_checkpoint` rejected it, so session 2 resumed from `checkpoint-100`. Session 2 hit the Google Drive storage quota partway through, and the free GPU usage limit ended it between steps 250 and 275. Session 3 made no progress. Session 4 resumed from `checkpoint-250` and finished. | Free-tier Colab limits. Both resume points were complete: `checkpoint-100` by its size (368 MB, a full checkpoint), and `checkpoint-250` file by file (weights, optimizer, scheduler, RNG and scaler state). **No effect on the selected adapter:** `checkpoint-175` was written in session 2. The final validation pass on the loaded best weights reproduced its `eval_loss` (0.0382), and the exported adapter is byte-identical to it (sha256 `f3e8dcdc…70a7`). `train_loss` in `metrics.json` (0.0007) is a resume artifact: transformers divides the last session's loss sum by all 309 steps. Do not quote it. `training.log` may lack killed sessions' lines (L-F3); `events.jsonl` does not. |
 | 2026-09-29 | **D10.** Logos `arm2_finetuned` was evaluated in three sessions. The generations of the first two never reached Drive; the third generated all 349 in one pass (`resume`: 0 replayed, 349 new). | Finding L-F3 ([logos.md](logos.md#10-findings-from-this-phase)): the partial file was held open, and Colab's Drive mount uploads only closed files. **No effect on the result**, which is a single uninterrupted run at the pre-registered commit. |
 | 2026-09-29 | **D11. Declared before it runs:** Logos `arm1_base_orchestrated` will run at a commit later than H8's, which contains the L-F3 fix. The fix opens and closes the partial file for every record instead of holding one handle for the run. | An arm takes 2–3 hours, longer than a free session reliably lasts, and without the fix a killed session loses all its work. The change touches file handling only: generation, prompts, grading, configs and the benchmark are unchanged. The arm's resume identity records the commit it ran. **Done as declared, 2026-10-01:** the arm ran at `ed5a987` (clean), and the second of its two sessions resumed 172 recorded generations (L-F3 confirmed fixed). |
+| 2026-10-06 | **D12.** Both Kaggle notebooks ran on Kaggle's "Latest Container Image"; the runbook's "Pin to original environment" was not set. | The setting matters only when a run is resumed in a later version, which neither was: training finished in one session and the evaluation in one pass (0 replayed). The training libraries are installed at pinned versions over the image either way; Kaggle's torch is recorded in the run's `environment.txt`. **No effect on the result.** |
+| 2026-10-06 | **D13.** The training run is Version 2 of its Kaggle notebook. Version 1 stopped in its first cell, because `COMMIT` still held its placeholder. The evaluation result is Version 2 of its notebook. | Version 1 ran no code beyond the guard that refused it: no data was copied and no model was loaded. Both recorded runs used commit `a17ace7`, the pre-registration commit, and the training run's `config_hash` matched before training. **No effect on the result.** |
 
 ---
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Upload a verified Hermes deployment package to a PRIVATE Hugging Face repo.
+"""Upload a verified deployment package to a PRIVATE Hugging Face repo.
 
-The ZeroGPU Space downloads the package from there at startup, pinned to the
-commit this script prints. Run it where the package is (Colab, next to the
-Drive run), with a write token in HF_TOKEN.
+The model's ZeroGPU Space downloads the package from there at startup, pinned to
+the commit this script prints. ``--deployment-config`` names the model (Hermes'
+record by default). Run it where the package is, with a write token: HF_TOKEN
+if it is set, otherwise the token stored by ``hf auth login``.
 
 Refuses, before anything leaves the machine:
 
@@ -38,9 +39,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _cli import REPO_ROOT, add_common_arguments, print_header, run, setup_logging
 from kleos_models.errors import ConfigError
 from kleos_models.serving.manifest import load_expected_identity, verify_identity
+from kleos_models.serving.profile import load_profile
 from kleos_models.serving.space import RemoteFile, compare_remote_files, package_upload_files
 
 DEFAULT_RECORD = REPO_ROOT / "configs" / "deployment" / "kleos_hermes_v006.yaml"
+
+
+def resolve_token() -> str:
+    """A write token: HF_TOKEN if set, else the one ``hf auth login`` stored.
+
+    Never read from a file in this repository or a command-line argument.
+    """
+    from huggingface_hub import get_token
+
+    token = os.environ.get("HF_TOKEN") or get_token()
+    if not token:
+        raise ConfigError(
+            "No Hugging Face token: HF_TOKEN is not set and none is stored.",
+            suggestions=[
+                "Log in once with `hf auth login`, using a token with write access. "
+                "Never paste a token into a notebook cell, a file or a command line.",
+            ],
+        )
+    return str(token)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,7 +84,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     setup_logging(args)
 
-    print_header("Hermes deployment package → private Hugging Face repository")
+    profile = load_profile(args.deployment_config)
+    print_header(f"{profile.short_name} deployment package → private Hugging Face repository")
 
     manifest, files = package_upload_files(args.package)
     verify_identity(manifest, load_expected_identity(args.deployment_config))
@@ -80,15 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n✓ Dry run: the package verifies and is safe to upload. Nothing was sent.\n")
         return 0
 
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        raise ConfigError(
-            "HF_TOKEN is not set.",
-            suggestions=[
-                "Use a token with write access to your account, from the environment "
-                "or a Colab secret. Never paste it into a notebook cell or a file.",
-            ],
-        )
+    token = resolve_token()
 
     from huggingface_hub import HfApi
     from huggingface_hub.errors import RepositoryNotFoundError
@@ -107,7 +121,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n  created  : {args.repo} (private)")
     if info.private is not True:
         raise ConfigError(
-            f"{args.repo} is not private. Refusing to upload the Hermes package to it.",
+            f"{args.repo} is not private. Refusing to upload the {profile.short_name} "
+            "package to it.",
             suggestions=["Make it private in its settings, or choose another name."],
         )
 
@@ -146,8 +161,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  verified : {len(files)} file(s) at {revision[:12]} match the local package")
 
     print("\n  Set these as Space secrets (Settings → Variables and secrets):")
-    print(f"    HERMES_PACKAGE_REPO     = {args.repo}")
-    print(f"    HERMES_PACKAGE_REVISION = {revision}")
+    repo_name, revision_name = profile.env("PACKAGE_REPO"), profile.env("PACKAGE_REVISION")
+    width = max(len(repo_name), len(revision_name))
+    print(f"    {repo_name:<{width}} = {args.repo}")
+    print(f"    {revision_name:<{width}} = {revision}")
     print("\n✓ Package uploaded to a private repository and verified remotely.\n")
     return 0
 

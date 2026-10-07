@@ -59,6 +59,7 @@ from kleos_models.serving.manifest import (
     verify_identity,
     verify_package,
 )
+from kleos_models.serving.profile import ServingProfile, load_profile
 
 #: Copied into the package. Anything else in the run directory stays behind:
 #: checkpoints, logs, events and the dataset are not deployment artifacts.
@@ -118,6 +119,32 @@ evidence in `docs/experiments/kleos-v006-mistralnemo12b-run1-report.md`.
 """
 
 
+#: The Serve section and report link of DEPLOYMENT_README, which are Hermes'
+#: (Docker service, v0.0.6 report). A Space-only model replaces both.
+_HERMES_SERVE = """\
+```bash
+export HERMES_PACKAGE_DIR=$(pwd)
+export HERMES_API_KEY=...          # shared secret; never commit one
+python scripts/serve_hermes.py --host 127.0.0.1 --port 8000
+```
+"""
+_HERMES_REPORT = "docs/experiments/kleos-v006-mistralnemo12b-run1-report.md"
+
+
+def deployment_readme(fields: dict[str, Any], profile: ServingProfile) -> str:
+    """The package's README. Hermes' is rendered exactly as it always was."""
+    text = DEPLOYMENT_README.format(**fields)
+    if not profile.space_only:
+        return text
+    if _HERMES_SERVE not in text or _HERMES_REPORT not in text:
+        raise KleosError("The package README template changed; update deployment_readme().")
+    space = (
+        f"Served from its private ZeroGPU Space only; see `docs/deployment.md`, "
+        f'"{profile.display_name} on ZeroGPU".\n'
+    )
+    return text.replace(_HERMES_SERVE, space).replace(_HERMES_REPORT, profile.research_report)
+
+
 def _require(path: Path, what: str) -> Path:
     if not path.exists():
         raise KleosError(
@@ -173,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     print_header("Build deployment package")
 
     spec = yaml.safe_load(args.deployment_config.read_text(encoding="utf-8"))["deployment"]
+    profile = load_profile(args.deployment_config)
     model_config = load_model_config(args.model_config)
 
     # The two records must already agree; tests assert this too, but a build is
@@ -206,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     expected_sha = spec.get("adapter_sha256")
     if expected_sha and actual_sha != expected_sha:
         raise KleosError(
-            "The adapter in this run is not the frozen Hermes adapter.",
+            f"The adapter in this run is not the frozen {profile.display_name} adapter.",
             details={"expected": expected_sha, "actual": actual_sha},
             suggestions=[
                 "Point --run at the run that produced the frozen artifact.",
@@ -311,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
         selection_value=spec.get("selection_value"),
         generation=generation,
         limits=limits,
-        research_report="docs/experiments/kleos-v006-mistralnemo12b-run1-report.md",
+        research_report=profile.research_report,
         known_limitations=list(spec.get("notes") or []),
         notes=[
             "Deployment artifact. The research artifact is unchanged and remains "
@@ -326,19 +354,22 @@ def main(argv: list[str] | None = None) -> int:
     print(f"    + {manifest_path.name}")
 
     (package / DEPLOYMENT_DIRNAME / "README.md").write_text(
-        DEPLOYMENT_README.format(
-            model_name=manifest.model_name,
-            model_version=manifest.model_version,
-            experiment_id=manifest.adapter.experiment_id,
-            base_model=manifest.base_model,
-            base_revision=manifest.base_revision,
-            adapter_sha256=manifest.adapter.weights_sha256,
-            source_checkpoint=manifest.adapter.source_checkpoint,
-            selection_metric=manifest.adapter.selection_metric,
-            selection_value=manifest.adapter.selection_value,
-            dataset_version=manifest.dataset.version,
-            training_config_hash=manifest.training_config_hash,
-            fix_mistral_regex=manifest.tokenizer.fix_mistral_regex,
+        deployment_readme(
+            {
+                "model_name": manifest.model_name,
+                "model_version": manifest.model_version,
+                "experiment_id": manifest.adapter.experiment_id,
+                "base_model": manifest.base_model,
+                "base_revision": manifest.base_revision,
+                "adapter_sha256": manifest.adapter.weights_sha256,
+                "source_checkpoint": manifest.adapter.source_checkpoint,
+                "selection_metric": manifest.adapter.selection_metric,
+                "selection_value": manifest.adapter.selection_value,
+                "dataset_version": manifest.dataset.version,
+                "training_config_hash": manifest.training_config_hash,
+                "fix_mistral_regex": manifest.tokenizer.fix_mistral_regex,
+            },
+            profile,
         ),
         encoding="utf-8",
     )
@@ -352,7 +383,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  base    : {manifest.base_model}@{manifest.base_revision[:12]}…")
     print(f"  adapter : {manifest.adapter.weights_sha256[:16]}…")
     print("\n  The research run was not modified.")
-    print(f"\n  Next: python scripts/hermes_smoke.py --package {package}\n")
+    if profile.space_only:
+        print(
+            "\n  Next: python scripts/upload_deployment_package.py "
+            f"--package {package} --repo <owner>/<name> "
+            f"--deployment-config {args.deployment_config} --dry-run\n"
+        )
+    else:
+        print(f"\n  Next: python scripts/hermes_smoke.py --package {package}\n")
     return 0
 
 

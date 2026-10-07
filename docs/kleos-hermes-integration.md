@@ -318,3 +318,100 @@ carrying the load.
 - Inject a fake transport for the other statuses, as
   `tests/test_hermes_client.py` does:
   `HermesClient(settings, space_client_factory=lambda _: fake)`.
+
+---
+
+## Integrating Logos (contract v2)
+
+KLEOS Logos v0.0.2 is the second model: Ministral 3 14B Reasoning, fine-tuned to
+think before it answers, and measured better than Hermes on the answerable
+benchmark items ([H9](experiments.md#h9-result--2026-10-06)). It runs in its own
+private ZeroGPU Space ([deployment.md](deployment.md#logos-v002-on-zerogpu)) and
+speaks the same contract with one addition. Everything above applies, with
+these differences.
+
+**Configuration.** The same variables with the `LOGOS_` prefix: `LOGOS_ENABLED`,
+`LOGOS_PROVIDER` (`zerogpu` only: there is no Docker service for Logos),
+`LOGOS_SPACE`, `LOGOS_TIMEOUT`, `LOGOS_MAX_OUTPUT_TOKENS`, `LOGOS_HF_TOKEN`,
+`LOGOS_API_KEY`. The key is sent as `X-Logos-Key`. The reference client takes
+the prefix, the header and the contract version, so that its own refusals
+(`disabled`, `starting`, …) name Logos and carry version 2:
+
+```python
+from kleos_models.serving.client import HermesClient, HermesClientSettings
+
+logos = HermesClient(
+    HermesClientSettings.from_env(prefix="LOGOS", key_header="x-logos-key", contract_version=2)
+)
+```
+
+Keep `LOGOS_TIMEOUT` at 120 s or more (the default is 120): one call may hold
+the GPU for up to 60 s, plus queueing and waking.
+
+**Request.**
+
+- **The first message must be a system message.** Every training and benchmark
+  prompt had one. Without it the Reasoning template adds its own default
+  thinking prompt, which is not the model that was evaluated, so the Space
+  answers `invalid_request` before any GPU work.
+- **Leave `max_new_tokens` out.** The ceiling is 1,024, as evaluated: the trace
+  and the answer share it, and an evaluated answer used 293 tokens on average
+  (413 at the 95th percentile). A lower budget cuts more answers.
+- Send earlier assistant turns as their answer (`text`) only. A message has no
+  field for a trace.
+
+**Response.** `contract_version` is 2, on success and on refusals, and a success
+carries `reasoning`:
+
+```json
+{
+  "contract_version": 2,
+  "ok": true,
+  "status": "ready",
+  "text": "...",
+  "reasoning": "...",
+  "finish_reason": "stop",
+  "usage": {"prompt_tokens": 655, "completion_tokens": 284},
+  "model": {
+    "name": "kleos-logos",
+    "version": "v0.0.2",
+    "adapter_sha256": "<filled in from the training run before the package is built>",
+    "base_model": "mistralai/Ministral-3-14B-Reasoning-2512",
+    "base_revision": "51f9210f3cd20f3452a80d5819d15dc61cc50630"
+  },
+  "request_id": "kleos-7f3a..."
+}
+```
+
+(`timings` and `diagnostics` as for Hermes; the token counts are illustrative.)
+
+- **`text` is the answer, and the only part that was graded.** Like Hermes', it
+  is prose, not JSON: `format_valid` was 0.0000 for every model in H9.
+- **`reasoning` is the trace the model wrote before answering,** or `null` when
+  there was none. Show it, if at all, apart from the answer: KLEOS plans a
+  collapsible "How Logos decided" disclosure. Never merge it into the answer,
+  and never present it as a checked explanation: it is the model's working, and
+  nothing scored it.
+- **`finish_reason` is `"length"`** when the 1,024-token budget filled or the
+  thinking never closed. In the second case `text` is empty. Either way the
+  answer is cut: fall back, as for a non-`ready` status. In the evaluation, 6 of
+  349 answers looped after their trace until the budget ran out.
+- **A looping answer may instead exceed the 60 s GPU cap.** ZeroGPU aborts it
+  and the reply is `model_error`: fall back.
+- **The trace is user content.** Log neither it nor the answer, as for Hermes:
+  `request_id` and `status` only.
+
+**Messages.** The refusal `message` and the frontend copy name Logos instead of
+Hermes ("Logos is starting a free GPU worker.", "Logos' free GPU quota is
+currently exhausted. Please try again later.", and so on).
+
+**Capacity** (ESTIMATED until the smoke test measures it):
+
+- Each call reserves 60 s of GPU, and ZeroGPU admits it only while 1.5 × that,
+  90 s, is left of the calling account's 300 s a day. At about 30 GPU seconds
+  per answer, that is **about 7 Logos answers a day** per `LOGOS_HF_TOKEN`
+  account, shared with Hermes when both use the same account.
+- An answer takes about half a minute when the GPU worker is warm: ~290
+  generated tokens at Hermes' measured ~12 tokens/s, on a slightly larger model.
+- Plan for Logos being unavailable for most of the day. KLEOS caps Logos per day
+  and falls back to the default model, as for Hermes.

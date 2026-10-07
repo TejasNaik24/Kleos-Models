@@ -157,3 +157,58 @@ class TestSummary:
         assert measured["gpu_call_seconds_total"] == 11.0
         assert measured["gpu_generate_seconds_total"] == 4.0
         assert measured["peak_vram_gib"] == 8.5
+
+
+def thinking_answer(text: str, reasoning: str | None) -> dict:
+    reply = answer(text)
+    reply["contract_version"] = 2
+    reply["reasoning"] = reasoning
+    return reply
+
+
+THINKING_REFERENCE = {**REFERENCE, "reasoning": "the support decides it"}
+
+
+class TestReasoningJudge:
+    """A thinking model reproduces its evaluation only if the trace matches too."""
+
+    def test_the_same_answer_and_trace_match(self):
+        record = judge_response(
+            example(),
+            THINKING_REFERENCE,
+            thinking_answer("memory_search", "the support decides it"),
+        )
+        assert record["exact"]["match"] and record["reasoning_exact"]["match"]
+        assert record["reasoning"] == "the support decides it"
+
+    def test_the_same_answer_with_another_trace_is_a_difference(self):
+        record = judge_response(
+            example(), THINKING_REFERENCE, thinking_answer("memory_search", "the age decides it")
+        )
+        assert record["exact"]["match"] is True
+        assert record["reasoning_exact"]["match"] is False
+        assert record["reasoning_exact"]["first_difference"] == 4
+
+    def test_a_reference_without_a_trace_compares_only_the_answer(self):
+        record = judge_response(example(), REFERENCE, answer("memory_search"))
+        assert "reasoning_exact" not in record
+
+    def test_the_summary_counts_trace_matches(self):
+        records = [
+            judge_response(
+                example(),
+                THINKING_REFERENCE,
+                thinking_answer("memory_search", "the support decides it"),
+            ),
+            judge_response(
+                example(),
+                THINKING_REFERENCE,
+                thinking_answer("memory_search", "the age decides it"),
+            ),
+        ]
+        summary = summarize_run(records)
+        assert summary["reasoning_compared"] == 2 and summary["reasoning_matches"] == 1
+
+    def test_a_run_without_traces_reports_none_compared(self):
+        summary = summarize_run([judge_response(example(), REFERENCE, answer("memory_search"))])
+        assert summary["reasoning_compared"] == 0 and summary["reasoning_matches"] == 0

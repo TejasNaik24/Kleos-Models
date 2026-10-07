@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Render the Hermes ZeroGPU Space into a directory, checked, ready to push.
+"""Render a model's ZeroGPU Space into a directory, checked, ready to push.
+
+The record (``--record``, Hermes' by default) names the model's Space folder,
+its record file and its base files through its ``serving`` profile:
+``deploy/zerogpu-space`` for Hermes, ``deploy/zerogpu-space-logos`` for Logos.
+``--push`` uses HF_TOKEN if it is set, otherwise the token stored by
+``hf auth login``.
 
 The Space repository holds exactly four files:
 
@@ -37,7 +43,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _cli import REPO_ROOT, add_common_arguments, print_header, run, setup_logging
 from kleos_models.data.loaders import file_sha256
 from kleos_models.errors import ConfigError
-from kleos_models.serving.space import SPACE_SOURCE_DIR, stage_space
+from kleos_models.serving.profile import load_profile
+from kleos_models.serving.space import stage_space
 
 DEFAULT_RECORD = REPO_ROOT / "configs" / "deployment" / "kleos_hermes_v006.yaml"
 
@@ -82,11 +89,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     setup_logging(args)
 
-    print_header("Stage the Hermes ZeroGPU Space")
+    profile = load_profile(args.record)
+    print_header(f"Stage the {profile.display_name} ZeroGPU Space")
 
     commit = resolve_commit(args.commit, allow_dirty=args.allow_dirty)
     remote_branches = _git("branch", "-r", "--contains", commit)
-    staged = stage_space(REPO_ROOT / SPACE_SOURCE_DIR, args.record, args.out, commit=commit)
+    staged = stage_space(REPO_ROOT / profile.space_dir, args.record, args.out, commit=commit)
 
     print(f"  kleos-models : {commit}")
     if not remote_branches:
@@ -109,11 +117,14 @@ def main(argv: list[str] | None = None) -> int:
         raise ConfigError("--push needs --space owner/name.")
     if args.allow_dirty:
         raise ConfigError("Refusing to push a Space staged from a dirty working tree.")
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        raise ConfigError("HF_TOKEN is not set.", suggestions=["Use a token with write access."])
+    from huggingface_hub import HfApi, get_token
 
-    from huggingface_hub import HfApi
+    token = os.environ.get("HF_TOKEN") or get_token()
+    if not token:
+        raise ConfigError(
+            "No Hugging Face token: HF_TOKEN is not set and none is stored.",
+            suggestions=["Log in once with `hf auth login`, using a token with write access."],
+        )
 
     api = HfApi(token=token)
     # The Space is created by hand, where its hardware (ZeroGPU) and visibility
@@ -125,13 +136,13 @@ def main(argv: list[str] | None = None) -> int:
     if not info.private:
         print(
             "  ! The Space is public. Anyone can see its files and call it; requests "
-            "without the X-Hermes-Key header are refused. See docs/deployment.md."
+            f"without the {profile.key_header} header are refused. See docs/deployment.md."
         )
     result = api.upload_folder(
         folder_path=str(args.out),
         repo_id=args.space,
         repo_type="space",
-        commit_message=f"Hermes v0.0.6 Space at kleos-models {commit[:12]}",
+        commit_message=f"{profile.display_name} Space at kleos-models {commit[:12]}",
     )
     print(f"  pushed       : Space commit {result.oid}")
     print("\n✓ Pushed. The Space rebuilds now; watch its logs for the startup report.\n")

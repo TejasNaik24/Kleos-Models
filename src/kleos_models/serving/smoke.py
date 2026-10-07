@@ -163,6 +163,13 @@ def judge_response(
             "decision_matches": _extract_decision(grade, text) == reference.get("decision"),
         }
     )
+    if "reasoning" in reference:
+        # A thinking model's evaluation stored its trace beside the answer; the
+        # Space reproduces the model only if the trace is the same too.
+        record["reasoning"] = response.get("reasoning")
+        record["reasoning_exact"] = compare_output(
+            reference.get("reasoning") or "", response.get("reasoning") or ""
+        )
     return record
 
 
@@ -210,6 +217,10 @@ def summarize_run(records: list[dict[str, Any]]) -> dict[str, Any]:
         "prompt_token_matches": sum(1 for r in compared if r["prompt_tokens_match"]),
         "completion_token_matches": sum(1 for r in compared if r["completion_tokens_match"]),
         "decision_matches": sum(1 for r in compared if r["decision_matches"]),
+        "reasoning_compared": sum(1 for r in compared if "reasoning_exact" in r),
+        "reasoning_matches": sum(
+            1 for r in compared if "reasoning_exact" in r and r["reasoning_exact"]["match"]
+        ),
         "measurements": {
             "label": "Observed ZeroGPU smoke-test measurements",
             "device": diagnostics.get("device"),

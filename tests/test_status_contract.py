@@ -18,12 +18,15 @@ from kleos_models.serving.status import (
     CONTRACT_VERSION,
     PUBLIC_MESSAGES,
     RETRYABLE,
+    SUPPORTED_CONTRACT_VERSIONS,
     HermesStatus,
     classify_exception,
     classify_zerogpu_error,
     error_response,
+    finish_reason,
     ok_response,
     parse_retry_after,
+    public_messages,
     status_for_http,
 )
 
@@ -271,3 +274,101 @@ class TestDockerServiceStatusMapping:
     )
     def test_http_codes_map_onto_the_same_vocabulary(self, code, expected):
         assert status_for_http(code) is expected
+
+
+class TestPerModelAndV2:
+    """Logos v0.0.2 speaks the same contract under its own name, with its trace."""
+
+    def test_hermes_messages_are_exactly_todays(self):
+        assert public_messages("Hermes", "Hermes v0.0.6") == {
+            HermesStatus.READY: "Hermes v0.0.6 is available.",
+            HermesStatus.STARTING: "Hermes is starting a free GPU worker.",
+            HermesStatus.QUOTA_EXHAUSTED: (
+                "Hermes' free GPU quota is currently exhausted. Please try again later."
+            ),
+            HermesStatus.QUEUE_UNAVAILABLE: (
+                "Hermes is temporarily busy. Try again later or continue with the default model."
+            ),
+            HermesStatus.MODEL_ERROR: "Hermes could not generate a response.",
+            HermesStatus.INVALID_REQUEST: "The request to Hermes was not valid.",
+            HermesStatus.UNAUTHORIZED: "unauthorized",
+            HermesStatus.DISABLED: "Hermes is currently unavailable.",
+        }
+        assert public_messages("Hermes", "Hermes v0.0.6") == PUBLIC_MESSAGES
+
+    def test_logos_messages_name_logos(self):
+        messages = public_messages("Logos", "Logos v0.0.2")
+        assert messages[HermesStatus.READY] == "Logos v0.0.2 is available."
+        assert messages[HermesStatus.QUOTA_EXHAUSTED].startswith("Logos' free GPU quota")
+        assert all("Hermes" not in text for text in messages.values())
+
+    def test_a_name_not_ending_in_s_takes_an_apostrophe_s(self):
+        assert public_messages("Iris", "Iris v1")[HermesStatus.QUOTA_EXHAUSTED].startswith("Iris'")
+        assert public_messages("Atlas", "Atlas v1")[HermesStatus.QUOTA_EXHAUSTED].startswith(
+            "Atlas'"
+        )
+        assert public_messages("Orion", "Orion v1")[HermesStatus.QUOTA_EXHAUSTED].startswith(
+            "Orion's"
+        )
+
+    def test_a_v1_reply_has_no_reasoning_key(self):
+        reply = ok_response(
+            text="a",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+            model={},
+            request_id="r",
+        )
+        assert reply["contract_version"] == CONTRACT_VERSION == 1
+        assert "reasoning" not in reply
+
+    def test_a_v2_reply_carries_the_trace(self):
+        reply = ok_response(
+            text="a",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+            model={},
+            request_id="r",
+            reasoning="t",
+            contract_version=2,
+        )
+        assert reply["contract_version"] == 2 and reply["reasoning"] == "t"
+        empty = ok_response(
+            text="a",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+            model={},
+            request_id="r",
+            reasoning=None,
+            contract_version=2,
+        )
+        assert "reasoning" in empty and empty["reasoning"] is None
+        assert SUPPORTED_CONTRACT_VERSIONS == (1, 2)
+
+    @pytest.mark.parametrize(
+        ("tokens", "budget", "backend", "expected"),
+        [
+            (10, 1024, "stop", "stop"),
+            (1024, 1024, "stop", "length"),
+            (200, 1024, "length", "length"),
+        ],
+    )
+    def test_finish_reason_honours_the_backend(self, tokens, budget, backend, expected):
+        assert finish_reason(tokens, budget, backend) == expected
+
+    def test_finish_reason_without_a_backend_reason_is_unchanged(self):
+        assert finish_reason(10, 512) == "stop" and finish_reason(512, 512) == "length"
+
+    def test_error_responses_take_per_model_messages_and_version(self):
+        messages = public_messages("Logos", "Logos v0.0.2")
+        reply = error_response(
+            HermesStatus.DISABLED, request_id="r", messages=messages, contract_version=2
+        )
+        assert reply["message"] == "Logos is currently unavailable."
+        assert reply["contract_version"] == 2
+        hermes = error_response(HermesStatus.DISABLED, request_id="r")
+        assert hermes["message"] == "Hermes is currently unavailable."
+        assert hermes["contract_version"] == 1

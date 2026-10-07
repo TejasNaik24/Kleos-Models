@@ -49,13 +49,14 @@ from kleos_models.errors import ConfigError, KleosError
 from kleos_models.logging_utils import get_logger
 from kleos_models.serving.app import GenerateRequest, key_matches, validate_request
 from kleos_models.serving.manifest import load_expected_identity
+from kleos_models.serving.profile import HERMES_PROFILE, ServingProfile, load_profile
 from kleos_models.serving.status import (
-    CONTRACT_VERSION,
     HermesStatus,
     classify_exception,
     error_response,
     finish_reason,
     ok_response,
+    public_messages,
 )
 
 logger = get_logger("kleos_models.serving.zerogpu")
@@ -103,23 +104,30 @@ class ZeroGPUSettings:
     max_new_tokens: int | None = None
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> ZeroGPUSettings:
+    def from_env(
+        cls,
+        env: Mapping[str, str] | None = None,
+        *,
+        profile: ServingProfile = HERMES_PROFILE,
+    ) -> ZeroGPUSettings:
+        """Read the model's settings; names come from its serving profile."""
         source = os.environ if env is None else env
+        api_key_name = profile.env("API_KEY")
         keys = tuple(
-            part.strip() for part in (source.get(ENV_API_KEY) or "").split(",") if part.strip()
+            part.strip() for part in (source.get(api_key_name) or "").split(",") if part.strip()
         )
-        allow = _flag(source.get(ENV_ALLOW_UNAUTHENTICATED))
+        allow = _flag(source.get(profile.env("ALLOW_UNAUTHENTICATED")))
         if not keys and not allow:
             raise ConfigError(
-                f"{ENV_API_KEY} is not set.",
+                f"{api_key_name} is not set.",
                 suggestions=[
                     "Add it as a Space secret. The KLEOS backend sends it in the "
-                    f"'{KEY_HEADER}' header.",
-                    "Without it, anyone who can reach the Space could use Hermes.",
+                    f"'{profile.key_header}' header.",
+                    f"Without it, anyone who can reach the Space could use {profile.short_name}.",
                 ],
             )
-        max_input = source.get(ENV_MAX_INPUT_TOKENS)
-        max_new = source.get(ENV_MAX_NEW_TOKENS)
+        max_input = source.get(profile.env("MAX_INPUT_TOKENS"))
+        max_new = source.get(profile.env("MAX_NEW_TOKENS"))
         return cls(
             api_keys=keys,
             allow_unauthenticated=allow,
@@ -175,21 +183,34 @@ def _float_env(name: str, default: float) -> float:
     return float(raw) if raw else default
 
 
-def gpu_duration(prepared: Any, config: GenerationConfig) -> int:
-    """GPU seconds to request for one call.
+def gpu_duration_for(profile: ServingProfile) -> Callable[[Any, GenerationConfig], int]:
+    """The GPU-duration rule for one model, read from its ``<PREFIX>_GPU_*`` secrets.
 
     ZeroGPU admits a call only if the account has at least the *requested*
     duration left (x1.5 on the default GPU size), and charges the time actually
     used. An over-generous request therefore makes the daily quota appear
     exhausted while most of it is unused — so this stays tight, scaled by the
-    token budget, and is calibrated from measured throughput.
+    token budget, clamped to a ceiling, and calibrated from measured
+    throughput. A generation that outruns its duration is aborted by ZeroGPU
+    and reported as ``model_error``.
     """
-    base = _float_env(ENV_GPU_BASE_SECONDS, 10.0)
-    tokens_per_second = _float_env(ENV_GPU_TOKENS_PER_SECOND, 12.0)
-    minimum = _float_env(ENV_GPU_MIN_SECONDS, 15.0)
-    maximum = _float_env(ENV_GPU_MAX_SECONDS, 60.0)
-    estimate = base + config.max_new_tokens / max(tokens_per_second, 0.1)
-    return int(min(max(math.ceil(estimate), minimum), maximum))
+    defaults = profile.gpu
+
+    def duration(prepared: Any, config: GenerationConfig) -> int:
+        base = _float_env(profile.env("GPU_BASE_SECONDS"), defaults.base_seconds)
+        tokens_per_second = _float_env(
+            profile.env("GPU_TOKENS_PER_SECOND"), defaults.tokens_per_second
+        )
+        minimum = _float_env(profile.env("GPU_MIN_SECONDS"), defaults.min_seconds)
+        maximum = _float_env(profile.env("GPU_MAX_SECONDS"), defaults.max_seconds)
+        estimate = base + config.max_new_tokens / max(tokens_per_second, 0.1)
+        return int(min(max(math.ceil(estimate), minimum), maximum))
+
+    return duration
+
+
+#: Hermes' rule: the HERMES_GPU_* secrets and today's defaults.
+gpu_duration = gpu_duration_for(HERMES_PROFILE)
 
 
 # ---------------------------------------------------------------------------
@@ -206,10 +227,13 @@ class ZeroGPUService:
         settings: ZeroGPUSettings,
         *,
         gpu_call: Callable[[Any, GenerationConfig], dict[str, Any]],
+        profile: ServingProfile = HERMES_PROFILE,
     ) -> None:
         self.deployment = deployment
         self.settings = settings
         self.gpu_call = gpu_call
+        self.profile = profile
+        self.messages = public_messages(profile.short_name, profile.display_name)
         manifest = deployment.manifest
         self.model_identity = {
             "name": manifest.model_name,
@@ -224,8 +248,17 @@ class ZeroGPUService:
     def _authorized(self, headers: Mapping[str, str]) -> bool:
         if not self.settings.api_keys:
             return self.settings.allow_unauthenticated
-        presented = {k.lower(): v for k, v in headers.items()}.get(KEY_HEADER)
+        presented = {k.lower(): v for k, v in headers.items()}.get(self.profile.key_header)
         return key_matches(presented, self.settings.api_keys)
+
+    def _error(self, status: HermesStatus, **kwargs: Any) -> dict[str, Any]:
+        """A non-answer in this model's words and contract version."""
+        return error_response(
+            status,
+            messages=self.messages,
+            contract_version=self.profile.contract_version,
+            **kwargs,
+        )
 
     def _ceiling(self) -> int:
         ceiling = self.deployment.manifest.limits.max_new_tokens
@@ -254,10 +287,10 @@ class ZeroGPUService:
         answering at all means ready; `starting` is observed by the caller as
         the Space not responding yet."""
         if not self._authorized(headers):
-            return error_response(HermesStatus.UNAUTHORIZED, request_id=None)
+            return self._error(HermesStatus.UNAUTHORIZED, request_id=None)
         manifest = self.deployment.manifest
-        return {
-            "contract_version": CONTRACT_VERSION,
+        report: dict[str, Any] = {
+            "contract_version": self.profile.contract_version,
             "ok": True,
             "status": HermesStatus.READY.value,
             "model": self.model_identity,
@@ -270,6 +303,9 @@ class ZeroGPUService:
             },
             "versions": runtime_versions(),
         }
+        if self.profile.reasoning:
+            report["reasoning"] = True
+        return report
 
     def generate(self, payload: Any, headers: Mapping[str, str]) -> dict[str, Any]:
         started = time.perf_counter()
@@ -277,7 +313,7 @@ class ZeroGPUService:
 
         if not self._authorized(headers):
             self._log(request_id, HermesStatus.UNAUTHORIZED)
-            return error_response(HermesStatus.UNAUTHORIZED, request_id=request_id)
+            return self._error(HermesStatus.UNAUTHORIZED, request_id=request_id)
 
         # Validate: schema first (unknown fields such as workspace ids or tool
         # definitions are refused), then size bounds — all before any GPU work.
@@ -286,7 +322,7 @@ class ZeroGPUService:
         except ValidationError as exc:
             fields = sorted({".".join(str(p) for p in e["loc"]) for e in exc.errors()})
             self._log(request_id, HermesStatus.INVALID_REQUEST, reason="schema")
-            return error_response(
+            return self._error(
                 HermesStatus.INVALID_REQUEST,
                 request_id=request_id,
                 message=f"Invalid request fields: {', '.join(fields) or 'body'}.",
@@ -295,8 +331,19 @@ class ZeroGPUService:
             validate_request(request, self.deployment.manifest.limits)
         except ValueError as exc:
             self._log(request_id, HermesStatus.INVALID_REQUEST, reason="size")
-            return error_response(
+            return self._error(
                 HermesStatus.INVALID_REQUEST, request_id=request_id, message=str(exc)
+            )
+
+        if self.profile.require_system_message and request.messages[0].role != "system":
+            # Every training and benchmark prompt began with a system message.
+            # Without one, a thinking model's template may add its own default
+            # instructions, which is not the model that was evaluated.
+            self._log(request_id, HermesStatus.INVALID_REQUEST, reason="system")
+            return self._error(
+                HermesStatus.INVALID_REQUEST,
+                request_id=request_id,
+                message="The first message must be a system message.",
             )
 
         ceiling = self._ceiling()
@@ -310,12 +357,12 @@ class ZeroGPUService:
             self._log(
                 request_id, HermesStatus.MODEL_ERROR, stage="prepare", error=type(exc).__name__
             )
-            return error_response(HermesStatus.MODEL_ERROR, request_id=request_id)
+            return self._error(HermesStatus.MODEL_ERROR, request_id=request_id)
         prepared_at = time.perf_counter()
 
         if prepared.prompt_length > self.settings.max_input_tokens:
             self._log(request_id, HermesStatus.INVALID_REQUEST, reason="tokens")
-            return error_response(
+            return self._error(
                 HermesStatus.INVALID_REQUEST,
                 request_id=request_id,
                 message=(
@@ -340,7 +387,7 @@ class ZeroGPUService:
                 title=title if infra else None,
                 retry_after_s=retry_after,
             )
-            return error_response(status, request_id=request_id, retry_after_seconds=retry_after)
+            return self._error(status, request_id=request_id, retry_after_seconds=retry_after)
         gpu_returned_at = time.perf_counter()
 
         try:
@@ -349,7 +396,7 @@ class ZeroGPUService:
             self._log(
                 request_id, HermesStatus.MODEL_ERROR, stage="finish", error=type(exc).__name__
             )
-            return error_response(HermesStatus.MODEL_ERROR, request_id=request_id)
+            return self._error(HermesStatus.MODEL_ERROR, request_id=request_id)
         finished_at = time.perf_counter()
 
         gpu_call_s = gpu_returned_at - prepared_at
@@ -383,13 +430,17 @@ class ZeroGPUService:
         )
         return ok_response(
             text=output.text,
-            finish_reason=finish_reason(output.completion_tokens, config.max_new_tokens),
+            finish_reason=finish_reason(
+                output.completion_tokens, config.max_new_tokens, output.finish_reason
+            ),
             prompt_tokens=output.prompt_tokens,
             completion_tokens=output.completion_tokens,
             model=self.model_identity,
             request_id=request_id,
             timings=timings,
             diagnostics=diagnostics,
+            reasoning=output.reasoning if self.profile.reasoning else None,
+            contract_version=self.profile.contract_version,
         )
 
 
@@ -447,16 +498,18 @@ def load_space_deployment(
     here stops the Space from starting at all.
     """
     source = os.environ if env is None else env
-    repo = (source.get(ENV_PACKAGE_REPO) or "").strip()
-    revision = (source.get(ENV_PACKAGE_REVISION) or "").strip()
+    profile = load_profile(record)
+    repo_name, revision_name = profile.env("PACKAGE_REPO"), profile.env("PACKAGE_REVISION")
+    repo = (source.get(repo_name) or "").strip()
+    revision = (source.get(revision_name) or "").strip()
     if not repo:
         raise ConfigError(
-            f"{ENV_PACKAGE_REPO} is not set.",
+            f"{repo_name} is not set.",
             suggestions=["Set it as a Space secret: the private repo holding the package."],
         )
     if not _PINNED.match(revision):
         raise ConfigError(
-            f"{ENV_PACKAGE_REVISION} must be a 40-character commit sha, got {revision!r}.",
+            f"{revision_name} must be a 40-character commit sha, got {revision!r}.",
             suggestions=[
                 "Pin the exact package commit that upload_deployment_package.py printed.",
                 "A branch name would let the served artifact change underneath the Space.",
@@ -495,13 +548,16 @@ def load_space_deployment(
             adapter_device="cpu",
         )
     except KleosError:
-        logger.error("Hermes package failed verification or load; refusing to serve.")
+        logger.error(
+            "%s package failed verification or load; refusing to serve.", profile.short_name
+        )
         raise
     loaded = time.perf_counter()
 
     logger.info(
-        "Hermes ready: %s %s adapter=%s… base=%s@%s compute_dtype=%s "
+        "%s ready: %s %s adapter=%s… base=%s@%s compute_dtype=%s "
         "download_s=%.1f load_s=%.1f memory=%s versions=%s",
+        profile.short_name,
         deployment.manifest.model_name,
         deployment.manifest.model_version,
         deployment.manifest.adapter.weights_sha256[:16],

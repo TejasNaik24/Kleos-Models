@@ -10,8 +10,10 @@ httpx; nothing here touches a network.
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
+import types
 from typing import Any
 
 import pytest
@@ -19,11 +21,17 @@ import pytest
 from kleos_models.serving.client import (
     HermesClient,
     HermesClientSettings,
+    _gradio_client,
     classify_call_error,
     classify_connect_error,
     validate_contract,
 )
-from kleos_models.serving.status import HermesStatus, error_response, ok_response
+from kleos_models.serving.status import (
+    PUBLIC_MESSAGES,
+    HermesStatus,
+    error_response,
+    ok_response,
+)
 
 KEY = "unit-client"
 HF = "hf_unit_placeholder"
@@ -432,3 +440,173 @@ class TestClassifiers:
         assert classify_connect_error(ValueError("invalid state: BUILD_ERROR")) is (
             HermesStatus.DISABLED
         )
+
+
+class TestPerModelClient:
+    """The same client reaches Logos v0.0.2 under its own names, and keeps its trace."""
+
+    def test_logos_settings_read_logos_names(self):
+        settings = HermesClientSettings.from_env(
+            {"LOGOS_ENABLED": "true", "LOGOS_SPACE": "o/l", "LOGOS_API_KEY": "k"},
+            prefix="LOGOS",
+            key_header="x-logos-key",
+        )
+        assert settings.enabled and settings.space == "o/l" and settings.api_key == "k"
+        assert settings.key_header == "x-logos-key" and settings.env_prefix == "LOGOS"
+
+    def test_hermes_variables_do_not_configure_logos(self):
+        settings = HermesClientSettings.from_env({"HERMES_ENABLED": "true"}, prefix="LOGOS")
+        assert settings.enabled is False
+
+    def test_problems_name_the_models_own_settings(self):
+        broken = HermesClientSettings(enabled=True, provider="zerogpu", env_prefix="LOGOS")
+        assert "LOGOS_SPACE is not set" in broken.problems()
+        assert "LOGOS_API_KEY is not set" in broken.problems()
+
+    def test_hermes_defaults_are_unchanged(self):
+        settings = HermesClientSettings.from_env({"HERMES_ENABLED": "true"})
+        assert settings.key_header == "x-hermes-key" and settings.env_prefix == "HERMES"
+
+    def test_the_space_client_sends_the_models_header(self, monkeypatch):
+        seen: dict[str, Any] = {}
+
+        class FakeClient:
+            def __init__(self, space, **kwargs):
+                seen.update(kwargs)
+
+        monkeypatch.setitem(sys.modules, "gradio_client", types.SimpleNamespace(Client=FakeClient))
+        _gradio_client(HermesClientSettings(space="o/l", api_key="k", key_header="x-logos-key"))
+        assert seen["headers"] == {"x-logos-key": "k"}
+
+    @pytest.mark.parametrize("version", [1, 2])
+    def test_both_contract_versions_pass(self, version):
+        reply = ok_response(
+            text="a",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+            model={},
+            request_id="r",
+            reasoning="t" if version == 2 else None,
+            contract_version=version,
+        )
+        assert validate_contract(reply, "r") is reply
+
+    def test_a_v2_reply_without_its_reasoning_key_is_refused(self):
+        reply = ok_response(
+            text="a",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+            model={},
+            request_id="r",
+            reasoning="t",
+            contract_version=2,
+        )
+        del reply["reasoning"]
+        assert validate_contract(reply, "r")["status"] == "model_error"
+
+    def test_an_unknown_contract_version_is_refused(self):
+        reply = ok_response(
+            text="a",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+            model={},
+            request_id="r",
+        )
+        reply["contract_version"] = 3
+        assert validate_contract(reply, "r")["status"] == "model_error"
+
+    def test_a_v2_status_reply_needs_no_reasoning(self):
+        status = {"contract_version": 2, "ok": True, "status": "ready", "reasoning": True}
+        assert validate_contract(status, "r", answer=False) is status
+
+    def test_the_http_path_keeps_the_trace(self):
+        http = FakeHTTP(FakeResponse(200, {**SERVICE_BODY, "reasoning": "the deadline decides"}))
+        response = http_client(http).generate(MESSAGES, request_id="r7")
+        assert response["contract_version"] == 2
+        assert response["reasoning"] == "the deadline decides"
+
+    def test_the_http_path_without_a_trace_stays_v1(self):
+        http = FakeHTTP(FakeResponse(200, SERVICE_BODY))
+        response = http_client(http).generate(MESSAGES, request_id="r7")
+        assert response["contract_version"] == 1 and "reasoning" not in response
+
+
+def logos_settings(**overrides: Any) -> HermesClientSettings:
+    values: dict[str, Any] = {
+        "space": "owner/kleos-logos",
+        "env_prefix": "LOGOS",
+        "key_header": "x-logos-key",
+        "contract_version": 2,
+    }
+    values.update(overrides)
+    return space_settings(**values)
+
+
+class TestLogosClientRefusals:
+    """The client's own refusals speak for the model it calls, in its contract version.
+
+    `disabled` and `starting` never reach the Space: the client makes them, and
+    KLEOS shows their message to its users.
+    """
+
+    def test_from_env_takes_the_models_contract_version(self):
+        settings = HermesClientSettings.from_env({}, prefix="LOGOS", contract_version=2)
+        assert settings.contract_version == 2
+
+    def test_hermes_settings_stay_on_version_1(self):
+        assert HermesClientSettings.from_env({}).contract_version == 1
+
+    def test_an_unsupported_contract_version_is_a_configuration_problem(self):
+        broken = logos_settings(contract_version=3)
+        assert any("contract version" in problem for problem in broken.problems())
+
+    def test_a_disabled_logos_client_says_logos(self):
+        settings = HermesClientSettings.from_env(
+            {}, prefix="LOGOS", key_header="x-logos-key", contract_version=2
+        )
+        response = HermesClient(settings).generate(MESSAGES)
+        assert response["status"] == "disabled"
+        assert response["contract_version"] == 2
+        assert response["message"] == "Logos is currently unavailable."
+
+    def test_a_waking_logos_space_is_starting_in_logos_words(self):
+        factory = Factory(FakeSpace(FakeJob(answer())))
+        factory.gate = threading.Event()
+        client = HermesClient(logos_settings(connect_wait=0.05), space_client_factory=factory)
+        response = client.generate(MESSAGES)
+        factory.gate.set()
+        assert response["status"] == "starting"
+        assert response["contract_version"] == 2
+        assert response["message"] == "Logos is starting a free GPU worker."
+
+    def test_a_failed_logos_call_says_logos(self):
+        factory = Factory(FakeSpace(FakeJob(error=TimeoutError())))
+        response = HermesClient(logos_settings(), space_client_factory=factory).generate(MESSAGES)
+        assert response["ok"] is False and response["contract_version"] == 2
+        assert response["message"].startswith("Logos ")
+
+    def test_a_logos_reply_outside_the_contract_says_logos(self):
+        factory = Factory(FakeSpace(FakeJob({"not": "the contract"})))
+        response = HermesClient(logos_settings(), space_client_factory=factory).generate(MESSAGES)
+        assert response["status"] == "model_error"
+        assert response["contract_version"] == 2
+        assert response["message"] == "Logos could not generate a response."
+
+    def test_hermes_refusals_keep_their_words_and_version(self):
+        disabled = HermesClient(HermesClientSettings.from_env({})).generate(MESSAGES)
+        broken = space_client(FakeJob({"not": "the contract"}))[0].generate(MESSAGES)
+        for response, status in ((disabled, "disabled"), (broken, "model_error")):
+            assert response["contract_version"] == 1
+            assert response["message"] == PUBLIC_MESSAGES[HermesStatus(status)]
+
+
+class TestHTTPBodyShapes:
+    """A body that is not a JSON object is a model_error, never an exception."""
+
+    @pytest.mark.parametrize("body", ["upstream reasoning error", ["reasoning"], None, 3])
+    def test_a_non_object_body_is_a_model_error(self, body):
+        response = http_client(FakeHTTP(FakeResponse(200, body))).generate(MESSAGES)
+        assert response["status"] == "model_error"

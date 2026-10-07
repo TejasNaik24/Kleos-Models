@@ -859,6 +859,153 @@ instead. The evidence for either is in the smoke output.
 
 ---
 
+## Logos v0.0.2 on ZeroGPU
+
+**Status, 2026-10-06: built and tested here; not yet deployed.** Logos v0.0.2
+(H9: better than Hermes, [run report](experiments/kleos-v007-ministral314breasoning-run1-report.md))
+gets its own private package repository and its own private ZeroGPU Space. It is
+served by the same code as Hermes; Hermes' Space, record and replies are
+unchanged. Design: `docs/superpowers/specs/2026-10-06-logos-v002-serving-design.md`.
+
+### One serving codebase, a profile per model
+
+A deployment record may carry a `serving` block (`src/kleos_models/serving/profile.py`).
+Without one, every value is Hermes' constant. Logos' record,
+`configs/deployment/kleos_logos_v002.yaml`, sets:
+
+| | Hermes v0.0.6 | Logos v0.0.2 |
+| --- | --- | --- |
+| Secrets | `HERMES_*` | `LOGOS_API_KEY`, `LOGOS_PACKAGE_REPO`, `LOGOS_PACKAGE_REVISION`, `LOGOS_GPU_*` |
+| Key header | `X-Hermes-Key` | `X-Logos-Key` |
+| Space folder | `deploy/zerogpu-space` | `deploy/zerogpu-space-logos` |
+| Record in the Space | `hermes_record.yaml` | `logos_record.yaml` |
+| Base files baked in | Mistral-Nemo, 5 shards | Ministral 3 14B Reasoning @ `51f9210f`, 6 shards (the text-only view leaves the vision weights on disk) |
+| Reply | contract version 1 | contract version 2: adds `reasoning` |
+| System message | optional | required first |
+| Token budget | 512 | 1,024, as evaluated |
+| Docker service | yes | no (Space only) |
+
+### What a Logos reply means
+
+- **`text`** is the answer; **`reasoning`** is the trace written before it (or
+  `null` if there was none). Only the answer was graded in H9.
+- **`finish_reason: "length"`** when the 1,024-token budget filled or the thinking
+  never closed (then `text` is empty). Either way the reply is cut: KLEOS falls
+  back. Serving needs both signals: the evaluation's own `finish_reason` missed
+  the 6 answers that looped after a closed trace (finding L-F7), and the budget
+  alone misses a trace that ends without closing.
+- **A request whose first message is not a system message** is refused with
+  `invalid_request`, before any GPU work. Every training and benchmark prompt had
+  one; without it the Reasoning template adds its own "how you should think"
+  prompt, which is not the model that was evaluated.
+- Nothing in the trace is logged, as for prompts and answers.
+
+### GPU time and quota
+
+ESTIMATED until the smoke test measures throughput:
+
+- The GPU duration requested per call is
+  `min(max(ceil(10 + 1024 / tokens_per_second), 15), 60)`: with 12 tokens/s, the
+  **60 s cap**. Evaluation answers averaged 293 generated tokens (95th
+  percentile 413), so a normal answer fits. A looping answer (6 of 349 in the
+  evaluation) runs out of GPU time, is aborted, and becomes `model_error`: KLEOS
+  falls back, as for a cut answer, at a cost of at most 60 s.
+- ZeroGPU admits a call only if 1.5 × the requested duration is left in the
+  calling account's 300 s daily quota. At about 30 GPU seconds per answer that is
+  **about 7 Logos answers a day** per calling account, shared with Hermes when the
+  same token calls both. Requesting the full 1,024 tokens' worth (~96 s) would cut
+  that to about 5.
+- Calibrate after the smoke test: set the Space secret
+  `LOGOS_GPU_TOKENS_PER_SECOND` to the measured warm median, and record it here.
+
+### Deploying it
+
+Every step is run by the owner. None costs money; if a screen asks for payment
+details, stop. No token is ever typed into a file or onto a command line.
+
+1. **Commit and push this repository.** The Space installs it at an exact commit.
+2. **Download the training output.** On Kaggle, the training notebook's finished
+   version → **Output** → **Download**; unzip into a private folder outside both
+   repositories, e.g. `~/kleos-private/logos-v002/`.
+3. **Complete the record** from the run, then commit and push it:
+   ```bash
+   .venv/bin/python scripts/fill_deployment_record.py \
+       --run ~/kleos-private/logos-v002/outputs/kleos-v007-ministral314breasoning-run1 \
+       --record configs/deployment/kleos_logos_v002.yaml          # check what it prints
+   .venv/bin/python scripts/fill_deployment_record.py --run … --record … --write
+   ```
+   It refuses a run whose best checkpoint is not `checkpoint-175`, or whose
+   `config_hash`, dataset hash or experiment id differ from the record's.
+4. **Build and verify the package** (CPU only):
+   ```bash
+   .venv/bin/python scripts/build_deployment_package.py \
+       --run ~/kleos-private/logos-v002/outputs/kleos-v007-ministral314breasoning-run1 \
+       --deployment-config configs/deployment/kleos_logos_v002.yaml \
+       --model-config configs/models/ministral3_14b_reasoning.yaml \
+       --output ~/kleos-private/logos-v0.0.2-package
+   .venv/bin/python scripts/verify_deployment_package.py --package ~/kleos-private/logos-v0.0.2-package
+   ```
+5. **Upload it to a private repository.** Install the Hub client once
+   (`.venv/bin/pip install huggingface_hub`), log in once with
+   `.venv/bin/hf auth login` (a write token, pasted only into that prompt), then:
+   ```bash
+   .venv/bin/python scripts/upload_deployment_package.py \
+       --package ~/kleos-private/logos-v0.0.2-package --repo YOUR_USERNAME/kleos-logos-v002-package \
+       --deployment-config configs/deployment/kleos_logos_v002.yaml --dry-run
+   # then the same with --create instead of --dry-run; note LOGOS_PACKAGE_REVISION
+   ```
+6. **Create the Space** at huggingface.co/new-space: SDK Gradio, hardware
+   **ZeroGPU**, **private**, e.g. `YOUR_USERNAME/kleos-logos`. Set four secrets:
+
+   | Secret | Value |
+   | --- | --- |
+   | `HF_TOKEN` | A new fine-grained token: read access to the package repository only |
+   | `LOGOS_API_KEY` | `.venv/bin/python -c "import secrets; print(secrets.token_urlsafe(32))"`; KLEOS gets the same value |
+   | `LOGOS_PACKAGE_REPO` | `YOUR_USERNAME/kleos-logos-v002-package` |
+   | `LOGOS_PACKAGE_REVISION` | The commit step 5 printed |
+
+7. **Stage and push the Space** (uses the stored login):
+   ```bash
+   .venv/bin/python scripts/stage_zerogpu_space.py --record configs/deployment/kleos_logos_v002.yaml \
+       --out /tmp/logos-space --push --space YOUR_USERNAME/kleos-logos
+   ```
+8. **Watch the startup log.** Success ends with
+   `Logos ready: kleos-logos v0.0.2 adapter=… base=mistralai/Ministral-3-14B-Reasoning-2512@51f9210f3cd2 …`.
+   **An out-of-memory crash is a STOP**: quantizing the 14B text tower on the
+   Space's CPU is unverified (Hermes' 12B worked, but its peak RAM was never
+   recorded). The fallback, loading inside the GPU call, spends quota on every
+   cold start; it is the owner's decision.
+9. **Smoke test, over two days** (about 7 calls fit one day's quota):
+   ```bash
+   .venv/bin/python scripts/build_benchmark.py \
+       --dataset <Kleos-Training-Data>/releases/kleos-policy-v0.0.7 --output /tmp/bench
+   shasum -a 256 /tmp/bench/benchmark.jsonl      # must be a11ffad75f51…b266
+   read -s LOGOS_API_KEY && export LOGOS_API_KEY     # paste the Space's key; not echoed
+   .venv/bin/pip install gradio_client==2.7.1
+   .venv/bin/python scripts/zerogpu_smoke.py --space YOUR_USERNAME/kleos-logos \
+       --record configs/deployment/kleos_logos_v002.yaml \
+       --benchmark /tmp/bench/benchmark.jsonl --reference <Logos v0.0.2's arm2_finetuned.json> \
+       --warm-repeats 0 --output ~/kleos-private/logos-smoke-day1.json
+   # day 2: the same, with --only <the ids not yet run>
+   ```
+   **The reference is Logos v0.0.2's evaluation results**, sha256
+   `0dd74661e1c5a9b1…c30eb5` as recorded in the
+   [run report](experiments/kleos-v007-ministral314breasoning-run1-report.md).
+   Logos v0.0.1's file has the same name (`09243630…`): the smoke test refuses
+   it, or any reference generated with another token budget or without traces,
+   before it contacts the Space. It then checks identity (adapter, base,
+   runtime, the served 1,024-token budget, the reasoning reply), and compares
+   each **answer and trace** with the evaluation, byte for byte. A run that
+   could not compare every trace verifies nothing and says so. An empty answer (thinking never closed) is
+   reported as model behaviour. **Any difference is a STOP**, as for Hermes
+   ([If the outputs differ](#if-the-outputs-differ-stop)).
+
+### Verification record — Logos
+
+Not yet run. Filled in after the smoke test: Space and package commits, the
+startup line (`memory`, `load_s`), answers and traces reproduced out of 9, the
+measured warm tokens per second, and the GPU seconds the run used.
+
 ## Checklist before serving
 
 1. `verify_deployment_package.py --expect-deployment-config …` exits 0.
