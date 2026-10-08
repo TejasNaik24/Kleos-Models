@@ -1,148 +1,154 @@
-# KLEOS Logos v0.0.1
+# KLEOS Logos
 
-**Status (2026-10-01): trained 2026-09-27 and evaluated. H8 is complete.**
+Logos is the deeper of the two KLEOS models: a QLoRA fine-tune of the text tower
+of Mistral AI's Ministral 3 14B. [Hermes](hermes.md), on Mistral-Nemo 12B, is the
+fast one. The hypotheses are pre-registered as H8 and H9 in
+[experiments.md](experiments.md); ids, evidence labels and the index of run
+records are in [docs/experiments/README.md](experiments/README.md).
 
-- **H8b, the primary comparison with Hermes, is INCONCLUSIVE.** Logos − Hermes is
-  −0.0168 on the answerable items, cluster 95% CI −0.0546 to +0.0177.
-  Result: [experiments.md](experiments.md#h8b-result--2026-09-29).
-- **H8a, Logos base vs fine-tuned, is SUPPORTED.** 5 of 7 tasks improved by the
-  pre-registered cluster rule, and none regressed.
-  Result: [experiments.md](experiments.md#h8a-result--2026-10-01).
-- **Full run report:** [experiments/kleos-v006-ministral314b-run1-report.md](experiments/kleos-v006-ministral314b-run1-report.md).
-- **Not yet done:** Logos is not deployed. Deployment comes only after a decision
-  that Logos is worth serving beside Hermes (§7).
-- **Logos v0.0.2** (2026-10-06): the Reasoning release of the same model,
-  trained on kleos-policy-v0.0.7's policy-derived reasoning traces, on Kaggle's
-  2 × T4. **H9: better than Hermes.** Answerable subset +0.0409, cluster 95% CI
-  +0.0040 to +0.0780: [§11](#11-logos-v002-trained-to-think).
+## Status
 
-Logos is the deeper of the two KLEOS models. Hermes (Mistral-Nemo 12B) is frozen and
-deployed; nothing on this page changes it. This page records which base Logos uses
-and why, what was verified, whether it fits the free hardware, how the experiment
-is designed, and the exact Colab procedure. The hypotheses themselves are
-pre-registered as **H8** in [experiments.md](experiments.md#h8--does-a-stronger-base-make-a-better-kleos-model).
+| Release | Base | Training data | Trained | Pre-registered result | Serving |
+| --- | --- | --- | --- | --- | --- |
+| **v0.0.1** | `mistralai/Ministral-3-14B-Instruct-2512-BF16` @ `3cea74c1` | `kleos-policy-v0.0.6` | 2026-09-24 to 2026-09-27, Colab, 1 × T4 | H8a supported; H8b, the comparison with Hermes, inconclusive | Not served. Research only |
+| **v0.0.2** | `mistralai/Ministral-3-14B-Reasoning-2512` @ `51f9210f` | `kleos-policy-v0.0.7` | 2026-10-06, Kaggle, 2 × T4 | H9 supported: better than Hermes | Live as a Beta since 2026-10-07; 8 of 9 smoke-test answers reproduced byte for byte |
 
-Labels used below: **VERIFIED** means checked in this repository against the
-pinned artifacts. **ESTIMATED** means computed, not measured. **SOURCE** means
-quoted from a published source, linked.
+- **Logos v0.0.1** (`kleos-v006-ministral314b-run1`) was not measurably better
+  than Hermes on v0.0.6: answerable subset −0.0168, cluster 95% CI −0.0546 to
+  +0.0177. Report:
+  [kleos-v006-ministral314b-run1-report.md](experiments/kleos-v006-ministral314b-run1-report.md).
+- **Logos v0.0.2** (`kleos-v007-ministral314breasoning-run1`) is the Reasoning
+  release of the same model, trained to write the policy's reasoning before it
+  answers. It is measurably better than Hermes: answerable subset +0.0409,
+  cluster 95% CI +0.0040 to +0.0780. The lower bound is close to zero and each
+  model is one training run. Report:
+  [kleos-v007-ministral314breasoning-run1-report.md](experiments/kleos-v007-ministral314breasoning-run1-report.md).
 
----
+## Why Ministral 3
 
-## 1. Decision
-
-**Base: `mistralai/Ministral-3-14B-Instruct-2512-BF16` @ `3cea74c1ebaf5ce5f5a2553de470e2ceab825142`, text tower only.**
+Decision (2026-09-24): Logos uses `mistralai/Ministral-3-14B-Instruct-2512-BF16`
+@ `3cea74c1ebaf5ce5f5a2553de470e2ceab825142`, text tower only. Logos v0.0.2 keeps
+the architecture and moves to the Reasoning release of the same model (below).
 
 | | |
 | --- | --- |
-| Licence | Apache-2.0, ungated. No token needed to download |
+| License | Apache-2.0, ungated. No token is needed to download it |
 | Released | 2025-12-02 ([card](https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512-BF16), [announcement](https://mistral.ai/news/mistral-3)) |
 | Checkpoint | `Mistral3ForConditionalGeneration` (`mistral3`) with a `ministral3` text tower, BF16, 6 shards |
-| Parameters | 13,506,073,600 text + 438,958,080 vision (tower 403,305,472, projector 35,652,608). **VERIFIED** on the meta device |
-| Text tower | 40 layers, hidden 5120, MLP 16384, 32 query / 8 KV heads, head_dim 128, vocab 131,072, untied `lm_head`, YaRN to 262,144 tokens. **VERIFIED** from `config.json` |
-| LoRA r=16, 7 projections | 280 modules, **60,948,480** trainable parameters (**VERIFIED** arithmetic; the same formula gives Hermes' measured 57,016,320) |
-| Config | [`configs/models/ministral3_14b.yaml`](../configs/models/ministral3_14b.yaml), [`configs/training/kleos_logos_v001.yaml`](../configs/training/kleos_logos_v001.yaml) |
+| Parameters | 13,506,073,600 text + 438,958,080 vision (tower 403,305,472, projector 35,652,608), counted on the meta device |
+| Text tower | 40 layers, hidden 5120, MLP 16384, 32 query / 8 KV heads, head_dim 128, vocabulary 131,072, untied `lm_head`, YaRN to 262,144 tokens, read from `config.json` |
+| LoRA r=16 on 7 projections | 280 modules, 60,948,480 trainable parameters, computed; the same formula gives Hermes' measured 57,016,320 |
+| Configs | [`configs/models/ministral3_14b.yaml`](../configs/models/ministral3_14b.yaml), [`configs/training/kleos_logos_v001.yaml`](../configs/training/kleos_logos_v001.yaml) |
 
-**Why this model.**
+The reasons, in order:
 
 - **It is the largest Mistral open-weight model that trains on a free Colab T4.**
-  Every stronger candidate needs more memory than a 16 GB T4 has, even in 4-bit
-  (section 2).
-- **It is much more capable than Hermes' base.** MMLU (5-shot, base models) 79.4
-  against Nemo's 68.0; Mistral Small 24B scores 81.0. It is distilled from Mistral
-  Small 3.1 (SOURCE: [Ministral 3 paper, Table 3](https://arxiv.org/html/2601.08584);
+  Every stronger candidate needs more memory than a 16 GB T4 has, even in 4-bit.
+- **Its base is more capable than Hermes' base.** MMLU (5-shot, base models) is
+  79.4 against Nemo's 68.0; Mistral Small 24B scores 81.0. Ministral 3 is
+  distilled from Mistral Small 3.1
+  ([Ministral 3 paper, Table 3](https://arxiv.org/html/2601.08584);
   [Nemo card](https://huggingface.co/mistralai/Mistral-Nemo-Instruct-2407)).
-  Mistral's own numbers come from different harnesses and years, so treat them as
-  indicative.
-- **It keeps Hermes' architecture.** Same 40 × 5120 geometry, same attention, same
-  vocabulary; only the MLP is wider (16384 against 14336). The training pipeline,
-  the deployment path and the comparison with Hermes all carry over.
-- **It serves on free ZeroGPU the way Hermes does** (section 7).
+  These figures come from different harnesses and years, so they are indicative.
+- **It keeps Hermes' architecture.** The geometry (40 × 5120), the attention and
+  the vocabulary are the same; only the MLP is wider (16384 against 14336). The
+  training pipeline, the deployment path and the comparison with Hermes carry
+  over.
+- **It serves on free ZeroGPU** as Hermes does ([Serving](#serving)).
 
-**The -BF16 repository, not the default one.** `mistralai/Ministral-3-14B-Instruct-2512`
-is published in FP8, which needs compute capability ≥ 9 (SOURCE:
-[transformers FP8 docs](https://huggingface.co/docs/transformers/quantization/finegrained_fp8));
-a T4 is 7.5. The loader refuses a pre-quantized container.
+The difference in size is modest: 13.5B text parameters against Hermes' 12.2B.
+What Logos adds is base capability, and on v0.0.6 that capability can only show
+where the data allows it ([Dataset](#dataset)).
 
-**Text-only view.** KLEOS is text-only, and the 0.44B-parameter vision tower would
-cost memory a T4 does not have. `model_type: ministral3` makes
-`Ministral3TextAdapter` load only the text tower, as `Ministral3ForCausalLM`, from
-the official checkpoint with its keys renamed (`language_model.model.*` →
-`model.*`, `language_model.lm_head.*` → `lm_head.*`). The load then refuses to
-continue if any text weight is missing or mismatched, or if any key outside the
-vision tower and projector goes unused.
+**The -BF16 repository.** The Instruct model's default repository, without the
+`-BF16` suffix, is published in FP8, which needs compute capability 9 or higher
+([transformers FP8 docs](https://huggingface.co/docs/transformers/quantization/finegrained_fp8)).
+A T4 is 7.5, and the loader refuses a pre-quantized container. The Reasoning
+release is published in BF16 directly.
 
-**Honest caveat.** Logos is only modestly *larger* than Hermes: 13.5B text
-parameters against 12.2B. What it adds is base capability. On v0.0.6 that capability
-can only show where the data allows it (section 6).
-
----
-
-## 2. Candidates
+### Candidates
 
 Survey of all 75 `mistralai` repositories on Hugging Face, 2026-09-24. Parameter
 counts, gating, files and revisions come from the Hub API
-(`https://huggingface.co/api/models/<repo>`), release dates from each repository's
-commit history.
+(`https://huggingface.co/api/models/<repo>`), release dates from each
+repository's commit history.
 
-| Model | Size | Licence | QLoRA on a free T4 | Verdict | Sources |
+| Model | Size | License | QLoRA on a free T4 | Verdict | Sources |
 | --- | --- | --- | --- | --- | --- |
-| **Ministral-3-14B-Instruct-2512-BF16** | 13.9B (13.5B text + 0.44B vision) | Apache-2.0 | **Yes, marginal** (section 4) | **Selected** | [card](https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512-BF16), [docs](https://docs.mistral.ai/models/ministral-3-14b-25-12) |
-| Mistral-Small-3.1-24B-Instruct-2503 | 24.0B | Apache-2.0 | No | Strongest candidate; needs Kaggle's free 2×T4 ([Unsloth](https://unsloth.ai/docs/models/tutorials/magistral-how-to-run-and-fine-tune): a 24B model "slightly exceeds the memory limits of a 16GB VRAM") | [card](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503) |
+| **Ministral-3-14B-Instruct-2512-BF16** | 13.9B (13.5B text + 0.44B vision) | Apache-2.0 | Yes, with a small margin | **Selected** | [card](https://huggingface.co/mistralai/Ministral-3-14B-Instruct-2512-BF16), [docs](https://docs.mistral.ai/models/ministral-3-14b-25-12) |
+| Mistral-Small-3.1-24B-Instruct-2503 | 24.0B | Apache-2.0 | No | Strongest candidate; needs Kaggle's free 2 × T4 ([Unsloth](https://unsloth.ai/docs/models/tutorials/magistral-how-to-run-and-fine-tune): a 24B model "slightly exceeds the memory limits of a 16GB VRAM") | [card](https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503) |
 | Mistral-Small-3.2-24B-Instruct-2506 | 24.0B | Apache-2.0 | No | Also ships no Hugging Face tokenizer or chat template (`tekken.json` only) | [card](https://huggingface.co/mistralai/Mistral-Small-3.2-24B-Instruct-2506) |
 | Mistral-Small-24B-Instruct-2501 | 23.6B, text-only | Apache-2.0 | No | Older; 32k context; also needs Kaggle | [card](https://huggingface.co/mistralai/Mistral-Small-24B-Instruct-2501) |
-| Magistral-Small-2509 | 24.0B, reasoning | Apache-2.0 | No | No HF tokenizer; KLEOS data has no reasoning traces | [card](https://huggingface.co/mistralai/Magistral-Small-2509) |
-| Mistral Medium 3 / 3.1 | — | API only | — | No open weights | [announcement](https://mistral.ai/news/mistral-medium-3) |
-| Mistral-Medium-3.5-128B | 127.7B | Modified MIT (revenue cap) | No | Too large; restrictive licence | [licence](https://huggingface.co/mistralai/Mistral-Medium-3.5-128B/blob/main/LICENSE) |
-| Mistral-Small-4-119B, Mistral-Large-3-675B, Devstral-2-123B | 119B–675B | Apache / modified MIT | No | Far too large for $0 | [Small 4](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603), [Large 3](https://huggingface.co/mistralai/Mistral-Large-3-675B-Instruct-2512) |
-| Large 2 / 2.1, Pixtral Large, Small-2409, Codestral-22B | 22B–124B | MRL / MNPL | — | Non-commercial: disqualified | [MRL](https://mistral.ai/licenses/MRL-0.1.md), [MNPL](https://mistral.ai/licences/MNPL-0.1.md) |
+| Magistral-Small-2509 | 24.0B, reasoning | Apache-2.0 | No | No Hugging Face tokenizer; the v0.0.6 data had no reasoning traces | [card](https://huggingface.co/mistralai/Magistral-Small-2509) |
+| Mistral Medium 3 / 3.1 | | API only | | No open weights | [announcement](https://mistral.ai/news/mistral-medium-3) |
+| Mistral-Medium-3.5-128B | 127.7B | Modified MIT (revenue cap) | No | Too large; restrictive license | [license](https://huggingface.co/mistralai/Mistral-Medium-3.5-128B/blob/main/LICENSE) |
+| Mistral-Small-4-119B, Mistral-Large-3-675B, Devstral-2-123B | 119B–675B | Apache / modified MIT | No | Far too large for free hardware | [Small 4](https://huggingface.co/mistralai/Mistral-Small-4-119B-2603), [Large 3](https://huggingface.co/mistralai/Mistral-Large-3-675B-Instruct-2512) |
+| Large 2 / 2.1, Pixtral Large, Small-2409, Codestral-22B | 22B–124B | MRL / MNPL | | Non-commercial: disqualified | [MRL](https://mistral.ai/licenses/MRL-0.1.md), [MNPL](https://mistral.ai/licences/MNPL-0.1.md) |
 
-**Benchmarks, as each source reports them** (MMLU 5-shot on base models):
-Nemo 68.0 ([card](https://huggingface.co/mistralai/Mistral-Nemo-Instruct-2407)),
-Ministral 3 14B 79.4 and Small 3.1 81.0 ([paper, Table 3](https://arxiv.org/html/2601.08584)),
+Benchmarks, as each source reports them (MMLU 5-shot on base models): Nemo 68.0
+([card](https://huggingface.co/mistralai/Mistral-Nemo-Instruct-2407)), Ministral
+3 14B 79.4 and Small 3.1 81.0 ([paper, Table 3](https://arxiv.org/html/2601.08584)),
 Small 2501 80.73 ([card](https://huggingface.co/mistralai/Mistral-Small-24B-Base-2501)).
 
-**Why not the 24B.** It is the stronger base, but it does not fit a free Colab T4,
-and the workflow it needs (Kaggle's 2×T4, a second free platform with its own
-quota and session rules) was not chosen. That was a deliberate trade, confirmed
-by the user on 2026-09-24.
+Decision (2026-09-24): the 24B candidates were not used. They are the stronger
+bases, but none fits a free Colab T4, and the workflow they need (Kaggle's 2 ×
+T4, a second free platform with its own quota and session rules) was not adopted
+for v0.0.1. Logos v0.0.2 later moved to Kaggle's 2 × T4 for a different reason:
+its longest training example does not fit one T4 (estimated,
+[Measured fits](#measured-fits)).
 
----
+## The text-only view
 
-## 3. What was verified locally
+KLEOS is text-only, and the 0.44B-parameter vision tower would cost memory a T4
+does not have. `model_type: ministral3` makes `Ministral3TextAdapter` load only
+the text tower, as `Ministral3ForCausalLM`, from the official checkpoint, with
+its keys renamed (`language_model.model.*` → `model.*`,
+`language_model.lm_head.*` → `lm_head.*`). The load refuses to continue if any
+text weight is missing or mismatched, or if any key outside the vision tower and
+projector goes unused. The vision weights stay on disk.
 
-All against the pinned revision, with the Docker image's pinned transformers 5.16.1.
+Logos v0.0.2 uses the same view through `Ministral3ReasoningTextAdapter`
+(`model_type: ministral3_reasoning`), which adds a thinking-only capability and
+refuses `standard` mode.
+
+What was verified for v0.0.1, against the pinned revision, with the Docker
+image's pinned transformers 5.16.1:
 
 | Check | Result |
 | --- | --- |
-| Text-only loading | On a tiny checkpoint in the official key layout, the text view loads **every** language weight exactly; `lm_head` stays untied; vision and projector keys are the only ones unused. **VERIFIED** (`tests/test_ministral3_text_view.py`) |
-| Tokenizer files | `tokenizer.json` `d5f60467…8135`, `tokenizer_config.json` `f59f7294…0d6d`, `chat_template.jinja` `2f545122…8970`. **VERIFIED**, pinned in `tests/test_revision_pinning.py` |
-| Chat template | Renders the system prompt in place (`[SYSTEM_PROMPT]…`), so Hermes' system-prompt merge (deviation D5) does not apply. Its default system prompt is used only when a conversation has none; every KLEOS example has one. **VERIFIED** |
-| `fix_mistral_regex` | transformers flags this tokenizer's pre-tokenizer regex as incorrect. Setting it to true changes the token ids of **0 of 1,350** formatted v0.0.6 examples. Logos sets it explicitly so training and serving agree on user text. **VERIFIED** (re-measured 2026-09-24 with the tokenizer class the Hub gives; see finding L-F2) |
-| Sequence lengths | Longest training example **442 tokens** (448 after the collator pads to a multiple of 8), validation 436, test 612, through the repository's own formatter. Hermes' tokenizer gives 440 for training. `max_seq_length` 1024 truncates nothing. **VERIFIED**, and confirmed by the Colab smoke run's own measurement |
+| Text-only loading | On a tiny checkpoint in the official key layout, the text view loads every language weight exactly; `lm_head` stays untied; vision and projector keys are the only ones unused (`tests/test_ministral3_text_view.py`) |
+| Tokenizer files | `tokenizer.json` `d5f60467…8135`, `tokenizer_config.json` `f59f7294…0d6d`, `chat_template.jinja` `2f545122…8970`, pinned in `tests/test_revision_pinning.py` |
+| Chat template | Renders the system prompt in place (`[SYSTEM_PROMPT]…`), so Hermes' system-prompt merge (deviation D5, [deviations log](experiments.md#deviations-log)) does not apply. Its default system prompt is used only when a conversation has none, and every KLEOS example has one |
+| `fix_mistral_regex` | transformers flags this tokenizer's pre-tokenizer regex as incorrect. Setting the flag to true changes the token ids of 0 of 1,350 formatted v0.0.6 examples. Logos sets it explicitly so training and serving agree on user text. Re-measured 2026-09-24 with the tokenizer class the Hub gives (finding L-F2, [Logos findings](experiments/logos-findings.md)) |
+| Sequence lengths | Longest training example 442 tokens (448 after the collator pads to a multiple of 8), validation 436, test 612, through the repository's own formatter. Hermes' tokenizer gives 440 for training. `max_seq_length` 1024 truncates nothing. Measured, and confirmed by the Colab smoke run's own measurement |
 
----
+## Measured fits
 
-## 4. Does it fit a free T4?
+### Logos v0.0.1 on one T4
 
-**Short answer: yes, with a small margin, as measured by the smoke run on
-2026-09-24.** On a Colab T4 the longest batch peaked at **13.60 GiB allocated,
-13.96 GiB reserved**, leaving **0.34 GiB** once the optimizer state exists. That
-passes the 0.15 GiB gate. The estimate below came first and decided that the
-smoke run was worth running.
+The smoke run (`kleos-logos-smoke-001`, Tesla T4, 2026-09-24) probed the
+longest batch (1 × 448 tokens, fp16): **13.60 GiB allocated, 13.96 GiB
+reserved** (smoke run), leaving 0.34 GiB once the optimizer state exists. That
+passes the 0.15 GiB gate. The ten training steps peaked at 13.55 GiB. The full
+run's own probe, before step 1, recorded 13.60 GB allocated, 13.97 GB reserved
+and 0.35 GB spare. The full run peaked at 13.70 GB of 14.56 GB (session 4's
+manifest), with no out-of-memory error in any of its four sessions
+([run report, section 4](experiments/kleos-v006-ministral314b-run1-report.md#4-memory)).
 
-The memory estimator (`src/kleos_models/models/feasibility.py`) was rebuilt for
-this phase (finding H-F10). It now counts what a QLoRA step on these models
-actually holds: the embeddings and `lm_head` upcast to fp32 by k-bit preparation,
-the 16-bit autocast copy of `lm_head`, fp32 LoRA weights and gradients, logits at
-the loss, and one layer's activations under gradient checkpointing. Checked against
-the peaks measured on this project's own T4 runs:
+The estimate came first and decided that the smoke run was worth running. The
+estimator (`src/kleos_models/models/feasibility.py`) was rebuilt for Logos after
+finding H-F10 ([Hermes run report, section 11](experiments/kleos-v006-mistralnemo12b-run1-report.md#11-findings)).
+It counts what a QLoRA step on these models holds: the embeddings and `lm_head`
+upcast to fp32 by k-bit preparation, the 16-bit autocast copy of `lm_head`, fp32
+LoRA weights and gradients, logits at the loss, and one layer's activations under
+gradient checkpointing. Checked against the peaks measured on earlier T4 runs:
 
 | Run | Measured peak | Estimated | Error |
 | --- | ---: | ---: | ---: |
-| Hermes (`kleos-v006-mistralnemo12b-run1`) | 13.09 GiB | 13.09 GiB | −0.03% |
-| `kleos-v006-ministral8b-run1` | 9.67 GiB | 9.66 GiB | −0.10% |
+| Hermes (`kleos-v006-mistralnemo12b-run1`) | 13.09 GB | 13.09 GB | −0.03% |
+| `kleos-v006-ministral8b-run1` | 9.67 GB | 9.66 GB | −0.10% |
 
-For Logos at its longest batch (ESTIMATED):
+For Logos at its longest batch (estimated):
 
 ```text
 $ python scripts/plan_run.py --config configs/training/kleos_logos_v001.yaml \
@@ -162,567 +168,378 @@ $ python scripts/plan_run.py --config configs/training/kleos_logos_v001.yaml \
   headroom: +0.14 GB
 ```
 
-MEASURED on the smoke run (`kleos-logos-smoke-001`, Tesla T4, 2026-09-24): the
-memory probe on the longest batch (1 x 448 tokens, fp16) peaked at 13.60 GiB
-allocated, so the estimate was 1.3% pessimistic. Reserved memory was 13.96 GiB,
-0.36 GiB of fragmentation slack under expandable segments, against Hermes' 0.49.
-The ten training steps peaked at 13.55 GiB.
-
-The budget is the 14.56 GiB torch reports on Colab's T4, less the 0.14 GiB Hermes'
+The estimate was 1.3% pessimistic against the smoke run's probe. Reserved memory
+was 0.36 GiB above allocated under expandable segments, against Hermes' 0.49. The
+budget is the 14.56 GiB torch reports on Colab's T4, less the 0.14 GiB Hermes'
 run used outside PyTorch's allocator. The 0.5 GiB reserve is the fragmentation
-slack Hermes' run showed (13.58 GiB reserved at a 13.09 GiB peak).
+slack Hermes' run showed (13.58 GB reserved at a 13.09 GB peak).
 
-**What that means.** Logos' peak is about 0.5 GiB above Hermes': 0.60 GiB of extra
-4-bit MLP weights and 0.03 GiB of extra LoRA state, with sequences the same length
-(442 against 440 tokens). It fits only if the allocator fragments no more than it
-did for Hermes. Two things follow:
+Logos' peak is about 0.5 GiB above Hermes': 0.60 GiB of extra 4-bit MLP weights
+and 0.03 GiB of extra LoRA state, with sequences of the same length (442 against
+440 tokens). It fits only if the allocator fragments no more than it did for
+Hermes, which led to two measures:
 
-1. **`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`** is set in the runbook.
-   It changes how memory is allocated, not what is computed. It is recorded in the
-   manifest's environment block and declared under H8.
-2. **The smoke run decides, not this estimate.** Before its first step, the
-   trainer runs two forward/backward passes on the *longest* batch and records the
-   measured peak (`manifest.metrics.memory_probe`). A ten-step smoke run would
-   otherwise report whatever ten random batches happened to need.
+1. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is set for every Logos run.
+   It changes how memory is allocated, not what is computed. It is recorded in
+   the manifest's environment block and declared under H8.
+2. Before its first step, the trainer runs two forward and backward passes on the
+   longest batch and records the measured peak (`manifest.metrics.memory_probe`).
+   A ten-step smoke run would otherwise report whatever ten random batches
+   happened to need.
 
-### Go / no-go gate
+### The go/no-go gate
 
-After the smoke run (runbook step 8):
+After the smoke run:
 
 ```bash
 python scripts/check_smoke_gate.py --manifest <run>/manifest.json \
     --expect-modules 280 --expect-trainable 60948480 --min-spare-gb 0.15
 ```
 
-**GO** requires all of: the run completed with no adjustment; the text view loaded
-with 0 missing and 0 mismatched weights; exactly 280 LoRA modules and 60,948,480
-trainable parameters; gradients reached the adapter; and at least 0.15 GiB spare at
-the longest batch once the optimizer state exists. The 0.15 GiB is a judgement,
-not a measurement: room for validation passes and checkpoint writes, which Hermes
-survived with 0.84 GiB free.
+GO requires all of the following: the run completed with no adjustment; the text
+view loaded with 0 missing and 0 mismatched weights; exactly 280 LoRA modules and
+60,948,480 trainable parameters; gradients reached the adapter; and at least 0.15
+GiB spare at the longest batch once the optimizer state exists. The 0.15 GiB is a
+judgment, not a measurement: room for validation passes and checkpoint writes,
+which Hermes survived with 0.84 GiB free.
 
-**NO-GO**, in order (no hyperparameter changes silently, ever):
+On NO-GO the full run does not start, and no hyperparameter changes to make it
+fit. The options recorded on 2026-09-24, none implemented: keep `lm_head` in
+16-bit instead of letting k-bit preparation upcast it to fp32 (under fp16 autocast
+its matmul runs in 16-bit either way, so the arithmetic should be identical, and
+it saves about 2.5 GiB; a code change with a bit-identity test and a declared
+deviation), or move to Kaggle's free 2 × T4 or P100.
 
-1. Stop and report the probe's numbers. Do not start the full run.
-2. Candidate fix, **not implemented**: keep `lm_head` in 16-bit instead of letting
-   k-bit preparation upcast it to fp32. Under fp16 autocast its matmul runs in
-   16-bit either way, so the arithmetic should be identical, and it saves about
-   2.5 GiB. It would be a code change with a bit-identity test and a declared
-   deviation from Hermes' recipe.
-3. Kaggle's free 2×T4 or P100 16 GB. Unverified for this stack.
+### Logos v0.0.2 on two T4s
 
----
+Estimated with the same estimator: seven LoRA targets, batch 1, the longest
+example (736 tokens), paged 8-bit AdamW.
 
-## 5. Experiment design
+| Hardware | Tier | Peak allocated |
+| --- | --- | --- |
+| 1 × T4 (Colab) | Smoke: does not fit | 14.46 GB against a 14.41 GB budget |
+| 2 × T4 (Kaggle) | Full research | 6.38 GB on GPU 0, 8.53 GB on GPU 1 (`lm_head`, its 16-bit copy and the logits) |
 
-Pre-registered in full as **H8** in [experiments.md](experiments.md#h8--does-a-stronger-base-make-a-better-kleos-model),
-before any training. In short:
+```bash
+python scripts/plan_run.py --config configs/training/kleos_logos_v002.yaml \
+    --seq-length 736 --simulate-gpu T4:14.56:7.5:2
+```
 
-- **Same everything except the base.** The same sealed dataset, the same recipe
-  value for value, and the same benchmark (sha256 `a11ffad7…`), grader, greedy
-  decoding and seed as Hermes. The declared differences are in section 8.
-- **H8a:** Logos `arm1_base_orchestrated` vs Logos `arm2_finetuned`: does
-  fine-tuning help this base, as it helped Hermes'?
-- **H8b (primary):** Hermes `arm2_finetuned` vs Logos `arm2_finetuned` on the
-  **271 answerable** examples (61 groups), where the data leaves headroom. Paired
-  cluster bootstrap by `group_id`, 2,000 iterations; the verdict is better, worse,
-  equivalent (95% CI within ±0.02) or inconclusive.
-- **Why the answerable subset.** The 78 should-decline cases carry four decline
-  labels that never occur in training, so no model trained on v0.0.6 can learn
-  them (deviation D3). They are reported, but they cannot tell two bases apart.
+Measured by the memory probe on the longest batch (1 × 736 tokens, fp16) on
+2026-10-06:
 
----
+| | GPU 0 | GPU 1 |
+| --- | ---: | ---: |
+| Peak allocated | 4.75 GB | **10.16 GB** |
+| Spare after optimizer state | 9.43 GB | **4.02 GB** |
+| Estimated beforehand | 6.38 GB | 8.53 GB |
 
-## 6. Dataset plan
+The gate passed by a wide margin. The total matched the estimate, but the split
+did not: `device_map: auto` put the embedding and layers 0–8 on GPU 0, and
+layers 9–39, the final norm and `lm_head` on GPU 1, where the estimator assumed
+20 layers each (finding L-F6,
+[Logos v0.0.2 run report, section 10](experiments/kleos-v007-ministral314breasoning-run1-report.md#10-findings)).
+The peak over the whole run was 10.21 GB, and the evaluation peaked at 6.23 GB
+on the fuller GPU.
 
-**Logos v0.0.1 trains on the sealed `kleos-policy-v0.0.6`, unchanged** (user
-decision, 2026-09-24). That isolates the base model: any difference from Hermes is
-the base, not the data. The price is that v0.0.6's limits cap Logos exactly as they
-cap Hermes:
+## H8 and H9 in brief
 
-- The four decline labels are absent from training, so judgment is capped at 0.9255
-  and `deciding_factor` at 0.7765 on the full benchmark.
+Both hypotheses were pre-registered before the run that tests them, with a
+decision rule fixed in advance. Each compares two `arm2_finetuned` models on the
+**271 answerable** benchmark items (61 groups), by a paired cluster bootstrap over
+`group_id` with 2,000 iterations. The verdict is better (95% CI entirely above 0),
+worse (entirely below), equivalent (entirely within ±0.02) or inconclusive. The
+other 78 items should be declined, and their four decline labels never occur in
+v0.0.6 training (deviation D3, [deviations log](experiments.md#deviations-log)),
+so they are reported as a secondary row.
+
+### H8: a stronger base (Logos v0.0.1)
+
+Same sealed data, recipe (value for value), benchmark (sha256 `a11ffad7…`),
+grader, greedy decoding and seed as Hermes; the declared differences are listed
+below. `config_hash`
+`18008c6716a58afc284c64eb7e1e96c9bfce34b8da2b8c489b6d59c0c45b6f71`.
+[Pre-registration and full result](experiments.md#h8--does-a-stronger-base-make-a-better-kleos-model).
+
+| | Result | Verdict |
+| --- | --- | --- |
+| **H8a**: Logos base vs Logos fine-tuned (2026-10-01) | 5 of 7 tasks improved by group intervals, none regressed. Overall 0.4469 → 0.7896; answerable +0.3952 (cluster CI +0.3443 to +0.4438) | Supported |
+| **H8b** (primary): Hermes vs Logos v0.0.1 (2026-09-29) | Answerable 0.8976 → 0.8808, **−0.0168**, cluster 95% CI −0.0546 to +0.0177 | Inconclusive |
+
+- **What H8b rules out:** the upper end, +0.0177, is below the +0.02 margin, so
+  these data do not support a Logos advantage as large as the margin. A Hermes
+  lead of up to about 0.055 is not ruled out either.
+- **Secondary rows** (not corrected for multiple comparisons):
+  `recommendation_generation` regressed (0.4946 → 0.3906) in both bootstraps;
+  consistency by `group_id` was 0.833 for Logos against 0.769 for Hermes (no
+  interval).
+- **Declared differences from Hermes' run**, none in the training arithmetic:
+  the base model, tokenizer and chat template; `fix_mistral_regex: true`;
+  evaluation and checkpoint cadence 25 steps instead of 50; `strict_config: true`;
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`; the best checkpoint
+  protected from pruning (finding H-F9,
+  [Hermes run report, section 11](experiments/kleos-v006-mistralnemo12b-run1-report.md#11-findings));
+  a gradient check at the configured batch size and the memory probe, both
+  before the Trainer re-seeds.
+
+### H9: trained to think (Logos v0.0.2)
+
+The training section is v0.0.1's, value for value, as
+`tests/test_logos_v002_config.py` checks; the base release, the data, the
+evaluation token budget and the hardware differ (next section). `config_hash`
+`d1961583546b5761dd854cfe845838ca91a87ea6189d54be617de21085e8cfa9`.
+[Pre-registration and full result](experiments.md#h9--does-a-logos-trained-to-think-beat-hermes).
+
+| Arm (answerable subset, 271 items, 61 groups) | Mean | Cluster 95% CI |
+| --- | ---: | --- |
+| Hermes `arm2_finetuned` (annotated) | 0.8976 | 0.8634–0.9301 |
+| Logos v0.0.2 `arm2_finetuned` | 0.9385 | 0.9083–0.9663 |
+| **Logos v0.0.2 − Hermes, paired** | **+0.0409** | **+0.0040 to +0.0780** (p = 0.031) |
+
+- **Verdict: better** (2026-10-06). The lower end, +0.004, is close to zero, and
+  each model is a single training run, so training noise is not in the interval.
+  The base release, the data and the generation budget (1,024 against 512 new
+  tokens) changed together, and Hermes was not retrained on v0.0.7, so H9 does
+  not say which change produced the gain.
+- **Should-decline subset** (78 items, 17 groups): 0.4835 → 0.5855 (+0.1020),
+  cluster CI −0.0018 to +0.2062: not significant by groups.
+- **Per task, by groups:** `notification_prioritization` +0.1324,
+  `recommendation_generation` +0.0893 and `memory_conflict_resolution` +0.0737
+  improved; `tool_routing`, `workspace_reasoning` and `mission_control_briefing`
+  were not significant; `context_prioritization` (8 items) is not estimable by
+  groups.
+- **Against Logos v0.0.1:** answerable +0.0577 (cluster CI +0.0234 to +0.0952),
+  should-decline +0.1131 (+0.0028 to +0.2296), no task regressed. This also
+  changes the base release, the data and the generation budget together.
+- **Overall means** (descriptive): Hermes 0.8051, Logos v0.0.1 0.7896, Logos
+  v0.0.2 0.8596.
+
+## Dataset
+
+Decision (2026-09-24): Logos v0.0.1 trains on the sealed `kleos-policy-v0.0.6`,
+unchanged, so that any difference from Hermes is the base and not the data. The
+cost is that v0.0.6's limits cap Logos as they cap Hermes:
+
+- The four decline labels are absent from training, so judgment is capped at
+  0.9255 and `deciding_factor` at 0.7765 on the full benchmark.
 - Abstention in training is conditional on the scenario family, not on the
   evidence, which is the shortcut both Hermes and Ministral-8B learned.
 - The test split is 100% JSON-formatted inputs, a format no training example uses.
 
-The repair belongs upstream, in the private `kleos-training-data` repository:
-[datasets/kleos-policy-v0.0.7-repair-spec.md](datasets/kleos-policy-v0.0.7-repair-spec.md)
-specifies it, and keeps `test.jsonl` byte-identical so v0.0.7 results stay
-comparable with every v0.0.6 number. Logos v0.0.2 would train on it.
+The repair belongs upstream, in the private data repository. The
+[v0.0.7 repair specification](datasets/kleos-policy-v0.0.7-repair-spec.md) keeps
+`test.jsonl` byte-identical, so every v0.0.7 result stays comparable with every
+v0.0.6 number. Logos v0.0.2 trains on `kleos-policy-v0.0.7` (RELEASE.lock content
+hash `b53afa4216bf6973…`): v0.0.6 plus a policy-derived reasoning trace on every
+train and validation answer, a "What decided it" line on every answer, and the
+four decline labels in training.
 
----
-
-## 7. Deployment (later: only after Logos is validated)
-
-**Update, 2026-10-06: built for Logos v0.0.2, not v0.0.1.** One serving codebase
-now reads a per-model profile from the deployment record, and Logos gets its own
-private ZeroGPU Space, with the trace in a version 2 reply. Built and tested
-here, not yet deployed:
-[deployment.md](deployment.md#logos-v002-on-zerogpu). The rest of this section is
-the v0.0.1-era plan, kept as written.
-
-Nothing below is built yet. The model must first pass H8, and nothing spends
-ZeroGPU quota during development.
-
-- **Where:** a private ZeroGPU Space, like Hermes'. ESTIMATED VRAM about 9 GiB
-  in NF4: Hermes measured 8.34 GiB, and Logos adds 0.60 GiB of 4-bit weights. A
-  48 GB `large` slice holds it easily.
-- **Speed and quota:** ESTIMATED slightly slower than Hermes (about 11% more
-  linear weights), so a few fewer answers from each account's 5 free GPU-minutes a
-  day.
-- **What is Hermes-specific and must be generalised first:**
-  - `serving/space.py` (`BASE_PRELOAD_FILES`, `RECORD_NAME`) and `deploy/zerogpu-space`
-  - `build_deployment_package` defaults and its hard-coded research report
-  - `serving/startup.py` (`HERMES_*` settings, `MIN_VRAM_GIB`) and `serving/status.py` messages
-  - the Docker files
-  - publishing's model-card snippet, which loads with `AutoModelForCausalLM`; a
-    text-view adapter needs the key mapping
-- **Then:** a frozen Logos deployment record and package, a smoke suite reproduced
-  byte for byte, and KLEOS wiring. The router that picks Hermes (fast) or Logos
-  (deep) is later still, and only if Logos proves worth it.
-
----
-
-## 8. Risks and declared differences from Hermes
-
-| Risk | Handling |
-| --- | --- |
-| T4 memory (section 4) | Memory probe on the longest batch; go/no-go gate; `strict_config: true` so nothing shrinks silently |
-| fp16 on a T4 for a model released in BF16 | Hermes had 4 fp16-skipped optimizer steps. The count is recorded; many skipped steps would be reported, not hidden |
-| transformers ≥ 5 required (`ministral3` first appears in 5.0.0) | Runbook pins transformers 5.16.1, peft 0.20.0, accelerate 1.14.0, bitsandbytes 0.50.2 and tokenizers 0.23.2, Hermes' versions. Colab's torch is not reinstalled, so it may differ from Hermes' 2.11.0 |
-| One seed per model | Stated as a limitation of H8 |
-| Dataset ceiling | Primary comparison on the answerable subset |
-
-**Declared differences from Hermes' run**, none of them in the training arithmetic:
-
-1. Base model, tokenizer and chat template: the object of study.
-2. `fix_mistral_regex: true` (0 of 1,350 examples tokenized differently).
-3. Evaluation and checkpoint cadence 25 steps, not 50: finer best-checkpoint
-   selection around Hermes' step-200 minimum.
-4. `strict_config: true`.
-5. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`: allocation only.
-6. Pipeline fixes made in this phase: best checkpoint protected (H-F9), gradient
-   check at the configured batch size, and the memory probe. Neither the probe nor
-   the gradient check changes training: both run before the Trainer, which re-seeds
-   when it is constructed.
-
----
-
-## 9. Colab runbook
-
-Prerequisite: the code from this phase is committed and **pushed** (Colab clones it
-from GitHub). Use a **T4 GPU** runtime. Run one cell at a time; if a cell errors,
-stop there.
-
-Drive needs about 3 GB free for Logos' checkpoints and results. Model weights go
-to `/content`, never Drive: the checkpoint is about 28 GB.
-
-**1. Mount Drive**
-```python
-from google.colab import drive
-
-drive.mount("/content/drive")
-```
-**2. Clone**
-```
-!rm -rf /content/kleos-models && git clone https://github.com/TejasNaik24/Kleos-Models.git /content/kleos-models
-```
-**3. Enter it**
-```
-%cd /content/kleos-models
-```
-**4. Install, without touching Colab's torch**
-```
-!python scripts/colab_setup.py
-```
-**5. Pin Hermes' library versions**
-```
-!pip install -q --no-deps transformers==5.16.1 peft==0.20.0 accelerate==1.14.0 bitsandbytes==0.50.2 tokenizers==0.23.2
-```
-**6. Environment.** Weights cached on `/content`; allocation tuned; no `KLEOS_*` path
-variables, because they change `config_hash`.
-```
-%env HF_HOME=/content/hf_cache
-%env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-```
-```
-!python -c "import os, torch, transformers, peft, bitsandbytes; print(torch.__version__, torch.cuda.get_device_name(0), transformers.__version__, peft.__version__, bitsandbytes.__version__); print([k for k in os.environ if k.startswith('KLEOS_')] or 'no KLEOS_ variables')"
-```
-Expect `Tesla T4`, `5.16.1`, `0.20.0`, `0.50.2` and `no KLEOS_ variables`.
-
-**7. Plan against the live GPU**
-```
-!python scripts/plan_run.py --config configs/training/kleos_logos_v001.yaml --seq-length 448
-```
-
-**8. Smoke run** (10 steps at the real settings, scratch space on `/content`)
-```
-!python scripts/train.py --config configs/training/debug_logos.yaml --dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 --output-dir /content/logos-smoke --experiment-id kleos-logos-smoke-001
-```
-**9. Gate** (section 4). Stop here on NO-GO and report the output.
-```
-!python scripts/check_smoke_gate.py --manifest /content/logos-smoke/kleos-logos-smoke-001/manifest.json --expect-modules 280 --expect-trainable 60948480 --min-spare-gb 0.15
-```
-**10. Resume drill.** Remove the last checkpoint, then resume: it must continue from
-step 5 and finish.
-```
-!rm -rf /content/logos-smoke/kleos-logos-smoke-001/checkpoint-10 && python scripts/train.py --config configs/training/debug_logos.yaml --dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 --output-dir /content/logos-smoke --experiment-id kleos-logos-smoke-001 --resume-from-checkpoint auto
-```
-
-**11. Train Logos** (about 3.5 hours on a T4, ESTIMATED from Hermes' 3.2)
-```
-!python scripts/train.py --config configs/training/kleos_logos_v001.yaml --dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 --output-dir /content/drive/MyDrive/kleos-private/outputs --experiment-id kleos-v006-ministral314b-run1
-```
-The config hash it prints must be `18008c6716a58afc` (pre-registered under H8).
-
-**12. If the runtime died:** repeat cells 1–6, then:
-```
-!python scripts/train.py --config configs/training/kleos_logos_v001.yaml --dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 --output-dir /content/drive/MyDrive/kleos-private/outputs --experiment-id kleos-v006-ministral314b-run1 --resume-from-checkpoint auto
-```
-
-**13. Build and check the benchmark** (the sha256 must start `a11ffad75f5147f9`)
-```
-!python scripts/build_benchmark.py --dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 --output /content/benchmark && sha256sum /content/benchmark/benchmark.jsonl
-```
-
-**14. Evaluate Logos arm1** (base, orchestrated; 2–3 hours; re-run the same cell to
-resume after a disconnect)
-```
-!python scripts/evaluate.py --config configs/training/kleos_logos_v001.yaml --arm arm1_base_orchestrated --benchmark /content/benchmark/benchmark.jsonl --output /content/drive/MyDrive/kleos-private/outputs/kleos-v006-ministral314b-run1/arm1_base_orchestrated.json --resume
-```
-**15. Evaluate Logos arm2** (fine-tuned)
-```
-!python scripts/evaluate.py --config configs/training/kleos_logos_v001.yaml --arm arm2_finetuned --adapter /content/drive/MyDrive/kleos-private/outputs/kleos-v006-ministral314b-run1/adapter --benchmark /content/benchmark/benchmark.jsonl --output /content/drive/MyDrive/kleos-private/outputs/kleos-v006-ministral314b-run1/arm2_finetuned.json --resume
-```
-
-**16. H8a: Logos arm1 vs arm2**
-```
-!python scripts/compare.py --base /content/drive/MyDrive/kleos-private/outputs/kleos-v006-ministral314b-run1/arm1_base_orchestrated.json --finetuned /content/drive/MyDrive/kleos-private/outputs/kleos-v006-ministral314b-run1/arm2_finetuned.json --report /content/drive/MyDrive/kleos-private/outputs/kleos-v006-ministral314b-run1/report_logos_v001 --experiment-id kleos-v006-ministral314b-run1 --dataset-version kleos-policy-v0.0.6
-```
-
-**17. Re-report Hermes with the corrected measures** (CPU work; Hermes' files are
-read, never written)
-```
-!python scripts/rescore.py --mode annotate --results /content/drive/MyDrive/kleos-private/outputs/kleos-v006-mistralnemo12b-run1/arm2_finetuned.json --benchmark /content/benchmark/benchmark.jsonl --output /content/drive/MyDrive/kleos-private/outputs/kleos-v006-mistralnemo12b-run1/arm2_finetuned.annotated.json --gold-targets /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6/test.jsonl --summary /content/drive/MyDrive/kleos-private/outputs/kleos-v006-mistralnemo12b-run1/arm2_finetuned.annotated.md
-```
-(Repeat with `arm1_base_orchestrated` for the baseline.)
-
-**18. H8b, the primary comparison**
-```
-!python scripts/compare.py --cross-model --base /content/drive/MyDrive/kleos-private/outputs/kleos-v006-mistralnemo12b-run1/arm2_finetuned.annotated.json --finetuned /content/drive/MyDrive/kleos-private/outputs/kleos-v006-ministral314b-run1/arm2_finetuned.json --primary-subset answerable --equivalence-margin 0.02 --report /content/drive/MyDrive/kleos-private/outputs/report_h8b_hermes_vs_logos
-```
-
----
-
-## 10. Findings from this phase
-
-**L-F1 — `Mistral3VLMAdapter`'s LoRA scoping does not work on transformers 5.**
-VERIFIED with transformers 5.16.1 and peft 0.20.0 on a tiny
-`Mistral3ForConditionalGeneration`. Two separate misses:
-
-- Target validation keeps only modules whose names *start with* `language_model`.
-  transformers 5 names them `model.language_model.*`, so nothing matches and
-  attaching LoRA raises (loudly, at least).
-- The vision tower is kept out of LoRA by listing `"vision_tower"` in PEFT's
-  `exclude_modules`. PEFT matches list entries by exact name or `.suffix`, which no
-  projection inside the tower has. With the adapter's own LoRA config, 7 of 14 LoRA
-  modules landed in the vision tower.
-
-Not fixed: the adapter serves only `configs/models/mistral_small_3_2.yaml`, which
-no KLEOS run uses, and Logos does not touch it (its text view has no vision
-modules). `tests/test_vlm_targeting_finding.py` holds both as strict xfails, so a
-fix makes them fail until this entry is closed. A fix would match on a
-`language_model.` path segment rather than a prefix, and pass PEFT a regex (or
-explicit module names) instead of suffix lists.
-
-**L-F2 — The tokenizer class depends on `config.json` being present.** VERIFIED
-with transformers 5.16.1. From the Hub repository (config.json included),
-`AutoTokenizer` builds `TokenizersBackend`, which gives the longest training example
-as 442 tokens. From a folder of the tokenizer files alone it builds
-`LlamaTokenizer`, which splits the same text into about 12% more tokens with
-different ids: 492 for the same example. The first measurements for this page were
-made that way and have been corrected. Training and evaluation load from the Hub,
-and a tokenizer saved by training reloads as `TokenizersBackend` with identical
-ids, so runs are consistent. **Any serving package for Logos must load its
-tokenizer as `TokenizersBackend`**, never rebuild it from bare files; otherwise
-serving tokenizes differently from training.
-
-**L-F3 — Evaluation resume lost a killed session's work on Colab's Drive mount.**
-OBSERVED on Colab, 2026-09-28 and 29; the cause is INFERRED. Fixed in
-`src/kleos_models/evaluation/resume.py`.
-
-- **What happened:** `PartialWriter` kept `<output>.partial.jsonl` open for the whole
-  arm, appending and fsyncing each generation.
-  - A Logos arm2 session answered more than 100 questions before Colab killed the
-    runtime.
-  - The next session printed `resume : 0 generation(s) recorded`. Only the identity
-    header, which `start_partial` writes and closes on its own, had reached Drive.
-- **Why (inferred):** the evidence fits a mount that uploads a file only once it is
-  closed, whatever `fsync` does. Files that were written and then closed all
-  survived the same kills: checkpoints, headers and `events.jsonl`, which is opened
-  per event.
-- **The fix:** the writer now opens and closes the file for every record.
-  `tests/test_evaluation_resume.py` checks that no handle stays open between
-  records. File handling is the only change; generation is untouched.
-- **Confirmed on Colab, 2026-10-01:** with the fix (`ed5a987`), Logos' arm1
-  session was killed partway through. The next session found its 172
-  generations on Drive and resumed from them.
-
-**L-F4 — A fresh start into a folder that already holds checkpoints would delete
-the best one.** VERIFIED against transformers 5.16.1's `rotate_checkpoints`, on
-2026-09-25. Not fixed.
-
-- **The gap:** `scripts/train.py` has no guard against starting from step 0 in a
-  run folder that already holds checkpoints, for example by running the training
-  cell without `--resume-from-checkpoint`.
-- **What would happen:** transformers sorts checkpoints by step number. It
-  protects the newest and the *new* run's best, so the old run's best is not
-  protected. At the new run's first save, with Logos' folder as it stood
-  (checkpoint-25 beside 175, 225 and 250), rotation would have deleted
-  `checkpoint-175`, the selected adapter.
-- **What prevented it:** only the runbook's instruction to use cell 12.
-- **The fix:** refuse a fresh start where checkpoints exist unless the operator
-  says so explicitly.
-
-**L-F5 — `validate_checkpoint` does not check optimizer or scheduler state.**
-VERIFIED with transformers 5.16.1. Not fixed.
-
-- **What it requires:** `trainer_state.json` and a weights file. That is enough to
-  reject a checkpoint without weights, such as Logos' session-1 `checkpoint-125`
-  (H-F4 again).
-- **What it misses:** a checkpoint missing `optimizer.pt` or `scheduler.pt` passes.
-  transformers then skips loading both without a warning, and the run continues
-  with a fresh optimizer and a learning-rate schedule restarted from warmup.
-- **This run:** both resume points were checked by hand first (D9).
-- **The fix:** require the optimizer and scheduler files whenever a checkpoint is
-  used to resume.
-- **Also affected:** `training.log` is written through a `logging.FileHandler` held
-  open the same way. The log of a training session that was killed may be missing
-  from Drive. Its events, checkpoints and manifest are not affected.
-
-The other findings of this phase, H-F11 to H-F14, are about how the evaluation
-measures. They are recorded with the run they were found in:
-[experiments/kleos-v006-mistralnemo12b-run1-report.md](experiments/kleos-v006-mistralnemo12b-run1-report.md#11-findings).
-
----
-
-## 11. Logos v0.0.2: trained to think
-
-**Status (2026-10-06): trained and evaluated. [H9](experiments.md#h9-result--2026-10-06)
-is supported: Logos v0.0.2 is measurably better than Hermes.** Full report:
-[experiments/kleos-v007-ministral314breasoning-run1-report.md](experiments/kleos-v007-ministral314breasoning-run1-report.md).
-Not deployed yet. Logos v0.0.1 was not measurably better than Hermes (H8b). v0.0.2
-changes what Logos is trained to do: it writes out the policy's reasoning before
-it answers, and it learns the four decline labels v0.0.6 never taught.
-
-### 11.1 What changes
+## What changed in v0.0.2
 
 | | Logos v0.0.1 | Logos v0.0.2 |
 | --- | --- | --- |
 | Base | Ministral 3 14B Instruct (BF16) @ `3cea74c1` | Ministral 3 14B **Reasoning** @ `51f9210f` |
-| Data | kleos-policy-v0.0.6 | **kleos-policy-v0.0.7**: v0.0.6 plus a policy-derived trace on every train and validation answer, and a "What decided it" line |
-| What is trained | the answer | `[THINK]trace[/THINK]answer</s>`, all supervised |
+| Data | `kleos-policy-v0.0.6` | **`kleos-policy-v0.0.7`**: v0.0.6 plus a policy-derived trace on every train and validation answer, and a "What decided it" line |
+| What is trained | The answer | `[THINK]trace[/THINK]answer</s>`, all supervised |
 | Longest example | 448 tokens | 736 tokens |
 | Hardware | Colab, 1 × T4 | Kaggle, **2 × T4**, layers spread over both |
-| Evaluation | `max_new_tokens` 512 | 1024; the trace is split off at `[/THINK]`, only the answer is graded |
+| Evaluation | `max_new_tokens` 512 | 1024; the trace is split off at `[/THINK]` and only the answer is graded |
 | Recipe | Hermes' | v0.0.1's, value for value |
+| Adapter selection | Lowest validation loss on the answer | Lowest validation loss on trace and answer together; the trace is 58% of the validation targets by characters |
 
-**The base, VERIFIED at the pinned revision:**
+The base, checked at the pinned revision
+`51f9210f3cd20f3452a80d5819d15dc61cc50630`:
 
 - the same architecture and text-tower shape as v0.0.1: 13,506,073,600 text
   parameters, untied `lm_head`, and the same 280 LoRA modules with 60,948,480
   trainable parameters;
 - its own tokenizer files and chat template: `tokenizer.json` `577575…`,
-  `chat_template.jinja` `6b5044…`, `tokenizer_config.json` `f3a437…`.
+  `chat_template.jinja` `6b5044…`, `tokenizer_config.json` `f3a437…` (the Hub
+  file at the pinned revision; the copy the run saved and the package carries
+  is `ce7ea8d2…`, see
+  [`configs/deployment/kleos_logos_v002.yaml`](../configs/deployment/kleos_logos_v002.yaml));
+  `fix_mistral_regex: true` changes 0 of 1,350 v0.0.7 examples (measured).
 
 The template renders an assistant message's `reasoning` field as the thinking
 span. It adds its default "how you should think" system prompt only to a
-conversation without a system message. Every v0.0.7 example and every benchmark
-prompt has one, so it never appears (VERIFIED).
+conversation without a system message; every v0.0.7 example and every benchmark
+prompt has one, so it never appears. The
+[model card](https://huggingface.co/mistralai/Ministral-3-14B-Reasoning-2512)
+reports AIME 2025 0.850 and GPQA Diamond 0.712 for this release, and no
+reasoning scores for the Instruct release. It recommends sampling at
+temperature 1; KLEOS evaluates greedily, as for every model, and H9 declares
+the difference.
 
-**The model card** (SOURCE): AIME 2025 0.850 and GPQA Diamond 0.712 for this
-release; it reports no reasoning scores for the Instruct release.
+What the code does for a model trained to think:
 
-### 11.2 What the code now does
+- **Data contract.** Schema 1.1 adds an optional assistant `reasoning` field. It
+  is written only when present, so every earlier release keeps its bytes and
+  hashes.
+- **Formatting.** With `strip_thinking_from_targets: false` the field goes to the
+  chat template and is supervised. A run that would cut any supervised token
+  refuses to start. For any other model the field is dropped and counted.
+- **Evaluation.** In thinking mode the completion is split on token 35
+  (`[/THINK]`) before decoding, so the graders never read the trace. A completion
+  whose thinking never closes has an empty answer and `finish_reason: length`;
+  `generation_stats.thinking_truncated` counts them. Results schema 3 stores each
+  trace beside its answer.
+- **Two GPUs.** The memory probe measures every GPU and gates on the tighter one.
+  The run refuses to train a model spread over GPUs unless the Trainer runs it
+  model parallel; transformers 5.16.1 does (checked in its source), and the check
+  stops the run if that ever changes. The manifest records where each part of the
+  model landed.
 
-- **Data contract.** Schema 1.1 adds an optional assistant `reasoning` field. It is
-  written only when present, so every earlier release keeps its bytes and hashes.
-- **Formatting.**
-  - For a model trained to think (`strip_thinking_from_targets: false`), the field
-    goes to the chat template.
-  - A run that would cut any supervised token refuses to start.
-  - For any other model the field is dropped and counted.
-- **Model.** `Ministral3ReasoningTextAdapter` (`model_type: ministral3_reasoning`)
-  is v0.0.1's text-only view with a thinking-only capability. It refuses
-  `standard` mode.
-- **Evaluation.**
-  - In thinking mode the completion is split on token 35 (`[/THINK]`) before
-    decoding, so the graders never read the trace.
-  - A completion whose thinking never closes has an empty answer and
-    `finish_reason: length`. `generation_stats.thinking_truncated` counts them.
-  - Results schema 3 stores each trace beside its answer.
-- **Two GPUs.**
-  - The memory probe measures every GPU and gates on the tighter one.
-  - The run refuses to train a model spread over GPUs unless the Trainer runs it
-    model parallel. transformers 5.16.1 does (VERIFIED in its source); the check
-    stops the run if that ever changes.
-  - The manifest records where each part of the model landed.
+## Recorded result
 
-### 11.3 Does it fit?
+The v0.0.2 result as recorded on 2026-10-06, kept as written. Its references to
+sections that have since moved were retargeted to the documents that now hold
+them.
 
-ESTIMATED with the repository's estimator: seven LoRA targets, batch 1, the
-longest example (736 tokens), paged 8-bit AdamW.
+> Measured on the run, with ESTIMATED figures from [the Kaggle runbook](runbooks/logos-v002-kaggle.md) alongside:
+> *[editor's note: the ESTIMATED figures are in the
+> [run report](experiments/kleos-v007-ministral314breasoning-run1-report.md),
+> not reproduced here.]*
+>
+> - **Training:** 4.4 hours (about 4.9 with setup), one session. `checkpoint-175` was
+>   selected (epoch 1.70, validation loss 0.0293).
+> - **Evaluation:** 5.2 hours, 53.8 s per answer. Every answer thought first, and
+>   none ran out of budget while thinking.
+> - **[H9](experiments.md#h9-result--2026-10-06): better than Hermes.** Answerable
+>   subset 0.8976 → 0.9385 (+0.0409, cluster 95% CI +0.0040 to +0.0780). Overall
+>   0.8051 → 0.8596.
+> - **Against Logos v0.0.1:** answerable +0.0577, should-decline +0.1131, and no task
+>   regressed.
+> - **Kaggle quota used:** about 10.5 GPU hours of the weekly 30.
+>
+> Three findings, L-F6 to L-F8, are recorded in the
+> [run report](experiments/kleos-v007-ministral314breasoning-run1-report.md#10-findings):
+>
+> - **L-F6:** the two-GPU split was uneven.
+> - **L-F7:** 6 answers looped after their trace until the token budget ran out, yet
+>   `finish_reason` still reads "stop". **Resolved in serving:** a served reply
+>   says "length" whenever the budget filled or the thinking never closed. The
+>   evaluation code and its stored results are unchanged.
+> - **L-F8:** the evaluation shows no progress while it runs.
+>
+> Its [section 11](experiments/kleos-v007-ministral314breasoning-run1-report.md#11-not-done-and-open-items-before-any-serving)
+> lists what serving a thinking model still needs. That serving is now
+> built: [deployment.md](deployment.md#serving-profiles).
 
-| Hardware | Tier | Peak allocated |
+## Serving
+
+Logos v0.0.2 is served on a private Hugging Face ZeroGPU Space
+(`<owner>/<space>`), from a private deployment package (`<owner>/<package-repo>`),
+by the same serving code as Hermes. A per-model profile in
+[`configs/deployment/kleos_logos_v002.yaml`](../configs/deployment/kleos_logos_v002.yaml)
+sets what differs ([serving profiles](deployment.md#serving-profiles)). There is
+no Docker service for Logos.
+
+| | |
+| --- | --- |
+| Adapter | `e49724f6554db662769fbe9b9431105dbc12f8f75cecd6e0e00728ea3f04dc4f`, from `checkpoint-175` (`eval_loss` 0.0293) |
+| Base | `mistralai/Ministral-3-14B-Reasoning-2512` @ `51f9210f3cd20f3452a80d5819d15dc61cc50630`, 6 shards baked into the Space image; the vision weights stay on disk |
+| Runtime | NF4, double quantization, float16 compute, SDPA; greedy decoding; 1,024 new tokens, as evaluated |
+| Reply | Contract version 2: `text` is the answer, `reasoning` the trace written before it (or `null`). Only the answer was graded in H9 |
+| Cut replies | `finish_reason: "length"` whenever the 1,024-token budget filled or the thinking never closed (then `text` is empty). KLEOS then falls back |
+| Requests | The first message must be a system message, as in every training and benchmark prompt; otherwise the request is refused as `invalid_request` before any GPU work |
+
+**Reproduction, 2026-10-07.** The smoke test compared 9 served answers with the
+T4 evaluation, over two quota windows on 2026-10-07:
+
+- 8 of 9 answers and traces were byte-identical; prompt tokens matched on 9 of 9;
+  decisions agreed on 8 of 9.
+- The ninth (`kx-mcb-066bff4fa33aa29b`, a briefing) kept an identical trace for
+  568 of its 761 characters, then took a different sentence. The served answer
+  declined and asked before looking in another workspace, where the evaluation
+  ranked the items correctly. The evidence is consistent with GPU arithmetic
+  rather than setup: equal prompt tokens and a late divergence. Rounding in fp16
+  on the Space's Blackwell GPU differs slightly from the T4's, and a thinking
+  model has a few hundred trace tokens in which a near-tie between two next
+  tokens can flip. That Hermes, which does not think, matched 9 of 9 on the same
+  GPU type supports this reading without proving it.
+- Decision (2026-10-07): accept and document. Logos is served as a Beta,
+  numerically different from the T4 evaluation. Precision and decoding stay as
+  evaluated, because changing them to force a match would change the model.
+
+**Measured on the Space, 2026-10-07:** model load 57.1 s at startup, host peak
+memory 30.6 GiB; GPU peak 8.86 GiB on an RTX PRO 6000 Blackwell MIG 2g.48gb
+slice; 11.0 tokens/s warm, a warm median of 19.7 s per call; 24–26 GPU seconds
+per answer. **About 9 answers fit a fresh daily window** (estimated: ZeroGPU
+admits a call only while 1.5 × the requested 60 s, 90 s, of the 300 s quota
+remain). On day 1, 7 were admitted and the 8th refused; that window had already
+been partly used before the test.
+
+The full deployment record and the smoke-test log are in the
+[serving verification records](experiments/serving-verification-records.md#verification-record--logos).
+Deployment steps: [runbooks/deploy-logos-zerogpu.md](runbooks/deploy-logos-zerogpu.md).
+The request and reply contract: [serving-api.md](serving-api.md).
+
+Logos v0.0.1 is not served. On v0.0.6 it was not measurably better than Hermes,
+it was weaker on recommendations, and it cost about the same per answer (17.2 s
+against Hermes' 16.1 s on a T4). The serving path was generalized from Hermes for
+v0.0.2 instead: one codebase that reads a per-model profile from the deployment
+record.
+
+## Limitations
+
+- **One training run per model.** Every interval covers evaluation noise, not
+  training noise. No second seed was run.
+- **H9 confounds three changes.** The base release, the data and the generation
+  budget (1,024 against 512 new tokens) changed together, and Hermes was not
+  retrained on v0.0.7 (decided 2026-10-06). H9's lower bound, +0.0040, is close
+  to zero.
+- **No `arm1` for v0.0.2.** Fine-tuning's own effect on v0.0.2 was not measured;
+  H8a answered that question for v0.0.1's architecture.
+- **The traces come from the policies.** They are written from the same policies
+  that define the benchmark's reference answers, so H9 measures how well a model
+  learns those policies, not general reasoning.
+- **Adapter selection rewards the trace.** v0.0.2's validation loss covers trace
+  and answer together, and the trace is 58% of the targets by characters. No
+  answer-only loss is recorded.
+- **Should-decline items.** v0.0.2's gain there (+0.1020) is not significant by
+  groups. v0.0.1 cannot learn the four decline labels at all. Whether Logos
+  v0.0.2 declines by evidence rather than by scenario family (the shortcut found
+  in H3 for Hermes) was not analyzed.
+- **Prose, not JSON.** `format_valid` is 0.0 for every KLEOS model: no model
+  answers the JSON-format test inputs in JSON (deviation D2,
+  [deviations log](experiments.md#deviations-log)).
+- **Greedy decoding loops.** 6 of 349 v0.0.2 answers repeated a phrase after a
+  closed trace until the 1,024-token budget ran out (L-F7). They were scored as
+  given, and a served reply is marked `length`.
+- **The served GPU is not the evaluated GPU.** H9 measured the T4 outputs. The
+  Space reproduced 8 of 9 checked answers, and its outputs are not re-measured:
+  the full 349 would take over five weeks at about 9 answers a day.
+- **Small serving capacity.** About 9 answers a day per calling account
+  (estimated; 7 observed on day 1), shared with Hermes when one token calls both.
+- **Open training gaps.** Findings L-F4 (a fresh start into a folder with
+  checkpoints would delete the best one) and L-F5 (`validate_checkpoint` does
+  not check optimizer or scheduler state) are not fixed in `scripts/train.py`
+  ([Logos findings](experiments/logos-findings.md)). The Kaggle training notebook
+  works around both.
+
+## Runbooks
+
+- [Logos v0.0.1 on Colab](runbooks/logos-v001-colab.md): the smoke run, gate,
+  training, both evaluations and the H8a and H8b comparisons, as run between
+  2026-09-24 and 2026-10-01.
+- [Logos v0.0.2 on Kaggle](runbooks/logos-v002-kaggle.md): the two unattended
+  notebooks, resume, and the H9 comparison, as run on 2026-10-06.
+- [Deploying Logos on ZeroGPU](runbooks/deploy-logos-zerogpu.md): package,
+  Space and the smoke test over two quota windows.
+
+## Findings
+
+Eight findings came out of the Logos work. L-F1 to L-F5 were found during
+v0.0.1 and L-F6 to L-F8 during v0.0.2; all eight, with their evidence and status,
+are in [Logos findings](experiments/logos-findings.md).
+
+| Finding | Subject | Status |
 | --- | --- | --- |
-| 1 × T4 (Colab) | smoke: does not fit | 14.46 GB against a 14.41 GB budget |
-| 2 × T4 (Kaggle) | full research | 6.38 GB on GPU 0, **8.53 GB** on GPU 1 (`lm_head`, its 16-bit copy and the logits) |
-
-**The measured anchor agrees.** v0.0.1 measured 13.60 GB with 0.35 GB spare at 448
-tokens, and the estimator was 0.14 GB optimistic there.
-
-Reproduce:
-`python scripts/plan_run.py --config configs/training/kleos_logos_v002.yaml --seq-length 736 --simulate-gpu T4:14.56:7.5:2`.
-
-The smoke run's per-GPU memory probe is the go/no-go gate, as in §4.
-
-**Measured on the run:**
-
-| | GPU 0 | GPU 1 |
-| --- | --- | --- |
-| Peak allocated | 4.75 GB | **10.16 GB** |
-| Spare after optimizer state | — | 4.0 GB |
-
-- The gate passed easily.
-- The total matched the estimate, but the split did not. `device_map: auto` put the
-  embedding and 9 layers on GPU 0, and 31 layers and `lm_head` on GPU 1
-  (finding L-F6).
-
-### 11.4 Kaggle runbook
-
-**Prerequisites:**
-
-1. The code from this phase is committed and **pushed**; Kaggle clones it.
-   Note the full commit sha.
-2. A Kaggle account with phone verification, which GPUs and internet access need.
-   Free GPU quota is about 30 hours a week.
-3. A **private** Kaggle dataset holding the six files of
-   `Kleos-Training-Data/releases/kleos-policy-v0.0.7`:
-   - train, validation and test `.jsonl`;
-   - `manifest.json`, `provenance.json`, `RELEASE.lock`.
-
-   (New Dataset → upload the files → Private.)
-4. **Once, 2 minutes, no GPU:** run `notebooks/kaggle/output_probe.ipynb` (Save & Run
-   All). It writes a marker and then fails on purpose. In any notebook, Add Input →
-   its output: if `probe/marker.txt` is there, a failed or stopped version's output
-   can be attached, and the resume steps below work. If it is not, a run that
-   stops must start over; tell Claude before relying on resume.
-
-**Training.** ESTIMATED 5–6 hours, smoke run included.
-
-1. Import `notebooks/kaggle/logos_v002_train.ipynb` (File → Import Notebook).
-2. Settings → Accelerator → **GPU T4 x2**; Settings → **Internet on**; Settings →
-   Environment → **Pin to original environment** (a resumed evaluation must run
-   the same library versions, or it refuses to resume).
-3. Add Input → the dataset.
-4. In the first code cell, set `COMMIT` to the full sha.
-5. **Save Version → Save & Run All (Commit).** The notebook runs unattended, in
-   this order:
-   1. checks the hardware and disk;
-   2. clones at `COMMIT` and pins the libraries;
-   3. copies the dataset to the pre-registered path, in `/tmp`, which Kaggle
-      never saves, and checks `test.jsonl`;
-   4. refuses to run unless `config_hash` is `d1961583…`;
-   5. plans against the live GPUs;
-   6. runs the 10-step smoke test and the memory gate;
-   7. trains.
-
-   It stops at the first failure. A long command is stopped at 11¼ hours, before
-   Kaggle's 12-hour limit, so the version still ends normally and saves its
-   output; the last cell then says NOT FINISHED. The adapter lands in the finished
-   version's output, at `outputs/kleos-v007-ministral314breasoning-run1/adapter`.
-6. **If it stopped** (12-hour limit, error, quota):
-   1. Add Input → this notebook's previous version **output**.
-   2. Save & Run All again.
-
-   The checkpoints are copied back and training resumes from the latest complete
-   one. A checkpoint missing optimizer or scheduler state is set aside with an
-   `L-F5` line. The notebook always resumes with `auto`, never a fresh start over
-   checkpoints (L-F4).
-
-**Evaluation.** ESTIMATED 7–8 hours.
-
-1. Import `notebooks/kaggle/logos_v002_evaluate.ipynb`, with the same settings
-   (including the pinned environment) and dataset.
-2. Add Input → the training notebook's finished output.
-3. Set `COMMIT` to the same sha.
-4. **Save & Run All.** The notebook:
-   1. rebuilds the benchmark and checks its sha (`a11ffad7…`);
-   2. evaluates `arm2_finetuned` with `--resume`.
-5. **If it stopped,** also attach this notebook's previous output. Its partial file
-   is restored, and finished generations are replayed, not regenerated.
-
-Both notebooks keep the dataset, weights and code in `/tmp`, which Kaggle never
-saves, and publish nothing. Only `outputs/` reaches a version's saved output.
-
-### 11.5 The H9 comparison (on your own machine, CPU only)
-
-1. Download `outputs/kleos-v007-ministral314breasoning-run1/arm2_finetuned.json`
-   from the evaluation notebook's output.
-2. Take Hermes' annotated arm2 from Drive:
-   `outputs/kleos-v006-mistralnemo12b-run1/arm2_finetuned.annotated.json`, made in
-   §9 cell 17.
-3. Run the primary comparison:
-
-```
-.venv/bin/python scripts/compare.py --cross-model \
-    --base <hermes>/arm2_finetuned.annotated.json \
-    --finetuned <logos-v002>/arm2_finetuned.json \
-    --primary-subset answerable --equivalence-margin 0.02 \
-    --report outputs/report_h9_hermes_vs_logos_v002
-```
-
-The same command with `--base` set to Logos v0.0.1's `arm2_finetuned.json` gives
-the secondary v0.0.1 vs v0.0.2 row.
-
-`compare.py` notes that the decoding settings differ (`max_new_tokens` 1024 against
-512). That difference is declared under H9.
-
-### 11.6 Risks for this run
-
-- **First run of this code on two GPUs.** The per-GPU probe loop and the
-  model-parallel check can only execute on real GPUs. The smoke run is their first
-  execution, and it stops before training if either fails.
-- **Kaggle is not Colab.** Its torch version and disk were not measured here. The
-  notebook prints both and refuses to start with less than 30 GB free in `/tmp`.
-- **Greedy decoding on a reasoning model** can loop until `max_new_tokens`. Such
-  answers are counted, not hidden (H9, confounds).
-
-### 11.7 Result
-
-Measured on the run, with ESTIMATED figures from §11.4 alongside:
-
-- **Training:** 4.4 hours (about 4.9 with setup), one session. `checkpoint-175` was
-  selected (epoch 1.70, validation loss 0.0293).
-- **Evaluation:** 5.2 hours, 53.8 s per answer. Every answer thought first, and
-  none ran out of budget while thinking.
-- **[H9](experiments.md#h9-result--2026-10-06): better than Hermes.** Answerable
-  subset 0.8976 → 0.9385 (+0.0409, cluster 95% CI +0.0040 to +0.0780). Overall
-  0.8051 → 0.8596.
-- **Against Logos v0.0.1:** answerable +0.0577, should-decline +0.1131, and no task
-  regressed.
-- **Kaggle quota used:** about 10.5 GPU hours of the weekly 30.
-
-Three findings, L-F6 to L-F8, are recorded in the
-[run report](experiments/kleos-v007-ministral314breasoning-run1-report.md#10-findings):
-
-- **L-F6:** the two-GPU split was uneven.
-- **L-F7:** 6 answers looped after their trace until the token budget ran out, yet
-  `finish_reason` still reads "stop". **Resolved in serving:** a served reply
-  says "length" whenever the budget filled or the thinking never closed. The
-  evaluation code and its stored results are unchanged.
-- **L-F8:** the evaluation shows no progress while it runs.
-
-Its §11 lists what serving a thinking model still needs. That serving is now
-built: [deployment.md](deployment.md#logos-v002-on-zerogpu).
+| L-F1 | `Mistral3VLMAdapter`'s LoRA scoping does not work on transformers 5 | Open; held by strict xfails. No KLEOS run uses that adapter |
+| L-F2 | The tokenizer class depends on `config.json` being present | Served prompts tokenize as in the evaluation: prompt tokens equal on 9 of 9 smoke-test prompts (2026-10-07) |
+| L-F3 | Evaluation resume lost a killed session's work on Colab's Drive mount | Fixed (`ed5a987`), confirmed on Colab 2026-10-01 |
+| L-F4 | A fresh start into a folder with checkpoints would delete the best one | Open |
+| L-F5 | `validate_checkpoint` does not check optimizer or scheduler state | Open |
+| L-F6 | `device_map: auto` did not balance the layers across two T4s | Open |
+| L-F7 | `finish_reason` misses an answer cut by the budget after a closed trace | Resolved in serving |
+| L-F8 | The evaluation reports no progress while it runs | Open |

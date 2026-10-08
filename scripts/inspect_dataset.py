@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print a dataset quality and coverage report (spec §25).
+"""Print a dataset quality and coverage report.
 
 Reports example counts, per-task and per-domain distributions, token statistics,
 missing metadata, and variation-axis coverage — including which situation types
@@ -9,7 +9,7 @@ Usage::
 
     python scripts/inspect_dataset.py --dataset data/examples
     python scripts/inspect_dataset.py --dataset data/examples --coverage
-    python scripts/inspect_dataset.py --dataset data/examples --tokenizer Qwen/Qwen3-8B
+    python scripts/inspect_dataset.py --dataset data/examples --tokenizer mistralai/Mistral-Nemo-Instruct-2407
     python scripts/inspect_dataset.py --dataset data/examples --show-masking
 """
 

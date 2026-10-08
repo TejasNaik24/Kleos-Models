@@ -1,4 +1,4 @@
-"""Data-contract tests (spec §30)."""
+"""Data-contract tests."""
 
 from __future__ import annotations
 

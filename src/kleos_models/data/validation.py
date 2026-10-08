@@ -1,4 +1,4 @@
-"""Dataset validation and quality reporting (spec sections 25 and 30)."""
+"""Dataset validation and quality reporting."""
 
 from __future__ import annotations
 
@@ -301,7 +301,7 @@ def validate_examples(
     return report
 
 
-#: Phrasings that suggest a private fact rather than a policy (spec section 9). Advisory.
+#: Phrasings that suggest a private fact rather than a policy. Advisory.
 _FACT_TEACHING_HINTS = (
     re.compile(r"\bbecause (?:he|she|they|I) (?:work|works|worked) at\b", re.IGNORECASE),
     re.compile(r"\byour (?:resume|CV) (?:says|states|lists)\b", re.IGNORECASE),

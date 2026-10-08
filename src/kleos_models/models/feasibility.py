@@ -1,4 +1,4 @@
-"""GPU probing, memory estimation and feasibility assessment (spec sections 3, 13, 14)."""
+"""GPU probing, memory estimation and feasibility assessment."""
 
 from __future__ import annotations
 
@@ -287,22 +287,6 @@ class ModelShape:
 #: Architecture facts per checkpoint, from its ``config.json``. Parameter counts
 #: are text-only; vision counts were measured on the meta device at the pinned revision.
 KNOWN_SHAPES: dict[str, dict[str, Any]] = {
-    "Qwen/Qwen3-8B": {
-        "parameter_count": 8.2e9,
-        "hidden_size": 4096,
-        "num_layers": 36,
-        "intermediate_size": 12288,
-        "vocab_size": 151936,
-    },
-    "Qwen/Qwen3-30B-A3B-Thinking-2507": {
-        "parameter_count": 30.5e9,
-        "active_parameter_count": 3.3e9,
-        "hidden_size": 2048,
-        "num_layers": 48,
-        "intermediate_size": 768,  # per expert
-        "vocab_size": 151936,
-        "is_moe": True,
-    },
     # Matches the run manifest's 43,646,976 LoRA parameters at r=16, seven projections.
     "mistralai/Ministral-8B-Instruct-2410": {
         "parameter_count": 8.0e9,
@@ -959,9 +943,9 @@ def assess_feasibility(
             [
                 f"{model_config.base_model} does not fit this runtime at "
                 f"{model_config.quantization.mode.value}.",
-                "Use a smaller model config: configs/models/qwen3_8b.yaml or "
-                "ministral_8b.yaml fit a 16GB T4 in 4-bit.",
-                "A 24B or 30B model needs an A100-class GPU (40GB+) for adapter training.",
+                "Use a smaller model config: configs/models/ministral_8b.yaml or "
+                "mistral_nemo_12b.yaml fit a 16GB T4 in 4-bit.",
+                "A 24B model needs an A100-class GPU (40GB+) for adapter training.",
             ]
         )
     elif smoke_estimate.minimum_gb > budget:

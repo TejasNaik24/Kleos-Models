@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software or its results, please cite it as below."
+type: software
+title: "KLEOS Models: behavioral fine-tuning and pre-registered evaluation of open-weight models for a student AI operating system"
+authors:
+  - family-names: Naik
+    given-names: Tejas
+version: 0.4.0
+date-released: 2026-10-07
+repository-code: "https://github.com/TejasNaik24/Kleos-Models"
+license: MIT
+keywords:
+  - fine-tuning
+  - QLoRA
+  - evaluation
+  - pre-registration
+  - open-weight models
+abstract: >-
+  Data contract, QLoRA training pipeline, pre-registered evaluation harness and
+  serving stack behind the KLEOS Hermes v0.0.6 and KLEOS Logos v0.0.2 adapters,
+  trained on Mistral AI open-weight models and evaluated on a 349-example
+  held-out decision benchmark.

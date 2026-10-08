@@ -1,4 +1,4 @@
-"""4-bit / 8-bit quantization configuration (spec section 13)."""
+"""4-bit / 8-bit quantization configuration."""
 
 from __future__ import annotations
 

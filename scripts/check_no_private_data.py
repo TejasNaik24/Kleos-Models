@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan the repository for secrets and private data (spec §2, §42).
+"""Scan the repository for secrets and private data.
 
 This repository is public. This script is the automated part of keeping it that
 way — a safety net, not a substitute for judgement.

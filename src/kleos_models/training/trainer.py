@@ -1,4 +1,4 @@
-"""The QLoRA training pipeline (spec sections 13, 15, 45)."""
+"""The QLoRA training pipeline."""
 
 from __future__ import annotations
 
@@ -244,7 +244,7 @@ def run_training(
     longest_sequence: int | None = None,
     loaded: LoadedModel | None = None,
 ) -> TrainingResult:
-    """Execute the full training pipeline (spec section 15)."""
+    """Execute the full training pipeline."""
     from transformers import Trainer
 
     from kleos_models.compat import trainer_tokenizer_kwarg
@@ -507,7 +507,7 @@ def _write_run_readme(
     manifest: ExperimentManifest,
     metrics: dict[str, Any],
 ) -> Path:
-    """Write a README into the run directory (spec section 34)."""
+    """Write a README into the run directory."""
     lines = [
         f"# Run `{manifest.experiment_id}`",
         "",

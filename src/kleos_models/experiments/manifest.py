@@ -1,4 +1,4 @@
-"""Experiment manifests (spec sections 16, 34, 36, 38)."""
+"""Experiment manifests."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class ExperimentManifest(BaseModel):
     dataset_counts: dict[str, int] = Field(default_factory=dict)
     split_strategy: str | None = None
 
-    # Model identity, spec section 38.
+    # Model identity.
     model: dict[str, Any] = Field(default_factory=dict)
     lora: dict[str, Any] = Field(default_factory=dict)
     quantization: dict[str, Any] = Field(default_factory=dict)

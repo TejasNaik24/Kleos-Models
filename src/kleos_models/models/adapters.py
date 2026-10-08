@@ -1,9 +1,8 @@
-"""Model-family adapters (spec sections 3, 38, 39, 46)."""
+"""Model-family adapters."""
 
 from __future__ import annotations
 
 import copy
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -229,8 +228,8 @@ class ModelFamilyAdapter(ABC):
                     details={"family": self.family, "capability": capability.value},
                     suggestions=[
                         "Set model.reasoning.default_mode to 'standard'.",
-                        "Use a reasoning-capable checkpoint such as "
-                        "Qwen/Qwen3-30B-A3B-Thinking-2507 for reasoning experiments.",
+                        "Use a reasoning-capable checkpoint for reasoning experiments, "
+                        "for example configs/models/ministral3_14b_reasoning.yaml.",
                         "Do not simulate reasoning by injecting <think> tags: that "
                         "measures formatting, not reasoning.",
                     ],
@@ -271,7 +270,7 @@ class ModelFamilyAdapter(ABC):
         return list(lora.target_modules)
 
     def validate_target_modules(self, model: Any, lora: LoRAConfig) -> TargetModuleResolution:
-        """Check requested targets exist in the loaded model (spec section 46)."""
+        """Check requested targets exist in the loaded model."""
         requested = self.resolve_target_modules(lora)
         excluded = [*self.excluded_module_patterns, *lora.exclude_modules]
         prefix = self.capabilities.language_model_prefix
@@ -379,95 +378,6 @@ def _is_leaf_linear(model: Any, name: str) -> bool:
     return len(shape) == 2
 
 
-class QwenDenseAdapter(ModelFamilyAdapter):
-    """Qwen3 dense causal LMs, e.g. ``Qwen/Qwen3-8B``."""
-
-    model_types = ("qwen3", "qwen2", "qwen2_5")
-    family = "qwen"
-
-    @property
-    def capabilities(self) -> ModelCapabilities:
-        return ModelCapabilities(
-            family="qwen",
-            model_type=self.config.model_type or "qwen3",
-            auto_class="AutoModelForCausalLM",
-            reasoning=ReasoningCapability.SWITCHABLE,
-            is_moe=False,
-            is_multimodal=False,
-            supports_4bit=True,
-            default_context_limit=40960,
-            notes=[
-                "Thinking mode is switchable via the chat template's enable_thinking argument.",
-            ],
-        )
-
-    @property
-    def default_target_modules(self) -> list[str]:
-        return [
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ]
-
-    def chat_template_kwargs(self, mode: ReasoningMode) -> dict[str, Any]:
-        # Explicit, so the mode is recorded rather than left to a template default.
-        return {"enable_thinking": mode is ReasoningMode.THINKING}
-
-
-class QwenMoEAdapter(ModelFamilyAdapter):
-    """Qwen3 mixture-of-experts checkpoints."""
-
-    model_types = ("qwen3_moe",)
-    family = "qwen"
-
-    @property
-    def capabilities(self) -> ModelCapabilities:
-        return ModelCapabilities(
-            family="qwen",
-            model_type=self.config.model_type or "qwen3_moe",
-            auto_class="AutoModelForCausalLM",
-            reasoning=ReasoningCapability.ALWAYS_ON,
-            is_moe=True,
-            is_multimodal=False,
-            supports_4bit=True,
-            default_context_limit=262144,
-            notes=[
-                "Mixture of experts: ~30B total parameters, ~3B active per token. "
-                "Do not plan compute as if it were a dense 30B model.",
-                "Thinking-only checkpoint: the chat template does not accept "
-                "enable_thinking and always emits a reasoning span.",
-                "LoRA targets attention only; adapting 128 experts per layer is "
-                "neither practical nor well-conditioned.",
-            ],
-        )
-
-    @property
-    def default_target_modules(self) -> list[str]:
-        return ["q_proj", "k_proj", "v_proj", "o_proj"]
-
-    @property
-    def excluded_module_patterns(self) -> list[str]:
-        return [
-            *super().excluded_module_patterns,
-            "mlp.gate",  # MoE router: routing must stay fixed
-            "mlp.experts",  # per-expert FFNs
-            "shared_expert_gate",
-        ]
-
-    @property
-    def modules_to_not_quantize(self) -> list[str]:
-        # Quantizing the router costs routing quality far beyond the memory saved.
-        return ["lm_head", "mlp.gate"]
-
-    def chat_template_kwargs(self, mode: ReasoningMode) -> dict[str, Any]:
-        # Passing enable_thinking to this template is an error, not a no-op.
-        return {}
-
-
 class MistralDenseAdapter(ModelFamilyAdapter):
     """Text-only Mistral causal LMs, e.g. ``mistralai/Ministral-8B-Instruct-2410``."""
 
@@ -488,7 +398,7 @@ class MistralDenseAdapter(ModelFamilyAdapter):
             notes=[
                 "Standard instruction model with no reasoning mode.",
                 "Uses interleaved sliding-window attention; very long contexts "
-                "behave differently from Qwen3.",
+                "behave differently from models with full attention.",
             ],
         )
 
@@ -716,8 +626,6 @@ class Ministral3ReasoningTextAdapter(Ministral3TextAdapter):
 
 #: Concrete adapters, in resolution order.
 _ADAPTER_CLASSES: tuple[type[ModelFamilyAdapter], ...] = (
-    QwenMoEAdapter,
-    QwenDenseAdapter,
     Mistral3VLMAdapter,
     Ministral3TextAdapter,
     Ministral3ReasoningTextAdapter,
@@ -743,21 +651,13 @@ def _infer_model_type(config: ModelConfig) -> str:
         return config.model_type
 
     name = config.base_model.lower()
-    # Order matters: the MoE and VLM checks must precede the generic ones.
-    if re.search(r"a3b|moe|mixture", name):
-        return "qwen3_moe"
+    # Order matters: the specific checks must precede the generic Mistral one.
     if "mistral-small-3" in name or "mistral-small-24b" in name:
         return "mistral3"
     if "ministral-3-" in name and "reasoning" in name:
         return "ministral3_reasoning"
     if "ministral-3-" in name:
         return "ministral3"
-    if "qwen3" in name or "qwen-3" in name:
-        return "qwen3"
-    if "qwen2.5" in name or "qwen2_5" in name:
-        return "qwen2_5"
-    if "qwen" in name:
-        return "qwen2"
     if "mistral" in name or "ministral" in name or "mixtral" in name:
         return "mistral"
     return ""
@@ -780,7 +680,7 @@ def get_adapter(config: ModelConfig) -> ModelFamilyAdapter:
                 "Set model.model_type explicitly in the config.",
                 "Add an adapter subclassing ModelFamilyAdapter and register it "
                 "with @register_adapter — the training pipeline needs no changes.",
-                "See src/kleos_models/models/adapters.py for the four built-in families.",
+                "See src/kleos_models/models/adapters.py for the built-in Mistral adapters.",
             ],
         )
 

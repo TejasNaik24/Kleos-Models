@@ -13,26 +13,6 @@ from kleos_models.models.adapters import get_adapter
 pytestmark = [pytest.mark.requires_torch, pytest.mark.requires_peft, pytest.mark.slow]
 
 
-def build_tiny_qwen3():
-    """A ~1M parameter Qwen3 with the real architecture, random weights."""
-    import torch
-    from transformers import Qwen3Config, Qwen3ForCausalLM
-
-    config = Qwen3Config(
-        vocab_size=256,
-        hidden_size=64,
-        intermediate_size=128,
-        num_hidden_layers=2,
-        num_attention_heads=4,
-        num_key_value_heads=2,
-        head_dim=16,
-        max_position_embeddings=512,
-        tie_word_embeddings=False,
-    )
-    torch.manual_seed(0)
-    return Qwen3ForCausalLM(config)
-
-
 def build_tiny_mistral():
     """A tiny MistralForCausalLM with random weights."""
     import torch
@@ -51,17 +31,6 @@ def build_tiny_mistral():
     return MistralForCausalLM(config)
 
 
-def qwen_config() -> ModelConfig:
-    return ModelConfig(
-        name="tiny_qwen",
-        family="qwen",
-        base_model="Qwen/Qwen3-8B",
-        model_type="qwen3",
-        max_seq_length=128,
-        lora=LoRAConfig(r=4, alpha=8, target_modules="auto"),
-    )
-
-
 def mistral_config() -> ModelConfig:
     return ModelConfig(
         name="tiny_mistral",
@@ -74,52 +43,40 @@ def mistral_config() -> ModelConfig:
 
 
 @pytest.fixture(scope="module")
-def tiny_qwen():
-    return build_tiny_qwen3()
-
-
-@pytest.fixture(scope="module")
 def tiny_mistral():
     return build_tiny_mistral()
 
 
 class TestTargetDiscovery:
-    def test_qwen_targets_exist_in_the_real_architecture(self, tiny_qwen):
-        adapter = get_adapter(qwen_config())
-        resolution = adapter.validate_target_modules(tiny_qwen, qwen_config().lora)
-        assert resolution.ok
-        assert resolution.matched_module_count > 0
-        assert set(resolution.matched) == set(adapter.default_target_modules)
-
     def test_mistral_targets_exist_in_the_real_architecture(self, tiny_mistral):
         adapter = get_adapter(mistral_config())
         resolution = adapter.validate_target_modules(tiny_mistral, mistral_config().lora)
         assert resolution.ok
         assert resolution.matched_module_count > 0
 
-    def test_a_bogus_target_fails_with_the_real_candidates_listed(self, tiny_qwen):
+    def test_a_bogus_target_fails_with_the_real_candidates_listed(self, tiny_mistral):
         from kleos_models.errors import ModelCompatibilityError
 
-        config = qwen_config()
+        config = mistral_config()
         config.lora = LoRAConfig(target_modules=["not_a_real_module"])
         adapter = get_adapter(config)
 
         with pytest.raises(ModelCompatibilityError) as info:
-            adapter.validate_target_modules(tiny_qwen, config.lora)
+            adapter.validate_target_modules(tiny_mistral, config.lora)
 
         message = str(info.value)
         assert "not_a_real_module" in message
         assert "q_proj" in message
 
-    def test_excluded_modules_are_not_adapted(self, tiny_qwen):
-        adapter = get_adapter(qwen_config())
-        resolution = adapter.validate_target_modules(tiny_qwen, qwen_config().lora)
+    def test_excluded_modules_are_not_adapted(self, tiny_mistral):
+        adapter = get_adapter(mistral_config())
+        resolution = adapter.validate_target_modules(tiny_mistral, mistral_config().lora)
         assert "lm_head" not in resolution.matched
 
-    def test_module_listing_reports_real_shapes(self, tiny_qwen):
+    def test_module_listing_reports_real_shapes(self, tiny_mistral):
         from kleos_models.models.loading import list_candidate_modules
 
-        candidates = list_candidate_modules(tiny_qwen)
+        candidates = list_candidate_modules(tiny_mistral)
         assert candidates
         names = {c["suffix"] for c in candidates}
         assert {"q_proj", "k_proj", "v_proj", "o_proj"} <= names
@@ -127,11 +84,11 @@ class TestTargetDiscovery:
 
 
 class TestLoRAAttachment:
-    def test_only_lora_parameters_are_trainable(self, tiny_qwen):
+    def test_only_lora_parameters_are_trainable(self, tiny_mistral):
         from kleos_models.models.peft_setup import attach_lora
 
-        model = build_tiny_qwen3()
-        config = qwen_config()
+        model = build_tiny_mistral()
+        config = mistral_config()
         result = attach_lora(
             model,
             config,
@@ -150,12 +107,12 @@ class TestLoRAAttachment:
             f"{[n for n in trainable_names if 'lora' not in n.lower()][:5]}"
         )
 
-    def test_attachment_summary_is_recorded(self, tiny_qwen):
+    def test_attachment_summary_is_recorded(self, tiny_mistral):
         from kleos_models.models.peft_setup import attach_lora
 
-        config = qwen_config()
+        config = mistral_config()
         result = attach_lora(
-            build_tiny_qwen3(),
+            build_tiny_mistral(),
             config,
             TrainingConfig(gradient_checkpointing=False),
             get_adapter(config),
@@ -180,7 +137,7 @@ class TestLoRAAttachment:
         assert result.trainable_parameters > 0
 
 
-QWEN_TEMPLATE = (
+CHATML_TEMPLATE = (
     "{% for message in messages %}"
     "<|im_start|>{{ message['role'] }}\n{{ message['content'] }}<|im_end|>\n"
     "{% endfor %}"
@@ -191,7 +148,7 @@ QWEN_TEMPLATE = (
 class TestMaskingWithARealTokenizer:
     @pytest.fixture
     def tokenizer(self):
-        """A real fast tokenizer with a Qwen-style chat template."""
+        """A real fast tokenizer with a ChatML chat template."""
         from tokenizers import Tokenizer, models, pre_tokenizers
         from transformers import PreTrainedTokenizerFast
 
@@ -232,7 +189,7 @@ class TestMaskingWithARealTokenizer:
             pad_token="tok1",
             eos_token="<|im_end|>",
         )
-        tokenizer.chat_template = QWEN_TEMPLATE
+        tokenizer.chat_template = CHATML_TEMPLATE
         return tokenizer
 
     def test_only_the_answer_is_supervised(self, tokenizer):
@@ -313,9 +270,9 @@ class TestRealTrainingStep:
     def test_gradients_reach_the_adapter(self):
         from kleos_models.models.peft_setup import attach_lora, verify_gradients_flow
 
-        config = qwen_config()
+        config = mistral_config()
         result = attach_lora(
-            build_tiny_qwen3(),
+            build_tiny_mistral(),
             config,
             TrainingConfig(gradient_checkpointing=False),
             get_adapter(config),
@@ -334,9 +291,9 @@ class TestRealTrainingStep:
         from kleos_models.errors import ModelCompatibilityError
         from kleos_models.models.peft_setup import attach_lora, verify_gradients_flow
 
-        config = qwen_config()
+        config = mistral_config()
         result = attach_lora(
-            build_tiny_qwen3(),
+            build_tiny_mistral(),
             config,
             TrainingConfig(gradient_checkpointing=False),
             get_adapter(config),
@@ -354,10 +311,10 @@ class TestRealTrainingStep:
 
         from kleos_models.models.peft_setup import attach_lora
 
-        config = qwen_config()
+        config = mistral_config()
         config.lora = LoRAConfig(r=8, alpha=16, target_modules="auto")
         result = attach_lora(
-            build_tiny_qwen3(),
+            build_tiny_mistral(),
             config,
             TrainingConfig(gradient_checkpointing=False),
             get_adapter(config),
@@ -388,8 +345,8 @@ class TestRealTrainingStep:
 
         from kleos_models.models.peft_setup import attach_lora
 
-        config = qwen_config()
-        model = build_tiny_qwen3()
+        config = mistral_config()
+        model = build_tiny_mistral()
         reference = {
             name: parameter.detach().clone()
             for name, parameter in model.named_parameters()
@@ -430,8 +387,8 @@ class TestAdapterPersistence:
 
         from kleos_models.models.peft_setup import attach_lora
 
-        config = qwen_config()
-        base = build_tiny_qwen3()
+        config = mistral_config()
+        base = build_tiny_mistral()
         result = attach_lora(
             base,
             config,
@@ -464,7 +421,7 @@ class TestAdapterPersistence:
         with torch.no_grad():
             trained_logits = model(**batch).logits.clone()
 
-        fresh_base = build_tiny_qwen3()
+        fresh_base = build_tiny_mistral()
         reloaded = PeftModel.from_pretrained(fresh_base, str(adapter_dir))
         reloaded.eval()
         with torch.no_grad():
@@ -480,8 +437,8 @@ class TestAdapterPersistence:
 
         from kleos_models.models.peft_setup import attach_lora
 
-        config = qwen_config()
-        base = build_tiny_qwen3()
+        config = mistral_config()
+        base = build_tiny_mistral()
         batch = {
             "input_ids": torch.randint(0, 200, (1, 16)),
             "attention_mask": torch.ones(1, 16, dtype=torch.long),
@@ -557,7 +514,7 @@ class TestEndToEndPipeline:
             pad_token="tok1",
             eos_token="<|im_end|>",
         )
-        tokenizer.chat_template = QWEN_TEMPLATE
+        tokenizer.chat_template = CHATML_TEMPLATE
 
         examples = [
             TrainingExample.model_validate(
@@ -582,9 +539,9 @@ class TestEndToEndPipeline:
         padded = batch["attention_mask"] == 0
         assert torch.all(batch["labels"][padded] == IGNORE_INDEX)
 
-        config = qwen_config()
+        config = mistral_config()
         result = attach_lora(
-            build_tiny_qwen3(),
+            build_tiny_mistral(),
             config,
             TrainingConfig(gradient_checkpointing=False),
             get_adapter(config),
@@ -635,7 +592,7 @@ class TestFullPipelineEndToEnd:
             pad_token="tok1",
             eos_token="<|im_end|>",
         )
-        tokenizer.chat_template = QWEN_TEMPLATE
+        tokenizer.chat_template = CHATML_TEMPLATE
 
         config = load_config(
             CONFIGS_DIR / "training" / "debug.yaml",
@@ -656,7 +613,7 @@ class TestFullPipelineEndToEnd:
         model_config = config.model
         adapter = get_adapter(model_config)
         loaded = LoadedModel(
-            model=build_tiny_qwen3(),
+            model=build_tiny_mistral(),
             tokenizer=tokenizer,
             adapter=adapter,
             config=model_config,
@@ -735,7 +692,7 @@ class TestFullPipelineEndToEnd:
         assert "train_begin" in names
         assert "train_end" in names
 
-        # Spec §31: never log raw example content.
+        # never log raw example content.
         raw = (result.output_dir / "events.jsonl").read_text(encoding="utf-8")
         assert "Rank alpha beta" not in raw
 
@@ -755,7 +712,7 @@ class TestFullPipelineEndToEnd:
         assert checkpoints[0].metadata["dataset_version"] == "tiny-test-v0"
 
     def test_failure_is_recorded_in_the_manifest(self, tiny_setup):
-        """A crashed run must leave a manifest saying it failed (spec §36)."""
+        """A crashed run must leave a manifest saying it failed."""
         from kleos_models.experiments.manifest import ExperimentManifest, RunStatus, build_manifest
         from kleos_models.training.trainer import run_training
 

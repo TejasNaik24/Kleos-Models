@@ -1,4 +1,4 @@
-"""Experiment manifest, registry and checkpointing tests (spec §16, §33, §34, §36)."""
+"""Experiment manifest, registry and checkpointing tests."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def make_checkpoint(directory, step: int, *, complete: bool = True):
 
 class TestExperimentId:
     def test_id_contains_the_model_name(self):
-        assert "qwen3_8b" in generate_experiment_id(name="kleos", model_name="qwen3_8b")
+        assert "nemo_12b" in generate_experiment_id(name="kleos", model_name="nemo_12b")
 
     def test_id_contains_the_config_hash(self):
         assert "abcd1234" in generate_experiment_id(config_hash="abcd1234ef")
@@ -183,7 +183,7 @@ class TestRegistry:
         assert len(ExperimentRegistry(tmp_path).scan()) == 2
 
     def test_failed_runs_stay_visible(self, config, tmp_path):
-        # Spec §36: hiding failures would make cherry-picking easy.
+        # Hiding failures would make cherry-picking easy.
         self._write_run(tmp_path, config, "run-ok")
         self._write_run(tmp_path, config, "run-bad", status=RunStatus.FAILED)
         registry = ExperimentRegistry(tmp_path)
@@ -199,7 +199,7 @@ class TestRegistry:
     def test_filtering_by_family(self, config, tmp_path):
         self._write_run(tmp_path, config, "run-a")
         registry = ExperimentRegistry(tmp_path)
-        assert registry.filter(model_family="qwen")
+        assert registry.filter(model_family="mistral")
         assert not registry.filter(model_family="nonexistent")
 
     def test_empty_registry_renders_a_message(self, tmp_path):
@@ -247,14 +247,14 @@ class TestComparability:
     def test_cross_family_comparison_is_allowed_but_warned(self, config):
         left = self._manifest(config)
         right = self._manifest(config)
-        right.model = {**right.model, "family": "mistral"}
+        right.model = {**right.model, "family": "other"}
         warnings = assert_comparable(left, right)
         assert any("model families" in w for w in warnings)
 
     def test_cross_family_can_be_forbidden(self, config):
         left = self._manifest(config)
         right = self._manifest(config)
-        right.model = {**right.model, "family": "mistral"}
+        right.model = {**right.model, "family": "other"}
         with pytest.raises(ValueError, match="model families"):
             assert_comparable(left, right, allow_cross_family=False)
 

@@ -10,11 +10,10 @@
 #                             --output-dir /path/to/persistent/outputs \
 #                             --experiment-id kleos-v006-smoke
 #
-# The KLEOS debug config that ships with the repo targets Qwen3-8B. KLEOS
-# training is Mistral-based, so the smoke test has to exercise the Mistral load
-# path — AutoModelForCausalLM on MistralForCausalLM, the Mistral chat template,
-# and MistralDenseAdapter's target-module resolution. Smoke-testing a different
-# family would prove nothing about the run that follows.
+# The smoke test exercises the exact load path of the run that follows:
+# AutoModelForCausalLM on MistralForCausalLM, the Mistral chat template, and
+# MistralDenseAdapter's target-module resolution. Smoke-testing a different
+# checkpoint would prove nothing about that run.
 # ---------------------------------------------------------------------------
 
 extends: ../base.yaml

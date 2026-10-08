@@ -2,28 +2,27 @@
 
 ## What is committed, and what is not
 
-`data/` is **deny-by-default** in `.gitignore`. Everything here is ignored unless
+`data/` is deny-by-default in `.gitignore`. Everything here is ignored unless
 explicitly allowlisted, so a file with an unexpected name cannot slip into a
 public commit.
 
 | Path | Contents | Committed? |
 | --- | --- | --- |
-| `schema/` | JSON Schema — describes shape, holds no data | **yes** |
-| `examples/` | Synthetic development fixtures — generated, no real data | **yes** |
-| `README.md` | This file | **yes** |
-| `raw/` | Private/raw data | **no** — only `.gitkeep` |
-| `processed/` | Generated datasets | **no** — only `.gitkeep` |
-| anything else | | **no** |
+| `schema/` | JSON Schema: describes shape, holds no data | yes |
+| `examples/` | Synthetic development fixtures: generated, no real data | yes |
+| `README.md` | This file | yes |
+| `raw/` | Private or raw data | no, only `.gitkeep` |
+| `processed/` | Generated datasets | no, only `.gitkeep` |
+| anything else | | no |
 
-Drop a real export in as `data/my_export.jsonl`, `data/memories.json` or
-`data/kleos-policy-v0.1.0/train.jsonl` and git will ignore all of it.
+A real export dropped in as `data/my_export.jsonl`, `data/memories.json` or
+`data/kleos-policy-v0.1.0/train.jsonl` is ignored in full.
 
-`tests/test_gitignore.py` verifies this against real git behaviour, so the
+`tests/test_gitignore.py` verifies this against real git behavior, so the
 guarantee cannot quietly regress.
 
-Your actual training data belongs in the **separate private repository** and is
-consumed by path — never copied here. See
-[../docs/privacy.md](../docs/privacy.md).
+Real training data belongs in the separate private repository and is consumed by
+path, never copied here. See [../docs/privacy.md](../docs/privacy.md).
 
 ## `examples/` is not the research dataset
 
@@ -43,7 +42,8 @@ python scripts/prepare_dataset.py --generate-fixtures
 ## `schema/`
 
 Generated from `src/kleos_models/data/schemas.py`, which is the source of truth.
-A test fails if they drift.
+`tests/test_data_schema.py` and a CI step fail if the committed files drift from
+it.
 
 ```bash
 python scripts/prepare_dataset.py --emit-schemas
@@ -51,12 +51,12 @@ python scripts/prepare_dataset.py --emit-schemas
 
 ## Using the real dataset
 
-The private `kleos-training-data` repository produces a versioned artifact. Point
-at it by path — from anywhere on disk, outside this repository:
+The private `kleos-training-data` repository produces a versioned release. Point
+at it by path, anywhere on disk outside this repository:
 
 ```bash
 python scripts/train.py --config configs/training/qlora_small.yaml \
-                        --dataset /path/to/private/dataset
+                        --dataset <path to release>
 ```
 
 Never copy it here.

@@ -1,4 +1,4 @@
-"""Evaluation tests (spec §21-§24, §30, §54)."""
+"""Evaluation tests."""
 
 from __future__ import annotations
 

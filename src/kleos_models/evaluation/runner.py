@@ -1,4 +1,4 @@
-"""The evaluation runner (spec sections 19, 20, 21)."""
+"""The evaluation runner."""
 
 from __future__ import annotations
 

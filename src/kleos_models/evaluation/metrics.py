@@ -1,4 +1,4 @@
-"""Evaluation metrics (spec section 21)."""
+"""Evaluation metrics."""
 
 from __future__ import annotations
 

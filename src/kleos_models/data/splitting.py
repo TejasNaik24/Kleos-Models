@@ -1,4 +1,4 @@
-"""Train/validation/test splitting (spec section 12)."""
+"""Train/validation/test splitting."""
 
 from __future__ import annotations
 

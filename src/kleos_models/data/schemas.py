@@ -1,4 +1,4 @@
-"""Versioned data contract for KLEOS training and evaluation (spec section 7)."""
+"""Versioned data contract for KLEOS training and evaluation."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from kleos_models.constants import (
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 
-#: Stripped before training: never teach display chain-of-thought (spec section 39).
+#: Stripped before training: never teach display chain-of-thought.
 _THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", flags=re.DOTALL | re.IGNORECASE)
 _DANGLING_CLOSE = re.compile(r"^\s*.*?</think>\s*", flags=re.DOTALL | re.IGNORECASE)
 
@@ -112,7 +112,7 @@ class Message(BaseModel):
 
 
 class VariationAxes(BaseModel):
-    """Situation descriptors used for coverage reporting (spec section 10).
+    """Situation descriptors used for coverage reporting.
 
     Extra keys are permitted so new axes can be piloted in the private dataset
     before being promoted into :data:`kleos_models.constants.VARIATION_AXES`.
@@ -395,7 +395,7 @@ class SplitCounts(BaseModel):
 
 
 class DatasetManifest(BaseModel):
-    """Dataset-level provenance (spec section 26).
+    """Dataset-level provenance.
 
     A dataset version is immutable. ``scripts/split_dataset.py`` refuses to
     overwrite an existing version directory, because silently rewriting a version

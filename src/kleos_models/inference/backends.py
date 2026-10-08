@@ -1,4 +1,4 @@
-"""Generation backends (spec sections 19, 20)."""
+"""Generation backends."""
 
 from __future__ import annotations
 
@@ -209,7 +209,7 @@ class HuggingFaceBackend(BaseBackend):
         tokenizer = self.loaded.tokenizer
         metadata = {"backend": self.name, "reasoning_mode": self.loaded.reasoning_mode.value}
 
-        # Graders score the answer, not the thinking span (spec section 39).
+        # Graders score the answer, not the thinking span.
         markers = self._thinking_markers()
         if markers is not None:
             # [THINK]/[/THINK] are special tokens; split on ids, as decoding erases the boundary.
@@ -289,7 +289,7 @@ class EchoBackend(BaseBackend):
 
 
 class FrontierAPIBackend(BaseBackend):
-    """Interface for a hosted frontier reference model (spec section 20)."""
+    """Interface for a hosted frontier reference model."""
 
     name = "frontier"
 

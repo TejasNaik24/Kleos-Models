@@ -1,4 +1,4 @@
-"""Leakage-detection tests (spec §11, §30)."""
+"""Leakage-detection tests."""
 
 from __future__ import annotations
 

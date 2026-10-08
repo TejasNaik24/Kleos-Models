@@ -27,10 +27,15 @@ An inference API for the KLEOS backend. There is no chat interface here.
 
 It serves the frozen Logos v0.0.2 artifact: a LoRA adapter on the text tower of
 `mistralai/Ministral-3-14B-Reasoning-2512` at a pinned revision, in 4-bit NF4
-with float16 compute and greedy decoding, exactly as it was evaluated. At
-startup the Space downloads the deployment package at a pinned commit, verifies
-every file hash and the full model identity, and refuses to start if anything
-differs.
+with float16 compute and greedy decoding, as it was evaluated. At startup the
+Space downloads the deployment package at a pinned commit, verifies every file
+hash and the full model identity, and refuses to start if anything differs.
+
+Status: Beta. On 2026-10-07 this Space reproduced 8 of 9 checked answers and
+thinking traces from the frozen evaluation byte for byte. The ninth diverged
+late in its trace on this GPU and changed its decision. Logos measured better
+than Hermes on the benchmark's answerable items; that result describes the
+evaluation outputs, which this Space does not re-measure.
 
 Logos always thinks before it answers. A `/generate` reply carries the answer in
 `text` and the thinking in `reasoning` (contract version 2). `finish_reason` is
@@ -42,11 +47,17 @@ Endpoints (Gradio API, via `gradio_client`):
 
 | Endpoint | Input | Output |
 |---|---|---|
-| `/generate` | `{"messages": [...], "max_new_tokens"?: int, "request_id"?: str}` | status contract, version 2 |
-| `/status` | none | identity, runtime and limits (no GPU used) |
+| `/generate` | `{"messages": [...], "max_new_tokens"?: int, "request_id"?: str}` | Status contract, version 2 |
+| `/status` | none | Identity, runtime and limits (no GPU used) |
 
 Both require the `X-Logos-Key` header. Requests carry no user, workspace or
 tool data, and neither prompts, answers nor thinking traces are logged.
 
-Source, tests and the full contract: the `kleos-models` repository,
-`docs/deployment.md` and `docs/kleos-hermes-integration.md`.
+Source, tests and documentation:
+
+- [Kleos-Models on GitHub](https://github.com/TejasNaik24/Kleos-Models)
+- [Deployment reference](https://github.com/TejasNaik24/Kleos-Models/blob/main/docs/deployment.md):
+  packaging, identity checks, this Space, verification status
+- [Serving API](https://github.com/TejasNaik24/Kleos-Models/blob/main/docs/serving-api.md):
+  request, reply and status contract for the KLEOS backend, including Logos'
+  contract version 2

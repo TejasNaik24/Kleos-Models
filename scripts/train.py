@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a KLEOS LoRA/QLoRA adapter (spec §15).
+"""Train a KLEOS LoRA/QLoRA adapter.
 
 Executes the pipeline in the order the specification defines: load and validate
 config, inspect the environment, load tokenizer and quantized model, prepare
@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     setup_logging(args)
 
-    # Spec §15 steps 1-2: config.
+    # Steps 1-2: config.
     print_header("KLEOS training")
     config = load_config(
         args.config,

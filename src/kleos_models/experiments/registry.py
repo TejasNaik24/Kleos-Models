@@ -1,4 +1,4 @@
-"""Experiment registry (spec sections 36, 53)."""
+"""Experiment registry."""
 
 from __future__ import annotations
 

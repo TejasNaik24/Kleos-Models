@@ -1,4 +1,4 @@
-"""Feasibility and memory-estimation tests (spec §3, §13, §14)."""
+"""Feasibility and memory-estimation tests."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from kleos_models.config import (
 from kleos_models.errors import InsufficientMemoryError
 from kleos_models.models.adapters import get_adapter
 from kleos_models.models.feasibility import (
+    KNOWN_SHAPES,
     GPUInfo,
     ModelShape,
     assess_feasibility,
@@ -84,7 +85,7 @@ class TestGPUInfo:
 
 class TestModelShape:
     @pytest.mark.parametrize(
-        "name", ["qwen3_8b", "ministral_8b", "mistral_small_3_2", "qwen3_30b_a3b_thinking"]
+        "name", ["ministral_8b", "mistral_nemo_12b", "ministral3_14b", "mistral_small_3_2"]
     )
     def test_known_checkpoints_have_real_shapes(self, name):
         shape = ModelShape.from_config(model(name))
@@ -92,16 +93,14 @@ class TestModelShape:
         assert shape.num_layers > 0
         assert shape.hidden_size > 0
 
-    def test_moe_shape_records_active_parameters(self):
-        shape = ModelShape.from_config(model("qwen3_30b_a3b_thinking"))
-        assert shape.is_moe
-        assert shape.active_parameter_count is not None
-        assert shape.active_parameter_count < shape.parameter_count
+    def test_known_shapes_cover_only_the_mistral_checkpoints(self):
+        assert KNOWN_SHAPES
+        assert all(name.startswith("mistralai/") for name in KNOWN_SHAPES)
 
 
 class TestLoRAParameterEstimate:
     def test_more_targets_means_more_parameters(self):
-        shape = ModelShape.from_config(model("qwen3_8b"))
+        shape = ModelShape.from_config(model("ministral_8b"))
         attention_only = estimate_lora_parameters(
             shape, 16, ["q_proj", "k_proj", "v_proj", "o_proj"]
         )
@@ -111,20 +110,20 @@ class TestLoRAParameterEstimate:
         assert with_mlp > attention_only
 
     def test_rank_scales_parameters_linearly(self):
-        shape = ModelShape.from_config(model("qwen3_8b"))
+        shape = ModelShape.from_config(model("ministral_8b"))
         r16 = estimate_lora_parameters(shape, 16, ["q_proj"])
         r32 = estimate_lora_parameters(shape, 32, ["q_proj"])
         assert r32 == pytest.approx(r16 * 2)
 
     def test_adapter_is_a_tiny_fraction_of_the_model(self):
-        shape = ModelShape.from_config(model("qwen3_8b"))
+        shape = ModelShape.from_config(model("ministral_8b"))
         params = estimate_lora_parameters(shape, 16, ["q_proj", "k_proj", "v_proj", "o_proj"])
         assert params / shape.parameter_count < 0.01
 
 
 class TestMemoryEstimate:
     def test_quantization_reduces_weight_memory(self):
-        config = model("qwen3_8b")
+        config = model("ministral_8b")
         quantized = estimate_memory(config, TrainingConfig())
 
         unquantized = config.model_copy(deep=True)
@@ -134,48 +133,42 @@ class TestMemoryEstimate:
         assert quantized.base_weights_gb < full.base_weights_gb
 
     def test_longer_sequences_need_more_activation_memory(self):
-        config = model("qwen3_8b")
+        config = model("ministral_8b")
         short = estimate_memory(config, TrainingConfig(), seq_length=512)
         long = estimate_memory(config, TrainingConfig(), seq_length=4096)
         assert long.activations_gb > short.activations_gb
 
     def test_gradient_checkpointing_reduces_activation_memory(self):
-        config = model("qwen3_8b")
+        config = model("ministral_8b")
         with_ckpt = estimate_memory(config, TrainingConfig(gradient_checkpointing=True))
         without = estimate_memory(config, TrainingConfig(gradient_checkpointing=False))
         assert with_ckpt.activations_gb < without.activations_gb
 
     def test_paged_8bit_optimizer_uses_less_memory(self):
-        config = model("qwen3_8b")
+        config = model("ministral_8b")
         paged = estimate_memory(config, TrainingConfig(optim="paged_adamw_8bit"))
         adamw = estimate_memory(config, TrainingConfig(optim="adamw_torch"))
         assert paged.optimizer_gb < adamw.optimizer_gb
 
     def test_bigger_models_need_more_memory(self):
-        small = estimate_memory(model("qwen3_8b"), TrainingConfig())
+        small = estimate_memory(model("ministral_8b"), TrainingConfig())
         large = estimate_memory(model("mistral_small_3_2"), TrainingConfig())
         assert large.base_weights_gb > small.base_weights_gb
 
-    def test_moe_memory_tracks_total_not_active_parameters(self):
-        # All experts stay resident even though only a subset activates.
-        estimate = estimate_memory(model("qwen3_30b_a3b_thinking"), TrainingConfig())
-        assert estimate.base_weights_gb > 14
-        assert any("MoE" in assumption for assumption in estimate.assumptions)
-
     def test_assumptions_are_stated(self):
-        estimate = estimate_memory(model("qwen3_8b"), TrainingConfig())
+        estimate = estimate_memory(model("ministral_8b"), TrainingConfig())
         assert estimate.assumptions
         assert any("bytes/param" in a for a in estimate.assumptions)
 
     def test_estimate_renders_a_breakdown(self):
-        rendered = estimate_memory(model("qwen3_8b"), TrainingConfig()).render()
+        rendered = estimate_memory(model("ministral_8b"), TrainingConfig()).render()
         assert "base weights" in rendered
         assert "estimated peak" in rendered
 
 
 class TestFeasibilityTiers:
     def test_8b_models_are_trainable_on_a_free_t4(self):
-        for name in ("qwen3_8b", "ministral_8b"):
+        for name in ("ministral_8b", "mistral_nemo_12b"):
             report = assess(name, T4)
             assert report.fits, f"{name} should train on a T4 in 4-bit: {report.render()}"
             assert report.tier in (
@@ -189,32 +182,27 @@ class TestFeasibilityTiers:
         assert report.blocking_reasons
         assert any("A100" in rec or "8B" in rec for rec in report.recommendations)
 
-    def test_30b_moe_is_not_trainable_on_a_free_t4(self):
-        report = assess("qwen3_30b_a3b_thinking", T4)
-        assert not report.fits
-
     def test_larger_models_become_feasible_on_an_a100(self):
         report = assess("mistral_small_3_2", A100_40)
         assert report.fits, report.render()
 
     def test_no_gpu_is_infeasible_with_useful_advice(self):
-        report = assess("qwen3_8b", NO_GPU)
+        report = assess("ministral_8b", NO_GPU)
         assert report.tier is FeasibilityTier.INFEASIBLE
         assert any("Colab" in rec for rec in report.recommendations)
 
     def test_report_serializes(self):
-        payload = assess("qwen3_8b", T4).to_dict()
+        payload = assess("ministral_8b", T4).to_dict()
         assert "tier" in payload
         assert "estimate" in payload
         assert "gpu" in payload
 
     def test_table_renders_every_model(self):
         reports = [
-            assess(name, T4)
-            for name in ("qwen3_8b", "ministral_8b", "mistral_small_3_2", "qwen3_30b_a3b_thinking")
+            assess(name, T4) for name in ("ministral_8b", "mistral_nemo_12b", "mistral_small_3_2")
         ]
         table = render_feasibility_table(reports)
-        assert "qwen3_8b" in table
+        assert "ministral_8b" in table
         assert "infeasible" in table
         assert "Tesla T4" in table
 
@@ -225,7 +213,7 @@ class TestAdjustmentPolicy:
         return TrainingConfig(per_device_train_batch_size=8, gradient_checkpointing=False)
 
     def test_a_too_large_config_proposes_adjustments(self):
-        config = model("qwen3_8b")
+        config = model("ministral_8b")
         config.max_seq_length = 8192
         adapter = get_adapter(config)
         report = assess_feasibility(
@@ -234,7 +222,7 @@ class TestAdjustmentPolicy:
         assert report.proposed_adjustments
 
     def test_adjustments_carry_a_reason(self):
-        config = model("qwen3_8b")
+        config = model("ministral_8b")
         config.max_seq_length = 8192
         adapter = get_adapter(config)
         report = assess_feasibility(
@@ -245,8 +233,8 @@ class TestAdjustmentPolicy:
             assert adjustment.original != adjustment.adjusted
 
     def test_strict_config_refuses_to_adjust(self):
-        # Spec §14: a research run must not be silently reshaped.
-        config = model("qwen3_8b")
+        # A research run must not be silently reshaped.
+        config = model("ministral_8b")
         config.max_seq_length = 8192
         training = self._tight_config()
         training.strict_config = True
@@ -259,7 +247,7 @@ class TestAdjustmentPolicy:
                 enforce_feasibility(report, training)
 
     def test_non_strict_config_returns_the_adjustments_to_record(self):
-        config = model("qwen3_8b")
+        config = model("ministral_8b")
         config.max_seq_length = 8192
         training = self._tight_config()
         adapter = get_adapter(config)
@@ -270,12 +258,12 @@ class TestAdjustmentPolicy:
         assert isinstance(adjustments, list)
 
     def test_infeasible_runs_raise_rather_than_shrink(self):
-        report = assess("qwen3_30b_a3b_thinking", T4)
+        report = assess("mistral_small_3_2", T4)
         with pytest.raises(InsufficientMemoryError):
             enforce_feasibility(report, TrainingConfig())
 
     def test_a_fitting_run_needs_no_adjustment(self):
-        report = assess("qwen3_8b", A100_40)
+        report = assess("ministral_8b", A100_40)
         assert enforce_feasibility(report, TrainingConfig()) == []
 
 
@@ -302,7 +290,7 @@ class TestPreFlightReport:
         config = load_config(CONFIGS_DIR / "training" / "qlora_small.yaml")
         report = render_environment_report(config.model, config.training, gpu=T4)
 
-        # Spec §13 requires each of these before an expensive run.
+        # Each of these is checked before an expensive run.
         for expected in (
             "GPU",
             "VRAM",

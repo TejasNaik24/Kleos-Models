@@ -1,4 +1,4 @@
-"""Configuration tests (spec §6, §30)."""
+"""Configuration tests."""
 
 from __future__ import annotations
 
@@ -39,17 +39,24 @@ class TestDefaults:
         assert lora.scaling == pytest.approx(2.0)
 
     def test_quantization_defaults_to_nf4(self):
-        model = ModelConfig(name="m", family="qwen", base_model="Qwen/Qwen3-8B")
+        model = ModelConfig(
+            name="m", family="mistral", base_model="mistralai/Mistral-Nemo-Instruct-2407"
+        )
         assert model.quantization.mode is QuantizationMode.NF4
         assert model.quantization.enabled
 
     def test_tokenizer_defaults_to_the_base_model(self):
-        model = ModelConfig(name="m", family="qwen", base_model="Qwen/Qwen3-8B")
-        assert model.tokenizer_id == "Qwen/Qwen3-8B"
+        model = ModelConfig(
+            name="m", family="mistral", base_model="mistralai/Mistral-Nemo-Instruct-2407"
+        )
+        assert model.tokenizer_id == "mistralai/Mistral-Nemo-Instruct-2407"
 
     def test_explicit_tokenizer_is_used(self):
         model = ModelConfig(
-            name="m", family="qwen", base_model="Qwen/Qwen3-8B", tokenizer="other/tok"
+            name="m",
+            family="mistral",
+            base_model="mistralai/Mistral-Nemo-Instruct-2407",
+            tokenizer="other/tok",
         )
         assert model.tokenizer_id == "other/tok"
 
@@ -95,7 +102,7 @@ class TestInvalidHyperparameters:
         with pytest.raises(ValueError, match="exceeds"):
             ModelConfig(
                 name="m",
-                family="qwen",
+                family="mistral",
                 base_model="x",
                 context_limit=2048,
                 max_seq_length=4096,
@@ -212,7 +219,7 @@ class TestConfigComposition:
 class TestRealConfigFiles:
     def test_qlora_small_loads(self):
         config = load_config(CONFIGS_DIR / "training" / "qlora_small.yaml")
-        assert config.model.name == "qwen3_8b"
+        assert config.model.name == "mistral_nemo_12b"
         assert config.dataset is not None
         assert config.training.optim == "paged_adamw_8bit"
 
@@ -223,18 +230,18 @@ class TestRealConfigFiles:
 
     @pytest.mark.parametrize(
         "name",
-        ["qwen3_8b", "ministral_8b", "mistral_small_3_2", "qwen3_30b_a3b_thinking"],
+        [
+            "ministral_8b",
+            "mistral_nemo_12b",
+            "ministral3_14b",
+            "ministral3_14b_reasoning",
+            "mistral_small_3_2",
+        ],
     )
     def test_every_model_config_loads(self, name):
         config = load_model_config(CONFIGS_DIR / "models" / f"{name}.yaml")
         assert config.name == name
         assert config.base_model
-
-    def test_moe_config_records_active_parameters(self):
-        config = load_model_config(CONFIGS_DIR / "models" / "qwen3_30b_a3b_thinking.yaml")
-        assert config.is_moe
-        assert config.active_parameter_count is not None
-        assert config.active_parameter_count < config.parameter_count
 
     def test_multimodal_config_is_flagged(self):
         config = load_model_config(CONFIGS_DIR / "models" / "mistral_small_3_2.yaml")
@@ -242,7 +249,7 @@ class TestRealConfigFiles:
         assert config.model_type == "mistral3"
 
     def test_thinking_model_defaults_to_thinking(self):
-        config = load_model_config(CONFIGS_DIR / "models" / "qwen3_30b_a3b_thinking.yaml")
+        config = load_model_config(CONFIGS_DIR / "models" / "ministral3_14b_reasoning.yaml")
         assert config.reasoning.default_mode is ReasoningMode.THINKING
 
     def test_missing_file_raises_an_actionable_error(self):

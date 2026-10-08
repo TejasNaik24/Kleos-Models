@@ -1,4 +1,4 @@
-"""Graders: turn a model response into a score against a reference (spec section 21)."""
+"""Graders: turn a model response into a score against a reference."""
 
 from __future__ import annotations
 
@@ -281,7 +281,7 @@ _ACTION_PATTERNS = (
 
 
 class HeuristicRubricGrader(Grader):
-    """Structural rubric scoring with no API calls (spec section 21)."""
+    """Structural rubric scoring with no API calls."""
 
     name = "heuristic_rubric"
 
@@ -384,7 +384,7 @@ class HeuristicRubricGrader(Grader):
 
 
 class LLMJudgeGrader(Grader):
-    """Rubric grading by a judge model (spec section 21)."""
+    """Rubric grading by a judge model."""
 
     name = "llm_judge"
 

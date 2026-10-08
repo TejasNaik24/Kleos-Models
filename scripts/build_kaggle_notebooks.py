@@ -10,7 +10,7 @@ here runs without a human and stops the run on the first failure. A failing
     python scripts/build_kaggle_notebooks.py
 
 writes notebooks/kaggle/logos_v002_train.ipynb and logos_v002_evaluate.ipynb.
-``tests/test_kaggle_notebooks.py`` checks them. docs/logos.md has the runbook.
+``tests/test_kaggle_notebooks.py`` checks them. docs/runbooks/logos-v002-kaggle.md has the runbook.
 """
 
 from __future__ import annotations
@@ -256,7 +256,7 @@ Fine-tunes the text tower of **Ministral 3 14B Reasoning** on
 **kleos-policy-v0.0.7** with QLoRA, on Kaggle's free **2 x T4**, exactly as
 pre-registered under H9 in `docs/experiments.md`.
 
-**Before you run** (docs/logos.md has the full runbook):
+**Before you run** (docs/runbooks/logos-v002-kaggle.md has the full runbook):
 
 1. Settings → Accelerator → **GPU T4 x2**; Settings → **Internet on**.
 2. Add Input → your private dataset holding `kleos-policy-v0.0.7`.
@@ -390,7 +390,7 @@ graded.
 is copied back and finished generations are replayed, not regenerated.
 
 Then download `outputs/{EXPERIMENT_ID}/arm2_finetuned.json` and run the H9
-comparison on your own machine (docs/logos.md, "H9 comparison").
+comparison on your own machine (docs/runbooks/logos-v002-kaggle.md, "The H9 comparison").
 """),
         settings_cell(),
         helpers_cell(),
@@ -431,7 +431,7 @@ run(PY, "scripts/evaluate.py", "--config", CONFIG, "--arm", "arm2_finetuned",
     "--output", RESULT, "--resume", deadline=True)
 """),
         code("""
-# A first look. H9 is decided only by compare.py against Hermes (docs/logos.md).
+# A first look. H9 is decided only by compare.py against Hermes (docs/runbooks/logos-v002-kaggle.md).
 if not os.path.exists(RESULT):
     print("NOT FINISHED in this session. Add this version's output as an input and "
           "Save & Run All again: finished generations are replayed, not regenerated.")
@@ -457,7 +457,7 @@ def build_output_probe() -> dict[str, Any]:
 
 Writes a marker file, then fails on purpose. Afterwards, in any notebook, add this
 notebook's output as an input: if `probe/marker.txt` is there, Kaggle keeps a
-failed version's output, and the resume runbook can rely on it (docs/logos.md §11).
+failed version's output, and the resume runbook can rely on it (docs/runbooks/logos-v002-kaggle.md).
 """),
         code("""
 import os

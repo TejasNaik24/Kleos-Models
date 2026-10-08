@@ -94,7 +94,7 @@ QUALITY_STATUSES: Final[tuple[str, ...]] = (
 MESSAGE_ROLES: Final[tuple[str, ...]] = ("system", "user", "assistant", "tool")
 
 
-#: Split strategies (spec section 12). ``random`` is development-only; claims need a holdout.
+#: Split strategies. ``random`` is development-only; claims need a holdout.
 SPLIT_STRATEGIES: Final[tuple[str, ...]] = (
     "random",
     "group",
@@ -107,7 +107,7 @@ SPLIT_STRATEGIES: Final[tuple[str, ...]] = (
 #: Named split partitions.
 SPLIT_NAMES: Final[tuple[str, ...]] = ("train", "validation", "test")
 
-#: Research arms (spec section 20). Never pool results across arms.
+#: Research arms. Never pool results across arms.
 RESEARCH_ARMS: Final[tuple[str, ...]] = (
     "arm0_base",
     "arm1_base_orchestrated",
@@ -126,7 +126,7 @@ ARM_DESCRIPTIONS: Final[dict[str, str]] = {
     "frontier_orchestrated": "Frontier reference model with orchestration (not implemented).",
 }
 
-#: Default rubric dimensions for structured grading (spec section 21).
+#: Default rubric dimensions for structured grading.
 RUBRIC_DIMENSIONS: Final[tuple[str, ...]] = (
     "correctness",
     "evidence_usage",
@@ -143,7 +143,7 @@ NEGATIVE_RUBRIC_DIMENSIONS: Final[frozenset[str]] = frozenset(
     {"critical_omission", "unsupported_claims"}
 )
 
-#: Perturbation kinds used by consistency testing (spec section 22).
+#: Perturbation kinds used by consistency testing.
 PERTURBATION_KINDS: Final[tuple[str, ...]] = (
     "paraphrase",
     "evidence_order",
@@ -154,7 +154,7 @@ PERTURBATION_KINDS: Final[tuple[str, ...]] = (
     "length",
 )
 
-#: OOD shift kinds (spec section 23).
+#: OOD shift kinds.
 OOD_SHIFT_KINDS: Final[tuple[str, ...]] = (
     "unseen_entities",
     "unseen_domains",

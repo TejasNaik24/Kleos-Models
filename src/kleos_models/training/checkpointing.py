@@ -1,4 +1,4 @@
-"""Checkpoint discovery, resume and retention (spec section 33)."""
+"""Checkpoint discovery, resume and retention."""
 
 from __future__ import annotations
 

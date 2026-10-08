@@ -1,18 +1,25 @@
 # Training and evaluation report — `kleos-v007-ministral314breasoning-run1` (KLEOS Logos v0.0.2)
 
+> This is a frozen research record, written while the work was done and
+> preserved as written. Editorial changes for public release are limited to
+> replacing private storage paths and account identifiers with placeholders
+> (marked as editor's notes) and retargeting links to documents that moved. No
+> number, table, finding or decision was changed. Conventions:
+> [docs/experiments/README.md](README.md).
+
 **Trained:** 2026-10-06 · **Evaluated:** 2026-10-06 · **Verdict: H9 supported.**
 Logos v0.0.2 is measurably better than Hermes on the pre-registered population.
 
 Nothing was exported, published, uploaded or deployed in producing this report.
 
 - **Where the artifacts are:** the adapter, checkpoints and manifests are in the
-  private Kaggle notebook outputs named below. The result files were copied to the
-  owner's machine.
+  private Kaggle notebook outputs named below. The result files were copied to a
+  local machine outside this repository *[editor's note: location wording generalized]*.
 - **Version control:** none of it is in this repository, and it must not be. The
   hashes in §9 are the record.
 
 Pre-registration: [H9 in ../experiments.md](../experiments.md#h9--does-a-logos-trained-to-think-beat-hermes).
-Design and Kaggle runbook: [../logos.md §11](../logos.md#11-logos-v002-trained-to-think).
+Design and Kaggle runbook: [../logos.md](../logos.md#what-changed-in-v002), [../runbooks/logos-v002-kaggle.md](../runbooks/logos-v002-kaggle.md).
 
 ---
 
@@ -64,8 +71,8 @@ What it does not establish:
 | `strict_config`      | `true`                                                                                                  |
 | Libraries            | transformers 5.16.1, peft 0.20.0, accelerate 1.14.0, bitsandbytes 0.50.2, tokenizers 0.23.2, installed with `--no-deps` over Kaggle's image. torch is Kaggle's own, recorded in the run's `environment.txt` |
 | Kaggle environment   | "Latest Container Image": the runbook's "Pin to original environment" was not set (D12)             |
-| Training notebook    | `notebook30e386ab87`, **Version 2**. Version 1 stopped in its first cell because `COMMIT` was unset (D13) |
-| Evaluation notebook  | `notebook0eb114e6af`, Version 2, with the training notebook's output attached                           |
+| Training notebook    | `<kaggle notebook>` *[editor's note: Kaggle notebook id replaced]*, **Version 2**. Version 1 stopped in its first cell because `COMMIT` was unset (D13) |
+| Evaluation notebook  | `<kaggle notebook>` *[editor's note: Kaggle notebook id replaced]*, Version 2, with the training notebook's output attached |
 | Tokenizer            | `fix_mistral_regex: true`, from the config, recorded in the load metadata                              |
 
 ---

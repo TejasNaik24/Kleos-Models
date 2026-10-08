@@ -1,4 +1,4 @@
-"""Capability preservation (spec section 24)."""
+"""Capability preservation."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ class CapabilityDelta:
 
     def render(self) -> str:
         lines = [
-            "Capability preservation (spec section 24)",
+            "Capability preservation",
             f"  suite version        : {self.suite_version}",
             "",
             f"  base_score           : {self.base.render()}",

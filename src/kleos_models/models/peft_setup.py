@@ -1,4 +1,4 @@
-"""PEFT / LoRA attachment (spec sections 13, 45, 46)."""
+"""PEFT / LoRA attachment."""
 
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def attach_lora(
             "fine-tune, not a LoRA run.",
             details={"trainable": trainable, "total": total},
             suggestions=[
-                "The pipeline refuses to silently full-fine-tune (spec section 13).",
+                "The pipeline refuses to silently full-fine-tune.",
                 "Check model.lora.modules_to_save is not listing large modules.",
                 "Set training.allow_full_finetune=true only if that is genuinely "
                 "the experiment you intend to run.",

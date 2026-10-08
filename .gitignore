@@ -133,3 +133,7 @@ Thumbs.db
 # Local agent notes
 claude.md
 CLAUDE.md
+
+# AI-assistant workflow scratch and local settings, never part of the repository
+.superpowers/
+.claude/

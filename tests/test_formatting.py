@@ -1,4 +1,4 @@
-"""Formatting and assistant-loss-masking tests (spec §30)."""
+"""Formatting and assistant-loss-masking tests."""
 
 from __future__ import annotations
 

@@ -1,5 +1,12 @@
 # Artifact audit — `kleos-v006-ministral8b-run1`
 
+> This is a frozen research record, written while the work was done and
+> preserved as written. Editorial changes for public release are limited to
+> replacing private storage paths and account identifiers with placeholders
+> (marked as editor's notes) and retargeting links to documents that moved. No
+> number, table, finding or decision was changed. Conventions:
+> [docs/experiments/README.md](README.md).
+
 **Audited:** 2026-09-15 · **Verdict:** PASS with three recorded findings, none of
 which invalidate the H1 result.
 
@@ -8,7 +15,7 @@ reproducible source artifact before anything is exported, published, hosted or
 integrated. Nothing was exported, uploaded or deployed in producing this file.
 
 The artifacts live on private storage outside this repository
-(`MyDrive/kleos-private/outputs/kleos-v006-ministral8b-run1/`). They are **not**
+(`<private storage>/outputs/kleos-v006-ministral8b-run1/` *[editor's note: private storage path replaced]*). They are **not**
 in version control and must not be. Hashes below are the record.
 
 ---

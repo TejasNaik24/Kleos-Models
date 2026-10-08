@@ -22,10 +22,10 @@
 #        python scripts/plan_run.py --config configs/training/qlora_small.yaml \
 #                                   --set-model configs/models/mistral_small_3_2.yaml
 #
-# 3. SCALE IS CONFOUNDED WITH FAMILY HERE.
-#    Comparing this 24B multimodal model against Qwen3-8B measures family, scale
-#    and modality together. For a controlled family comparison use
-#    configs/models/ministral_8b.yaml instead.
+# 3. SCALE IS CONFOUNDED WITH MODALITY HERE.
+#    Comparing this 24B multimodal model against a smaller text-only model
+#    measures scale and modality together. For a controlled comparison at a
+#    matched scale use configs/models/ministral_8b.yaml instead.
 #
 # Verified: text_config 40 layers, hidden 5120, intermediate 32768,
 #   vocab 131072, max_position_embeddings 131072; vision_config 24 layers.

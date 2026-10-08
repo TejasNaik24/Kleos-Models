@@ -1,4 +1,4 @@
-"""Hugging Face publishing helpers and model-card generation (spec §18, §35)."""
+"""Hugging Face publishing helpers and model-card generation."""
 
 from __future__ import annotations
 
@@ -279,7 +279,7 @@ def build_model_card(
     comparison: dict[str, Any] | None = None,
     serving_revision: str | None = None,
 ) -> str:
-    """Generate a model card (spec §35)."""
+    """Generate a model card."""
     model = manifest.model if manifest else {}
     lora = manifest.lora.get("lora_config", manifest.lora) if manifest else {}
     training = (manifest.effective_config.get("training", {}) if manifest else {}) or {}

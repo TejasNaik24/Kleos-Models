@@ -1,4 +1,4 @@
-"""Variation-axis coverage reporting (spec section 10)."""
+"""Variation-axis coverage reporting."""
 
 from __future__ import annotations
 

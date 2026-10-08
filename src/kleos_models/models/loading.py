@@ -1,4 +1,4 @@
-"""Model and tokenizer loading (spec sections 13, 45, 46)."""
+"""Model and tokenizer loading."""
 
 from __future__ import annotations
 
@@ -374,7 +374,7 @@ def load_model(
 def _describe_load_failure(
     exc: Exception, config: ModelConfig, support: Any
 ) -> ModelCompatibilityError:
-    """Turn an opaque load failure into an actionable one (spec section 32)."""
+    """Turn an opaque load failure into an actionable one."""
     message = str(exc)
     lowered = message.lower()
 
@@ -485,7 +485,7 @@ def load_adapter_model(
 
 
 def list_candidate_modules(model: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
-    """List leaf modules that could receive a LoRA adapter (spec section 46)."""
+    """List leaf modules that could receive a LoRA adapter."""
     candidates: list[dict[str, Any]] = []
     for name, module in model.named_modules():
         if not name or list(module.children()):

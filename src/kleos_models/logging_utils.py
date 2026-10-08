@@ -1,4 +1,4 @@
-"""Structured logging (spec section 31)."""
+"""Structured logging."""
 
 from __future__ import annotations
 

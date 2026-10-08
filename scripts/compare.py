@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare base and fine-tuned evaluation results (spec §54).
+"""Compare base and fine-tuned evaluation results.
 
 Reports per-task base, fine-tuned, absolute delta, relative delta, OOD delta and
 consistency delta. Deltas are paired per example with bootstrap confidence

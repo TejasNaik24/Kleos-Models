@@ -1,5 +1,12 @@
 # Training and evaluation report — `kleos-v006-ministral314b-run1` (KLEOS Logos v0.0.1)
 
+> This is a frozen research record, written while the work was done and
+> preserved as written. Editorial changes for public release are limited to
+> replacing private storage paths and account identifiers with placeholders
+> (marked as editor's notes) and retargeting links to documents that moved. No
+> number, table, finding or decision was changed. Conventions:
+> [docs/experiments/README.md](README.md).
+
 **Trained:** 2026-09-24 → 2026-09-27 · **Evaluated:** 2026-09-27 → 2026-10-01 ·
 **Verdict:** H8a supported: fine-tuning helps Logos, 5/7 tasks improved and none
 regressed. **H8b (primary) inconclusive:** Logos is not measurably better than
@@ -7,10 +14,10 @@ Hermes.
 
 Nothing was exported, published, uploaded or deployed in producing this report.
 The artifacts live on private storage outside this repository
-(`MyDrive/kleos-private/outputs/kleos-v006-ministral314b-run1/`). They are **not**
+(`<private storage>/outputs/kleos-v006-ministral314b-run1/` *[editor's note: private storage path replaced]*). They are **not**
 in version control and must not be. The hashes in §10 are the record.
 Pre-registration: [H8 in ../experiments.md](../experiments.md#h8--does-a-stronger-base-make-a-better-kleos-model).
-Model selection and the Colab procedure: [../logos.md](../logos.md).
+Model selection and the Colab procedure: [../logos.md](../logos.md), [../runbooks/logos-v001-colab.md](../runbooks/logos-v001-colab.md).
 
 ---
 
@@ -490,7 +497,7 @@ results by `rescore.py --mode annotate`. The originals are unmodified.
 ## 11. Findings
 
 The Logos phase's findings are recorded with their evidence in
-[../logos.md §10](../logos.md#10-findings-from-this-phase). In short:
+[logos-findings.md](logos-findings.md). In short:
 
 | Finding | What                                                                                     | Status |
 | ------- | ---------------------------------------------------------------------------------------- | ------ |
@@ -541,7 +548,7 @@ are tooling issues. Neither alters a reported number.
    as a better model than Hermes (H8b). Serving it would add a model that is not
    measurably better, is weaker on recommendations, and is no cheaper.
 2. **If it is served:**
-   - Generalize the Hermes-coupled serving path ([../logos.md §7](../logos.md)).
+   - Generalize the Hermes-coupled serving path ([../logos.md, serving](../logos.md#serving)).
    - Load the tokenizer as `TokenizersBackend` (L-F2).
    - Verify that `adapter_config.json` records base revision
      `3cea74c1ebaf5ce5f5a2553de470e2ceab825142` (the H-F1 fix).

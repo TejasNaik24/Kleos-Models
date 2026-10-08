@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--simulate-gpu",
-        metavar="PRESET|NAME:GIB:CC",
+        metavar="PRESET|NAME:GIB:CC[:COUNT]",
         help=(
             f"Plan for a GPU other than this machine's: a measured preset "
             f"({', '.join(sorted(GPU_PRESETS))}) or NAME:TOTAL_GIB:MAJOR.MINOR."

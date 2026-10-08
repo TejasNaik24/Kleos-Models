@@ -1,4 +1,4 @@
-"""Splitting tests (spec §12, §30)."""
+"""Splitting tests."""
 
 from __future__ import annotations
 

@@ -1,44 +1,47 @@
 # Training on Google Colab
 
-Colab is the canonical environment for KLEOS training runs. This is the complete
-procedure, written for someone who has not done it before.
+Free Colab gives one GPU per session, usually a T4. Hermes v0.0.6 and Logos
+v0.0.1 were both trained and evaluated there. This page is the general procedure;
+the Logos v0.0.1 run itself is in
+[runbooks/logos-v001-colab.md](runbooks/logos-v001-colab.md). For runs that need
+two GPUs, see [kaggle.md](kaggle.md).
 
-## Before you start
+## Before starting
 
-You need a Google account. You do not need a paid Colab plan — the 8B models train
-on the free tier. You do not need a Hugging Face account unless you want to use a
-gated model (Mistral) or publish an adapter.
+- A Google account. A paid Colab plan is not needed: Hermes (12B) and the Logos
+  v0.0.1 text tower (14B) trained in 4-bit on the free T4 (measured).
+- A Hugging Face account only for a gated model (Ministral-8B) or for publishing.
+  Mistral-Nemo and both Ministral 3 releases are ungated.
+- Space on Google Drive for checkpoints, and optionally for the model cache
+  (below).
 
 ## 1. Open the notebook
 
-Go to [colab.research.google.com](https://colab.research.google.com) →
-**GitHub** tab → paste the repository URL → open
-`notebooks/02_train_qlora.ipynb`.
-
-Or open `notebooks/00_environment_check.ipynb` first if this is a fresh runtime
-and you want to see what you were assigned.
+At [colab.research.google.com](https://colab.research.google.com), open the
+**GitHub** tab, paste the repository URL and open `notebooks/02_train_qlora.ipynb`.
+On a fresh runtime, `notebooks/00_environment_check.ipynb` shows what was
+assigned before anything is installed.
 
 ## 2. Turn on the GPU
 
 **Runtime → Change runtime type → T4 GPU → Save.**
 
-This is the step people forget. Without it everything installs correctly and
-training fails at the first CUDA call.
+Without this, everything installs and training fails at the first CUDA call.
 
-## 3. Understand what you were assigned
+## 3. Check what was assigned
 
-Free-tier Colab hands out different GPUs depending on load and recent usage. Run
-the GPU cell and read the output.
+Free Colab assigns GPUs by load and recent usage. Run the GPU cell and read the
+output.
 
-| GPU | VRAM | Compute capability | bf16? | Trains 8B in 4-bit? |
-| --- | ---: | ---: | --- | --- |
-| Tesla T4 | 16GB | 7.5 | **no** | yes |
-| L4 | 24GB | 8.9 | yes | yes, comfortably |
-| A100 | 40GB | 8.0 | yes | yes, plus 24B/30B |
+| GPU | VRAM | Compute capability | bfloat16 |
+| --- | ---: | ---: | --- |
+| Tesla T4 | 16 GB (14.56 GB reported by torch on Colab) | 7.5 | no |
+| L4 | 24 GB | 8.9 | yes |
+| A100 | 40 GB | 8.0 | yes |
 
-**The T4 cannot do bfloat16.** KLEOS configs use `compute_dtype: auto`, which
-detects this and selects float16. You do not need to change anything, and the
-choice is recorded in the run manifest.
+A T4 cannot do bfloat16. KLEOS configs use `compute_dtype: auto`, which detects
+this and selects float16, and the run manifest records the choice. Nothing needs
+to change.
 
 ## 4. Install dependencies
 
@@ -46,32 +49,27 @@ choice is recorded in the run manifest.
 !python scripts/colab_setup.py
 ```
 
-### Why not just `pip install -e ".[train]"`
-
-Colab ships a torch build compiled against its specific CUDA driver. Any install
-that pulls torch as a dependency replaces that build with a generic wheel, and
-CUDA then either stops working or starts crashing in confusing ways — often not
-immediately.
-
+Colab ships a torch build compiled against its CUDA driver. Any install that pulls
+torch as a dependency replaces that build with a generic wheel, and CUDA then
+stops working or crashes in confusing ways, often not immediately.
 `colab_setup.py` installs every torch-dependent package with `--no-deps` and
-verifies CUDA still works afterwards. If you install packages manually later in
-the session, use `--no-deps` for anything that depends on torch.
+verifies CUDA afterwards. Use `--no-deps` for anything torch-dependent installed
+later in the session.
 
-## 5. Authenticate (only if you need to)
+## 5. Authenticate, if needed
 
 Required for gated models such as Ministral-8B, and for publishing.
 
-1. Sidebar → **key icon** (Secrets)
-2. **Add new secret**, name it `HF_TOKEN`
+1. Sidebar → key icon (Secrets).
+2. **Add new secret**, named `HF_TOKEN`.
 3. Paste a token from
-   [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-4. Enable **Notebook access**
+   [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+4. Enable **Notebook access**.
 
-The notebook reads it via `google.colab.userdata`. **Never paste a token into a
-cell** — notebooks get shared, committed and screenshotted.
-
-For a gated model you must also accept its licence on the model's Hugging Face
-page while signed in. The token alone is not enough.
+The notebook reads it through `google.colab.userdata`. Never paste a token into
+a cell: notebooks get shared, committed and screenshotted. For a gated model, the
+account must also accept the model's license on its Hugging Face page; the token
+alone is not enough.
 
 ## 6. Check feasibility before downloading anything
 
@@ -79,40 +77,61 @@ page while signed in. The token alone is not enough.
 !python scripts/plan_run.py --all-models
 ```
 
-This estimates peak memory for each model against the GPU you actually have, in
-about a second, with no downloads. Expected on a free T4:
+This estimates peak memory for every model config against the GPU actually
+present, in about a second, with no downloads. Its output for a free T4 (the
+`t4-colab` preset, which reproduces Colab's T4) on 2026-10-07:
 
 ```
-qwen3_8b                       full_research         9.6GB      +5.4GB
-ministral_8b                   full_research         9.0GB      +6.0GB
-mistral_small_3_2              infeasible           16.5GB      -1.5GB
-qwen3_30b_a3b_thinking         infeasible           20.1GB      -5.1GB
+model                          tier              est. peak   headroom
+------------------------------ ---------------- ---------- ----------
+ministral3_14b                 smoke                15.6GB      -1.2GB
+ministral3_14b_reasoning       smoke                15.6GB      -1.2GB
+ministral_8b                   adapter_train        13.5GB      +0.9GB
+mistral_nemo_12b               smoke                15.0GB      -0.5GB
+mistral_small_3_2              infeasible           22.8GB      -8.4GB
 ```
 
-The 24B and 30B models are not trainable on a free T4. That is a fact about the
-hardware, not a configuration problem — they need an A100-class GPU.
+These figures assume each config's `max_seq_length`, the worst case. The KLEOS
+data is much shorter, and `train.py` sizes its own check by the longest real
+example. `--seq-length` gives the planner that length:
+
+| Config | Base | Gated | On a free T4 |
+| --- | --- | --- | --- |
+| `mistral_nemo_12b` | Mistral-Nemo-Instruct-2407 (Hermes) | no | trains; 13.09 GB peak measured |
+| `ministral_8b` | Ministral-8B-Instruct-2410 | yes | trains; 9.67 GB peak measured |
+| `ministral3_14b` | Ministral 3 14B Instruct, text tower (Logos v0.0.1) | no | trains; 13.60 GB at the longest batch measured, 0.35 GB spare |
+| `ministral3_14b_reasoning` | Ministral 3 14B Reasoning, text tower (Logos v0.0.2) | no | does not fit at 736 tokens (estimated); trained on Kaggle's 2 × T4 |
+| `mistral_small_3_2` | Mistral Small 3.2 24B, vision-language | not verified | does not fit; needs an A100-class GPU; never trained |
+
+No configuration change makes the 24B model fit a T4.
 
 ## 7. Send checkpoints to Drive
 
-**Do this before a long run.** Colab reclaims runtimes without warning, and
-frequently overnight.
+Do this before a long run. Colab reclaims runtimes without warning, often
+overnight.
+
+Section 7 of `02_train_qlora.ipynb` mounts Google Drive and points the run at it:
 
 ```python
 from google.colab import drive
-
-drive.mount("/content/drive")
-
-OUTPUT_DIR = "/content/drive/MyDrive/kleos/outputs"
 import os
 
-os.environ["HF_HOME"] = "/content/drive/MyDrive/kleos/hf_cache"
+drive.mount("<drive mount point>")
+OUTPUT_DIR = "<private storage>/outputs"
+os.environ["HF_HOME"] = "<private storage>/hf_cache"
 ```
 
-Setting `HF_HOME` to Drive also means a reconnect does not re-download the base
-model — which on a slow day is the difference between resuming in one minute and
-in twenty. It costs Drive space equal to the checkpoint (about 16 GB for an 8B
-model, 28 GB for Logos' base); with little Drive space, keep `HF_HOME` under
-`/content` and accept the re-download, as the Logos runbook (`docs/logos.md`) does.
+`<private storage>` is a folder on the mounted Drive. Keeping `HF_HOME` on Drive
+means a reconnect does not re-download the base model, at the cost of Drive space
+equal to the checkpoint (about 24.5 GB for Mistral-Nemo, 28 GB for the Ministral 3
+container). With little Drive space, keep `HF_HOME` on the runtime disk and accept
+the re-download, as the Logos v0.0.1 runbook does. One run filled its Drive quota
+partway through (deviation D9 in [experiments.md](experiments.md#deviations-log)).
+
+Drive is a mounted file system with its own upload behavior. A checkpoint reported
+as saved once turned out to lack its weights 18 hours later (finding H-F4), and an
+evaluation resume file that stayed open never reached Drive (finding L-F3, fixed).
+The record behind both is indexed in [experiments/README.md](experiments/README.md).
 
 ## 8. Dry run
 
@@ -125,7 +144,7 @@ loading weights.
 
 ## 9. Train
 
-Pin the experiment id: section 10 needs the same one to resume.
+Pin the experiment id first: step 10 needs the same one to resume.
 
 ```python
 EXPERIMENT_ID = "my-first-run"
@@ -139,14 +158,14 @@ EXPERIMENT_ID = "my-first-run"
     --experiment-id {EXPERIMENT_ID}
 ```
 
-Before the loop starts you get GPU, VRAM, CUDA and library versions, model and
-quantization settings, LoRA configuration and a memory estimate. Then a gradient
-check confirms the adapter actually receives gradients — a setup that trains
-nothing would otherwise still produce a plausible-looking loss curve.
+Before the loop starts, the run prints GPU, VRAM, CUDA and library versions, the
+model and quantization settings, the LoRA configuration and a memory estimate.
+A gradient check then confirms that the adapter receives gradients, and the memory
+probe measures the longest batch.
 
 ## 10. When the runtime dies
 
-It will. Re-run the setup cells, remount Drive, then:
+Re-run the setup cells, remount Drive, then:
 
 ```python
 !python scripts/train.py \
@@ -157,70 +176,67 @@ It will. Re-run the setup cells, remount Drive, then:
 ```
 
 `--experiment-id` must be the id the run started with. It names the run's
-directory; a generated id is new on every invocation, so `auto` would search
-an empty directory and the run would silently start again from step 0.
+directory; a generated id is new on every invocation, so `auto` would search an
+empty directory and the run would start again from step 0.
 
-`auto` finds the newest **valid** checkpoint. A checkpoint half-written when the
-runtime was killed is detected as incomplete and skipped, rather than causing a
-confusing failure on resume.
+`auto` takes the newest valid checkpoint and skips one half-written when the
+runtime was killed. Always resume this way: a fresh start into a folder that
+already holds checkpoints is not guarded against and can delete the best one
+(finding L-F4, open; [training.md](training.md#checkpointing-and-resume)).
 
-## Staying connected longer
+An evaluation resumes the same way: re-run the same `evaluate.py` command with
+`--resume` ([evaluation.md](evaluation.md#resuming-an-evaluation)).
+
+## Staying connected
 
 - Keep the browser tab open and interact with it occasionally.
 - Free runtimes are capped at roughly 12 hours, and idle ones are reclaimed much
-  sooner.
+  sooner. The free GPU usage limit can also end a session (deviation D9).
 - Set `save_steps` low enough that losing the interval since the last checkpoint
   is acceptable.
-- Do not rely on browser auto-clicker hacks; they violate Colab's terms and get
-  accounts limited.
+- Do not use browser auto-clickers; they violate Colab's terms and get accounts
+  limited.
 
 ## Common problems
 
-**`CUDA out of memory`**
-The error itself lists what to change, in order. Start with `max_seq_length`. If
-it happened at step 0, the configuration never fit — run `plan_run.py`. If it
-happened mid-run, it was probably an evaluation spike: lower
-`per_device_eval_batch_size`.
+**`CUDA out of memory`.** The error lists what to change, in order; start with
+`max_seq_length`. At step 0 the configuration never fit: run `plan_run.py`.
+Mid-run, it was probably an evaluation spike: lower `per_device_eval_batch_size`.
 
-**`torch` stops seeing the GPU after installing something**
-A package replaced Colab's torch. Runtime → Restart, then re-run
-`colab_setup.py`, which uses `--no-deps` for exactly this reason.
+**`torch` stops seeing the GPU after installing something.** A package replaced
+Colab's torch. Runtime → Restart, then re-run `colab_setup.py`.
 
-**`401` or `403` downloading a model**
-Gated repository. Accept the licence on its model page while signed in, and check
-`HF_TOKEN` is set as a Colab secret with notebook access enabled.
+**`401` or `403` downloading a model.** A gated repository. Accept the license on
+its model page while signed in, and check that `HF_TOKEN` is a Colab secret with
+notebook access.
 
-**`KeyError: 'qwen3_moe'` or an unrecognized architecture**
-transformers is too old. `colab_setup.py` pins `>=4.56,<6`.
+**Training runs but the loss never moves.** Run `python scripts/smoke_test.py`.
+The gradient check catches a disconnected adapter before training starts; if it
+passed, look at the learning rate or the data.
 
-**Training seems to work but the loss never moves**
-Run `python scripts/smoke_test.py`. The gradient check should catch a
-disconnected adapter before training starts; if it passed and the loss is still
-flat, the learning rate or the data is the problem, not the plumbing.
+More: [troubleshooting.md](troubleshooting.md).
 
-More detail: [troubleshooting.md](troubleshooting.md).
-
-## What a completed run leaves behind
+## What a completed run leaves
 
 ```
 outputs/<experiment-id>/
-  adapter/          ← the model artifact
+  adapter/          the model artifact
   tokenizer/
-  config.yaml       ← fully resolved effective config
-  manifest.json     ← complete provenance
+  config.yaml       fully resolved effective config
+  manifest.json     complete provenance
   metrics.json
-  events.jsonl      ← structured event stream
-  environment.txt   ← the pre-flight report
+  events.jsonl      structured event stream
+  environment.txt   the pre-flight report
+  training.log
   README.md
   checkpoint-*/
 ```
 
-Keep the whole directory. The adapter alone is not reproducible — the manifest is
-what ties it to a dataset version, a config hash, a seed and a commit.
+Keep the whole directory. The adapter alone is not reproducible; the manifest ties
+it to a dataset version, a config hash, a seed and a commit.
 
 ## Next
 
-`notebooks/03_evaluate.ipynb` compares the adapter against the base model under
-identical conditions.
-
-A training loss curve is not a result. Evaluation decides.
+`notebooks/03_evaluate.ipynb` evaluates the adapter against the base model under
+identical conditions ([evaluation.md](evaluation.md)). Whether fine-tuning helped
+is decided there, not by the training loss.

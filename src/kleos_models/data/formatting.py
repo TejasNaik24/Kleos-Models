@@ -215,8 +215,8 @@ class ConversationFormatter:
                     "error": str(exc),
                 },
                 suggestions=[
-                    "Reasoning-mode kwargs are model-specific: Qwen3-8B accepts "
-                    "enable_thinking, Qwen3-30B-A3B-Thinking-2507 does not.",
+                    "Reasoning-mode kwargs are model-specific; a template that "
+                    "does not declare one rejects it.",
                     "Check the model config's reasoning section against the checkpoint.",
                 ],
             ) from exc

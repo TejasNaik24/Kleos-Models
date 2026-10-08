@@ -1,7 +1,7 @@
 # Development fixtures
 
-> **These are synthetic development fixtures, not the KLEOS research dataset.**
-> They exist to exercise the pipeline. Any metric computed from them describes the
+> These are synthetic development fixtures, not the KLEOS research dataset. They
+> exist to exercise the pipeline. Any metric computed from them describes the
 > plumbing, not KLEOS.
 
 ## Files
@@ -14,21 +14,20 @@
 
 ## What they are designed to exercise
 
-- **Loading and validation** — every example satisfies the data contract
-- **Splitting** — varied `entities`, `domain` and `format` so held-out strategies
-  have something to partition on
-- **Leakage detection** — distinct enough that a clean dataset reports clean
-- **Consistency testing** — `eval-consistency-*` share one `scenario_family` and
-  differ only in wording, evidence order and format, so a correct model must
-  reach the same decision on all three
-- **OOD reporting** — two examples tagged `split_tag: "ood"`, one for an unseen
-  domain and one for conflicting evidence
-- **Rubric grading** — a briefing example with `required_points` and
-  `evidence_ids`
+- Loading and validation: every example satisfies the data contract.
+- Splitting: varied `entities`, `domain` and `format`, so held-out strategies
+  have something to partition on.
+- Leakage detection: distinct enough that a clean dataset reports clean.
+- Consistency testing: `eval-consistency-*` share one `scenario_family` and
+  differ only in wording, evidence order and format, so a correct model reaches
+  the same decision on all three.
+- Out-of-distribution reporting: two examples tagged `split_tag: "ood"`, one for
+  an unseen domain and one for conflicting evidence.
+- Rubric grading: a briefing example with `required_points` and `evidence_ids`.
 
 `eval-ood-0002` deliberately inverts the recency policy: source reliability
-outranks recency there. A model that learned "always prefer the newer record" as a
-surface rule gets it wrong, which is the point.
+outranks recency there. A model that learned "always prefer the newer record" as
+a surface rule gets it wrong.
 
 ## They teach policy, not facts
 
@@ -42,5 +41,5 @@ See [../../docs/data-contract.md](../../docs/data-contract.md).
 python scripts/prepare_dataset.py --generate-fixtures
 ```
 
-Deterministic — regenerating produces byte-identical files, and CI checks that the
-committed files match their generator.
+Generation is deterministic: regenerating produces byte-identical files, and CI
+checks that the committed files match their generator.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate a research arm on a KLEOS benchmark (spec §19-§23).
+"""Evaluate a research arm on a KLEOS benchmark.
 
 Conditions are held identical across arms — same benchmark, decoding, graders and
 seeds — so a difference in score is attributable to the arm and not the harness.

@@ -27,20 +27,26 @@ An inference API for the KLEOS backend. There is no chat interface here.
 
 It serves the frozen Hermes v0.0.6 artifact: a LoRA adapter on
 `mistralai/Mistral-Nemo-Instruct-2407` at a pinned revision, in 4-bit NF4 with
-float16 compute and greedy decoding, exactly as it was evaluated. At startup
-the Space downloads the deployment package at a pinned commit, verifies every
-file hash and the full model identity, and refuses to start if anything
-differs.
+float16 compute and greedy decoding, as it was evaluated. At startup the Space
+downloads the deployment package at a pinned commit, verifies every file hash
+and the full model identity, and refuses to start if anything differs. On
+2026-09-23 it reproduced the frozen evaluation's responses 9 of 9, byte for
+byte.
 
 Endpoints (Gradio API, via `gradio_client`):
 
 | Endpoint | Input | Output |
 |---|---|---|
-| `/generate` | `{"messages": [...], "max_new_tokens"?: int, "request_id"?: str}` | Hermes status contract |
-| `/status` | none | identity, runtime and limits (no GPU used) |
+| `/generate` | `{"messages": [...], "max_new_tokens"?: int, "request_id"?: str}` | Status contract, version 1 |
+| `/status` | none | Identity, runtime and limits (no GPU used) |
 
 Both require the `X-Hermes-Key` header. Requests carry no user, workspace or
 tool data, and neither prompts nor responses are logged.
 
-Source, tests and the full contract: the `kleos-models` repository,
-`docs/deployment.md` and `docs/kleos-hermes-integration.md`.
+Source, tests and documentation:
+
+- [Kleos-Models on GitHub](https://github.com/TejasNaik24/Kleos-Models)
+- [Deployment reference](https://github.com/TejasNaik24/Kleos-Models/blob/main/docs/deployment.md):
+  packaging, identity checks, this Space, verification status
+- [Serving API](https://github.com/TejasNaik24/Kleos-Models/blob/main/docs/serving-api.md):
+  request, reply and status contract for the KLEOS backend

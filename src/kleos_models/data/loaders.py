@@ -1,4 +1,4 @@
-"""Dataset loading (spec sections 27 and 50)."""
+"""Dataset loading."""
 
 from __future__ import annotations
 

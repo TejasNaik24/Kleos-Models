@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Publish a trained adapter to the Hugging Face Hub (spec §18, §35).
+"""Publish a trained adapter to the Hugging Face Hub.
 
 Publishing is never automatic. It requires this explicit command.
 
-What is uploaded: adapter weights, the tokenizer, the effective config, the
+What is uploaded: adapter weights, the effective config, the
 manifest, and a generated model card.
 
 What is refused: raw training data, `.env`, anything matching the private-data
@@ -13,7 +13,7 @@ model is better unless an evaluation result is supplied that shows it.
 Usage::
 
     python scripts/publish_adapter.py --adapter outputs/<experiment-id>/adapter \\
-                                      --repo-id YOUR_USERNAME/kleos-qwen3-8b
+                                      --repo-id <owner>/kleos-hermes-adapter
 
     # Inspect exactly what would be uploaded, without uploading:
     python scripts/publish_adapter.py --adapter outputs/<id>/adapter \\
@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--adapter", type=Path, required=True, help="Adapter directory to publish.")
     parser.add_argument(
-        "--repo-id", required=True, help="Target repo, e.g. username/kleos-qwen3-8b."
+        "--repo-id", required=True, help="Target repo, e.g. <owner>/kleos-hermes-adapter."
     )
     parser.add_argument("--results", type=Path, help="Evaluation results JSON to cite in the card.")
     parser.add_argument(

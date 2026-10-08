@@ -1,376 +1,339 @@
+<div align="center">
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/kleos-mark-dark.svg"><img src="docs/assets/kleos-mark-light.svg" width="72" alt="KLEOS"></picture>
+
 # KLEOS Models
 
-Research engineering for KLEOS behavioural fine-tuning: dataset contracts, QLoRA
-training, and a controlled evaluation harness for Qwen and Mistral open-weight
-models.
+Behavioral fine-tuning and pre-registered evaluation of open-weight models for KLEOS, an AI operating system for computer science students
 
-> **Research status:** first result recorded, 2026-09-15. Ministral-8B QLoRA on
-> the private `kleos-policy-v0.0.6` release beat the prompt-engineered
-> orchestration baseline on **all 7 tasks** at p<0.05 (overall 0.4744 → 0.8015,
-> n=349, paired bootstrap). It is **one run, on one model, on one dataset**, with
-> three recorded deviations from the pre-registered protocol and 22% of the test
-> label space unlearnable from the training split. Read
-> [docs/experiments.md](docs/experiments.md) — including the deviations log —
-> before quoting any of it. The examples shipped *in this repository* are still
-> development fixtures, not the research dataset.
+[![CI](https://github.com/TejasNaik24/Kleos-Models/actions/workflows/ci.yml/badge.svg)](https://github.com/TejasNaik24/Kleos-Models/actions/workflows/ci.yml)
+[![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
+[![mypy](https://img.shields.io/badge/types-mypy-2A6DB2)](https://mypy-lang.org/)
+[![Tests: 1,638 collected](https://img.shields.io/badge/tests-1%2C638%20collected-brightgreen?logo=pytest&logoColor=white)](tests/)
+[![Served on Hugging Face ZeroGPU](https://img.shields.io/badge/served%20on-Hugging%20Face%20ZeroGPU-FFD21E?logo=huggingface&logoColor=black)](docs/deployment.md)
+[![Compute: $0 (free tiers)](https://img.shields.io/badge/compute-%240%20%28free%20tiers%29-blue)](#tech-stack)
 
----
+</div>
 
-## 1. What this is
+## TL;DR
 
-This repository is the public model/research engineering repository for KLEOS, an
-AI operating system for computer science students. It contains everything needed
-to prepare data, train LoRA/QLoRA adapters, and evaluate them rigorously — and
-nothing that touches the KLEOS application or its production data.
+- **What:** the data contract, QLoRA training pipeline, pre-registered evaluation harness and serving stack behind two KLEOS models, both fine-tuned from Mistral AI open-weight bases.
+- **Fine-tuning:** KLEOS Hermes (Mistral-Nemo 12B) raised the KLEOS policy score from 0.4755 (the same base with prompt-engineered orchestration) to 0.8051, with all 7 tasks improved (p < 0.001, 349 held-out items).
+- **Head-to-head:** KLEOS Logos v0.0.2 (Ministral 3 14B Reasoning, trained to write a policy-derived reasoning trace before it answers) is measurably better than Hermes on the pre-registered answerable subset: +0.0409, cluster 95% CI +0.0040 to +0.0780.
+- **Cost:** $0. Trained on free Colab and Kaggle T4 GPUs, served from free Hugging Face ZeroGPU Spaces.
+- **Caveats:** one training seed per model, so training noise sits outside every interval; and every answer is prose, never JSON (`format_valid` 0.0 for every model).
 
-## 2. The research question
+Built by Tejas Naik.
 
-> Per subtask, can a behaviourally fine-tuned open-weight model outperform a
-> prompt-engineered orchestration baseline on judgment and correctness metrics?
+## Contents
 
-This is an empirical question with a real possibility of a negative answer. The
-codebase is built so that "fine-tuning did not help" is a result it can report
-cleanly, not a failure it hides.
+- [Overview](#overview)
+- [Research question and design](#research-question-and-design)
+- [Results](#results)
+- [Models](#models)
+- [How it works](#how-it-works)
+- [Method](#method)
+- [Tech stack](#tech-stack)
+- [Quickstart](#quickstart)
+- [Reproducing the results](#reproducing-the-results)
+- [Limitations](#limitations)
+- [Project structure](#project-structure)
+- [Documentation](#documentation)
+- [Contributing and security](#contributing-and-security)
+- [Citation](#citation)
+- [License](#license)
+- [Acknowledgements](#acknowledgements)
 
-The model is meant to learn **decision policies** — prioritization, evidence-aware
-recommendation, relevance judgment, tool routing, briefing behaviour. It is
-explicitly _not_ meant to memorize any user's facts. Private facts belong in
-retrieval and memory, never in weights.
+## Overview
 
-## 3. Public/private data boundary
+KLEOS is an AI operating system for computer science students. Its models make judgment calls on the student's behalf: which notification matters, which context to surface, what to recommend, how to resolve two memories that disagree, which tool a request needs, how to reason across workspaces, what goes in a briefing, and when to decline for lack of evidence.
 
-**This repository is public. It must never contain real user data.**
+This repository holds everything on the model side of that system: the dataset contract and validators, the training pipeline, the evaluation harness, the experiment record, and the code that packages and serves a trained adapter. It does not hold the KLEOS application, the research dataset (a private repository produces sealed releases that this code consumes by path) or any model weights. The bundled examples in `data/examples/` are synthetic development fixtures. The public/private boundary is defined in [docs/privacy.md](docs/privacy.md).
 
-| Lives here                     | Lives in the private `kleos-training-data` repo |
-| ------------------------------ | ----------------------------------------------- |
-| Code, schemas, configs         | Raw conversations and memory records            |
-| Synthetic development fixtures | Sanitized real examples                         |
-| Dataset manifests and loaders  | Supabase exports                                |
-| Aggregate metrics, model cards | Private evaluation traces                       |
+## Research question and design
 
-The private repository produces a versioned artifact:
+> Per subtask, can a behaviorally fine-tuned open-weight model outperform a prompt-engineered orchestration baseline on judgment and correctness metrics?
 
+The models are trained to learn decision policies (prioritization, evidence-aware recommendation, relevance judgment, tool routing, briefing behavior). Facts about a particular student belong in retrieval and memory, and the dataset validators flag examples that teach a private fact.
+
+| Arm | What it is | Run on the full benchmark |
+| --- | --- | --- |
+| `arm0_base` | Base model, standard prompting, no orchestration | No (a 20-example probe only) |
+| `arm1_base_orchestrated` | Base model plus the KLEOS retrieval, context and prompt scaffolding | Ministral-8B, Hermes, Logos v0.0.1 |
+| `arm2_finetuned` | Fine-tuned model with controlled task context | All four trained models |
+| `arm3_finetuned_orchestrated` | Fine-tuned model plus orchestration | No |
+
+Every hypothesis (H1 to H9) was written into [docs/experiments.md](docs/experiments.md) with its metric, population and decision rule before the run that tested it. Departures are logged as deviations D1 to D13 when they happen, superseded numbers stay beside their corrections, and negative and inconclusive results stay on the record. Status: H1 supported and replicated; H3 improved but still poor; H8a supported; H8b inconclusive; H9 better; H2 not measurable on this benchmark; H4 and H5 not run; H6 closed; H7 partially measured ([status table](docs/experiments.md#status)).
+
+## Results
+
+All scores are means of the composite `kleos_policy` grader (0 to 1, higher is better) on the same 349-item held-out benchmark (sha256 `a11ffad7…`), with greedy decoding and seed 42.
+
+**Table A. Fine-tuning against the orchestrated baseline** (`arm1_base_orchestrated` vs `arm2_finetuned`, all 349 items)
+
+| Run (date, hypothesis) | Base | Baseline | Fine-tuned | Δ | Tasks |
+| --- | --- | ---: | ---: | ---: | --- |
+| Ministral-8B (2026-09-15, H1) | `Ministral-8B-Instruct-2410` | 0.4744 | 0.8015 | +0.3271 | 7 of 7 improved at p < 0.05, none regressed |
+| Hermes v0.0.6 (2026-09-22, H1 replication) | `Mistral-Nemo-Instruct-2407` | 0.4755 | 0.8051 | +0.3295 (95% CI 0.3068–0.3521) | 7 of 7 improved at p < 0.001, none regressed |
+| Logos v0.0.1 (2026-10-01, H8a) | `Ministral-3-14B-Instruct-2512-BF16` | 0.4469 | 0.7896 | +0.3427; answerable +0.3952 (cluster 95% CI +0.3443 to +0.4438) | 5 of 7 improved by group intervals, none regressed |
+
+- The first two rows use the example-level paired bootstrap pre-registered for H1. From H8 on, intervals resample the 78 groups of perturbed items ([protocol amendment, 2026-09-24](docs/experiments.md#protocol-amendment--clustered-intervals-2026-09-24)), which gives wider intervals: by examples, Logos v0.0.1 improved 6 of 7. H1's per-task verdicts were not re-computed by groups (finding H-F14, [Hermes run report](docs/experiments/kleos-v006-mistralnemo12b-run1-report.md#11-findings)); given the gap sizes clustering is unlikely to change them, but this has not been shown.
+- The Ministral-8B baseline is the corrected score after the nDCG re-grade (finding F1, [artifact audit](docs/experiments/kleos-v006-ministral8b-run1-artifact-audit.md)); it was first reported as 0.5231 with 6 of 7 tasks significant, and the fine-tuned score did not change.
+- H1 pre-registered `arm0_base` and an `entity_holdout` split. Every run compares against `arm1_base_orchestrated`, the baseline the research question names ([deviation D1](docs/experiments.md#deviations-log)), on the sealed release's `format_holdout` split (D2).
+
+**Table B. Head-to-head against Hermes** (both `arm2_finetuned`; primary population: the 271 answerable items in 61 groups; paired cluster bootstrap by `group_id`, 2,000 resamples; equivalence margin ±0.02)
+
+| Hypothesis (date) | Hermes | Logos | Logos − Hermes | Cluster 95% CI | Verdict |
+| --- | ---: | ---: | ---: | --- | --- |
+| H8b: Logos v0.0.1 vs Hermes (2026-09-29) | 0.8976 | 0.8808 | −0.0168 | −0.0546 to +0.0177 | inconclusive |
+| H9: Logos v0.0.2 vs Hermes (2026-10-06) | 0.8976 | 0.9385 | +0.0409 | +0.0040 to +0.0780 (p = 0.031) | better |
+
+Overall means over all 349 items, descriptive and not tested: Hermes 0.8051, Logos v0.0.1 0.7896, Logos v0.0.2 0.8596.
+
+- **One training run per model.** The intervals cover evaluation noise, not training noise. H9's lower bound, +0.0040, is close to zero: the gain is measurable and its size is uncertain.
+- **Three changes at once in H9.** The base model, the data (kleos-policy-v0.0.7, with reasoning traces) and the generation budget (1,024 against 512 new tokens) changed together, and Hermes was not retrained on v0.0.7, so H9 does not say which change produced the gain.
+- **Prose answers.** `format_valid` is 0.0 for every model on all 349 items. The test split holds out the JSON format; the score measures the decision in prose answers and reports format separately (D2, D6).
+- **Should-decline items.** The other 78 items expect four decline labels that never occur in v0.0.6 training (D3), which is why the answerable subset is primary. On them, H9's gain of +0.1020 is not significant by groups (CI −0.0018 to +0.2062).
+
+Full numbers: [H9 result](docs/experiments.md#h9-result--2026-10-06), [H8b result](docs/experiments.md#h8b-result--2026-09-29), and the run reports indexed in [docs/experiments/README.md](docs/experiments/README.md).
+
+## Models
+
+| | Hermes v0.0.6 | Logos v0.0.2 (Beta) |
+| --- | --- | --- |
+| Role | The faster model | The deeper model; writes a reasoning trace before it answers |
+| Base @ pinned revision | `mistralai/Mistral-Nemo-Instruct-2407` @ `04d8a905` | `mistralai/Ministral-3-14B-Reasoning-2512` @ `51f9210f`, text tower |
+| Adapter sha256 | `dc121fa3…` (`checkpoint-200`) | `e49724f6…` (`checkpoint-175`) |
+| Trained | 2026-09-17 to 2026-09-18, Colab T4 | 2026-10-06, Kaggle 2 × T4, 4.43 h |
+| Served | Private ZeroGPU Space since 2026-09-23; Docker image built, not GPU-tested | Private ZeroGPU Space since 2026-10-07 |
+| Reproduction check | 9 of 9 replies byte-identical to the frozen evaluation, on Colab T4 and on ZeroGPU | 8 of 9 identical (answer and trace); 1 diverged late in its trace on the Space's GPU and changed its decision |
+| Model page | [docs/hermes.md](docs/hermes.md) | [docs/logos.md](docs/logos.md) |
+
+Both adapters are served from private package repositories and are not published; full hashes and pins are in [`configs/deployment/`](configs/deployment/). Measured on ZeroGPU: Hermes generates about 12 tokens/s and spends 7–13 GPU seconds per call, roughly 20–30 answers a day per calling account (estimated from those calls); Logos generates 11.0 tokens/s warm and allows about 9 answers from a fresh daily window (estimated from 24–26 GPU seconds per answer and the rule that a call is admitted only while 90 s of the 300 s quota remain); 7 were admitted on day 1, when the window had already been partly used. Logos v0.0.1 and the Ministral-8B run are research records and are not served. Details: [verification status](docs/deployment.md#verification-status).
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["Sealed dataset release<br/>(private repository)"] --> B["Validate<br/>schema, coverage, leakage"]
+    B --> C["Format<br/>chat template, assistant-only loss"]
+    C --> D["Train<br/>QLoRA on a pinned base"]
+    D --> E["Run manifest<br/>config_hash, dataset hash, commit"]
+    E --> F["Evaluate and compare<br/>349 items, cluster bootstrap"]
+    F --> G["Verdict<br/>pre-registered rule"]
+    E --> H["Deployment package<br/>pinned base, frozen tokenizer, hashed adapter"]
+    H --> I["ZeroGPU Space<br/>Hermes, Logos"]
+    H --> J["Docker service<br/>Hermes"]
+    I --> K["KLEOS backend"]
+    J --> K
 ```
-dataset/
-  manifest.json
-  train.jsonl
-  validation.jsonl
-  test.jsonl
-```
 
-This repository consumes it by path and never needs to know where it came from:
+- **Data** (`data/`): schema validation, coverage over variation axes, leakage detection (exact, normalized, MinHash near-duplicate, entity), split strategies, and chat formatting that masks the loss to assistant tokens.
+- **Models** (`models/`): one adapter per Mistral architecture (`MistralDenseAdapter`, `Mistral3VLMAdapter`, `Ministral3TextAdapter`, `Ministral3ReasoningTextAdapter`), NF4 quantization, LoRA targets checked against the loaded modules, and per-GPU memory estimates.
+- **Training** (`training/`): Hugging Face `Trainer` with PEFT, a gradient check and a memory probe on the longest batch before step 1, checkpoint validation and resume, and an event log that never records example text.
+- **Evaluation and experiments** (`evaluation/`, `experiments/`): graders, consistency, faithfulness heuristics, paired and cluster bootstraps, offline re-scoring, resumable evaluation, and a manifest for every run, failed runs included.
+- **Serving** (`serving/`, `inference/`): package verification, a FastAPI service, the ZeroGPU request path, a status contract and a reference client that returns a status instead of raising.
+
+`config`, `data`, `experiments`, the scoring half of `evaluation` and the verification and client side of `serving` import without torch. `tests/test_import_isolation.py` enforces this, and CI runs the whole suite on Python 3.11 to 3.13 without torch, then once more with CPU torch. Details: [docs/architecture.md](docs/architecture.md).
+
+## Method
+
+| Setting | Value (identical across the KLEOS runs unless noted) |
+| --- | --- |
+| Quantization | 4-bit NF4, double quantization; fp16 compute on T4 |
+| LoRA | r 16, α 32, dropout 0.05, all seven projections; 280 modules on Hermes and Logos |
+| Trainable parameters | 57,016,320 (Hermes); 60,948,480 (Logos) |
+| Loss | Assistant tokens only |
+| Optimizer and schedule | `paged_adamw_8bit`, learning rate 2e-4, cosine, warmup ratio 0.03 |
+| Length | 3 epochs, effective batch 8 (309 steps), `max_seq_length` 1024 |
+| Checkpoint selection | Lowest validation loss (`eval_loss`) |
+| Decoding | Greedy, seed 42; `max_new_tokens` 512 (Ministral-8B, Hermes, Logos v0.0.1) or 1,024 (Logos v0.0.2) |
+| Thinking split | Logos v0.0.2 completions are split at `[/THINK]` (token 35); only the answer after it is graded |
+
+**Benchmark.** 349 items built from the sealed test split by `scripts/build_benchmark.py`, covering seven tasks: 271 answerable and 78 should-decline. The split strategy is `format_holdout` (the JSON input format never appears in training). Test scenarios come from the same families as training; only the input format is held out, so the benchmark measures transfer across format, not to new scenarios (deviation D2). The items form 78 groups (`group_id`) of logically equivalent perturbations of one case. The `kleos_policy` grader scores ranking, deciding factor and confidence together and reports `format_valid` separately, outside the score. From H8 on, intervals come from a paired cluster bootstrap by `group_id` (2,000 resamples, 95%).
+
+**Data.** kleos-policy-v0.0.6 has 820 training, 181 validation and 349 test examples. kleos-policy-v0.0.7 adds a policy-derived reasoning trace and a "What decided it" line to the training and validation answers, and trains the four decline labels that v0.0.6 lacks; its `test.jsonl` is byte-identical to v0.0.6's. Both releases are private and sealed. Details: [docs/training.md](docs/training.md), [docs/evaluation.md](docs/evaluation.md), [docs/data-contract.md](docs/data-contract.md).
+
+## Tech stack
+
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white) ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white) ![Hugging Face](https://img.shields.io/badge/Hugging%20Face-FFD21E?logo=huggingface&logoColor=black) ![Transformers and PEFT](https://img.shields.io/badge/Transformers%20%7C%20PEFT-FFD21E?logo=huggingface&logoColor=black) ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white) ![Gradio](https://img.shields.io/badge/Gradio-F97316?logo=gradio&logoColor=white) ![pytest](https://img.shields.io/badge/pytest-0A9EDC?logo=pytest&logoColor=white) ![Ruff](https://img.shields.io/badge/Ruff-D7FF64?logo=ruff&logoColor=black) ![mypy](https://img.shields.io/badge/mypy-2A6DB2)
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?logo=githubactions&logoColor=white) ![Google Colab](https://img.shields.io/badge/Google%20Colab-F9AB00?logo=googlecolab&logoColor=black) ![Kaggle](https://img.shields.io/badge/Kaggle-20BEFF?logo=kaggle&logoColor=white)
+
+| Layer | Tools | Versions |
+| --- | --- | --- |
+| Language | Python | 3.11, 3.12, 3.13 (CI matrix); 3.12 in the Spaces |
+| Configuration and data | pydantic, PyYAML, jsonschema, NumPy | pydantic ≥ 2.7, < 3 |
+| Training | PyTorch, Transformers, PEFT, Accelerate, bitsandbytes | Pinned for the runs and for serving: transformers 5.16.1, peft 0.20.0, accelerate 1.14.0, bitsandbytes 0.50.2; torch 2.11.0+cu128 for Hermes and in every serving image |
+| Serving (Docker) | FastAPI, Uvicorn, CUDA 12.8.1 runtime image | fastapi 0.141.1, uvicorn 0.53.0 |
+| Serving (ZeroGPU) | Gradio, `spaces` | gradio 6.28.0, spaces 0.51.3 |
+| Quality | pytest, Ruff, mypy, GitHub Actions | 1,638 tests collected |
+| Compute | Colab T4, Kaggle 2 × T4, Hugging Face ZeroGPU | Free tiers |
+
+## Quickstart
+
+Install one of three variants (Python 3.11 or newer):
 
 ```bash
-python scripts/train.py --config configs/training/qlora_small.yaml \
-                        --dataset /path/to/private/dataset
-```
-
-Safeguards: `.gitignore` blocks data and output directories, and
-`scripts/check_no_private_data.py` scans for emails, tokens, keys and Supabase
-URLs. It runs in CI and can be installed as a pre-commit hook. See
-[SECURITY.md](SECURITY.md) and [docs/privacy.md](docs/privacy.md).
-
-## 4. Repository structure
-
-```
-configs/          layered YAML: base, models, datasets, training, evaluation
-data/
-  schema/         JSON Schema for the data contract
-  examples/       synthetic development fixtures (NOT research data)
-docs/             architecture, data contract, training, evaluation, colab, privacy…
-notebooks/        Colab workflow (the canonical training entry point)
-scripts/          CLI entry points
-src/kleos_models/
-  config.py       typed configuration
-  compat.py       transformers 4.56 ↔ 5.x compatibility
-  data/           schemas, loading, validation, formatting, splitting, leakage
-  models/         family adapters, loading, quantization, PEFT, feasibility
-  training/       QLoRA pipeline, callbacks, checkpointing, memory
-  evaluation/     metrics, graders, consistency, OOD, faithfulness, reports
-  inference/      generation backends, orchestration scaffolding
-  experiments/    manifests, registry, environment capture
-tests/            real tests, no GPU required
-```
-
-### The one architectural rule worth knowing
-
-`config`, `data`, `experiments` and the scoring half of `evaluation` **never
-import torch**. Dataset work, validation, leakage checking, re-scoring and CI all
-run on any laptop in seconds. Only `models/`, `training/` and `inference/` need
-the `[train]` extra. `tests/test_import_isolation.py` enforces this.
-
-## 5. Installation
-
-Python 3.11+.
-
-```bash
-# Data, validation, evaluation-scoring work. No torch, installs in seconds.
+git clone https://github.com/TejasNaik24/Kleos-Models.git && cd Kleos-Models
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-
-# Add model loading and training (CPU or CUDA).
-pip install -e ".[train,dev]"
-
-# Add 4-bit quantization. CUDA only — bitsandbytes has no macOS build.
-pip install -e ".[train,quant,dev]"
+pip install -e ".[dev]"              # data, configuration and evaluation scoring; no torch
+pip install -e ".[train,dev]"        # adds model loading and training (CPU or CUDA)
+pip install -e ".[train,quant,dev]"  # adds 4-bit quantization (CUDA only)
 ```
 
-On Colab, use `python scripts/colab_setup.py`, which installs the right packages
-**without reinstalling torch** (reinstalling torch on Colab breaks CUDA).
+The `serve` extra adds the FastAPI service. On Colab, `python scripts/colab_setup.py` installs the packages without reinstalling Colab's torch.
 
-## 6. Environment setup
-
-Every secret is optional; nothing in the data or evaluation pipeline needs one.
+Check the pipeline without a GPU or a model:
 
 ```bash
-cp .env.example .env   # then fill in what you need
+make check                                                       # ruff, format check, mypy, pytest
+python scripts/validate_dataset.py --dataset data/examples       # schema, coverage, leakage
+python scripts/smoke_test.py                                     # imports, configs, data and evaluation pipelines
+python scripts/plan_run.py --all-models --simulate-gpu t4-colab  # which models fit a free T4
+python scripts/evaluate.py --config configs/training/qlora_small.yaml \
+    --echo --arm arm0_base --output outputs/echo.json            # the harness end to end, echo backend
 ```
 
-`HF_TOKEN` is required only to download gated base models or to publish an
-adapter. On Colab, use Colab Secrets rather than a `.env` file — see
-[docs/colab.md](docs/colab.md).
+Numbers computed from `data/examples/` describe the pipeline, not KLEOS.
 
-## 7. Dataset format
-
-JSONL, one example per line, validated against a versioned schema:
-
-```json
-{
-  "id": "example-000001",
-  "version": "1.0",
-  "task": "notification_prioritization",
-  "messages": [
-    { "role": "system", "content": "..." },
-    { "role": "user", "content": "..." },
-    { "role": "assistant", "content": "..." }
-  ],
-  "variation_axes": {
-    "domain": "career",
-    "urgency": "high",
-    "entities": "unseen"
-  },
-  "metadata": {
-    "source": "synthetic",
-    "quality_status": "reviewed",
-    "scenario_family": "deadline-conflict-01"
-  }
-}
-```
-
-`variation_axes` is not decoration. It is what lets the pipeline answer _how many
-examples cover each situation type_ rather than mistaking a large dataset for a
-diverse one. Full contract: [docs/data-contract.md](docs/data-contract.md).
-
-## 8. Running validation
+Train on Colab with [`notebooks/02_train_qlora.ipynb`](notebooks/02_train_qlora.ipynb) ([docs/colab.md](docs/colab.md)), on Kaggle's two GPUs with [`notebooks/kaggle`](notebooks/kaggle) ([docs/kaggle.md](docs/kaggle.md)), or on a local CUDA machine:
 
 ```bash
-python scripts/validate_dataset.py --dataset data/examples
-python scripts/validate_dataset.py --dataset data/examples --leakage-report reports/leakage
-python scripts/inspect_dataset.py  --dataset data/examples --coverage
+python scripts/plan_run.py --config configs/training/kleos_hermes_v006.yaml
+python scripts/train.py --config configs/training/kleos_hermes_v006.yaml \
+    --dataset <path to release> --experiment-id <experiment-id>
+# after an interruption: the same command with --resume-from-checkpoint auto
 ```
 
-Validation covers schema, duplicate ids, coverage gaps, placeholder text,
-sensitive-content patterns, and examples that teach a private fact rather than a
-policy. Leakage detection covers exact, normalized and near-duplicates
-(MinHash/LSH), id collisions, scenario repeats and entity leakage.
-
-## 9. Running a smoke test
+Evaluate and compare:
 
 ```bash
-python scripts/smoke_test.py
+python scripts/build_benchmark.py --dataset <path to release> --output <benchmark dir>
+python scripts/evaluate.py --config configs/training/kleos_hermes_v006.yaml --arm arm2_finetuned \
+    --adapter <private storage>/outputs/<experiment-id>/adapter \
+    --benchmark <benchmark dir>/benchmark.jsonl --output arm2_finetuned.json --resume
+python scripts/compare.py --base arm1_base_orchestrated.json --finetuned arm2_finetuned.json \
+    --report reports/<experiment-id>
+python scripts/compare.py --cross-model --base hermes_arm2.json --finetuned logos_arm2.json \
+    --primary-subset answerable --equivalence-margin 0.02
 ```
 
-Checks Python version, imports, configs, schemas, the data pipeline and the
-evaluation harness. Add `--model configs/models/qwen3_8b.yaml` to also check
-tokenizer loading and PEFT setup when the `[train]` extra is installed. Run it
-before spending a GPU session.
+## Reproducing the results
 
-## 10. Running training
+- **Anyone** can run the 1,638 tests, run the harness on the fixtures, and check that the training configs still resolve to the recorded `config_hash` values (`tests/test_logos_config.py` and `tests/test_logos_v002_config.py` pin Hermes, Logos v0.0.1 and Logos v0.0.2). The run reports record the hash chain from the benchmark file to each results file, adapter and deployment package.
+- **Holders of a release** can retrain and re-evaluate with the runbooks: [Logos v0.0.1 on Colab](docs/runbooks/logos-v001-colab.md), [Logos v0.0.2 on Kaggle](docs/runbooks/logos-v002-kaggle.md), and deployment to ZeroGPU for [Hermes](docs/runbooks/deploy-hermes-zerogpu.md) and [Logos](docs/runbooks/deploy-logos-zerogpu.md).
+- **No one outside the project** can reproduce the scores from this repository alone: the kleos-policy releases are private, and the adapters are not published.
 
-Colab is the canonical training environment — open
-[`notebooks/02_train_qlora.ipynb`](notebooks/02_train_qlora.ipynb).
-
-Locally, on a CUDA machine:
-
-```bash
-python scripts/plan_run.py --config configs/training/qlora_small.yaml   # will it fit?
-python scripts/train.py    --config configs/training/qlora_small.yaml
-```
-
-Before training starts you get the GPU, VRAM, compute capability, CUDA and library
-versions, the model and quantization settings, the LoRA configuration, and a
-memory estimate. If the run cannot fit, it says so with numbers instead of
-OOM-ing an hour later.
-
-## 11. Resuming training
-
-Colab runtimes die. Resume is a first-class path:
-
-```bash
-python scripts/train.py --config configs/training/qlora_small.yaml \
-                        --experiment-id <original-id> \
-                        --resume-from-checkpoint auto
-```
-
-Pass the id the run started with: it names the run's directory, and a new id would
-make `auto` search an empty one and restart from step 0.
-
-`auto` finds the newest **valid** checkpoint — partial directories from an
-interrupted save are detected and skipped rather than causing a confusing failure.
-Checkpoint retention never deletes the last remaining checkpoint.
-
-## 12. Evaluation
-
-```bash
-python scripts/evaluate.py --config configs/evaluation/default.yaml \
-                           --arm arm0_base --output outputs/base_results.json
-
-python scripts/evaluate.py --config configs/evaluation/default.yaml \
-                           --arm arm2_finetuned \
-                           --adapter outputs/<experiment-id>/adapter \
-                           --output outputs/finetuned_results.json
-```
-
-Measures judgment, not tone: classification, ranking (nDCG, Kendall τ), set F1,
-rubric scores, faithfulness, consistency under logically irrelevant perturbations,
-and OOD performance reported separately from in-distribution.
-
-## 13. Comparing base vs fine-tuned
-
-```bash
-python scripts/compare.py --base outputs/base_results.json \
-                          --finetuned outputs/finetuned_results.json \
-                          --report reports/experiment-001
-```
-
-Per-task base, fine-tuned, absolute delta, relative delta, OOD delta and
-consistency delta — no single blended score unless you pass `--show-aggregate`.
-Deltas are paired per example with bootstrap confidence intervals, and an
-improvement that is not significant is reported as _not significant_ rather than
-as a win.
-
-## 14. Hugging Face publishing
-
-Nothing is ever published automatically.
-
-```bash
-python scripts/publish_adapter.py --adapter outputs/<experiment-id>/adapter \
-                                  --repo-id YOUR_USERNAME/kleos-qwen3-8b
-```
-
-Publishes adapter weights and a generated model card. It refuses to upload raw
-training data, `.env`, or any file matching the private-data scanner, and the
-model card will not claim the model is better unless the evaluation shows it.
-
-## 15. Reproducibility
-
-Every run writes a manifest tying the artifact to model + revision + dataset
-version + dataset hash + config hash + seed + git commit + environment. Failed
-runs are recorded too (`status: "failed"`), because hiding them is how a research
-record stops being trustworthy.
+Every run writes a manifest with the experiment id, `config_hash`, seed, dataset version and hash, split strategy, model and revision, LoRA and quantization settings, hardware, library versions, git commit and dirty flag, checkpoints, metrics and status. Failed runs are recorded as `status: failed`. Automatic configuration changes go into `adjustments[]`, and `training.strict_config: true` turns any of them into an error.
 
 ```
-outputs/<experiment-id>/
+<private storage>/outputs/<experiment-id>/
   adapter/  tokenizer/  config.yaml  manifest.json  metrics.json
   events.jsonl  environment.txt  README.md  checkpoint-*/
 ```
 
-Automatic configuration adjustments — a reduced sequence length, an optimizer
-fallback — are recorded in `manifest.adjustments[]`, never applied silently. Set
-`training.strict_config: true` to make any adjustment a hard error instead.
+The first run (Ministral-8B) used `revision: main`, and the commit it resolved to is not recoverable (D7). Every later run and deployment pins its base commit.
 
-## 16. Privacy
+## Limitations
 
-See [docs/privacy.md](docs/privacy.md) and [SECURITY.md](SECURITY.md). The short
-version: no real user data, no credentials, no production database access, and
-logging that records digests and counts rather than example text.
+- **One seed per model.** No interval includes training noise, and H9's lower bound (+0.0040) is close to zero.
+- **H9 is confounded.** The base, the data and the generation budget (1,024 against 512 new tokens) changed together; Hermes was not retrained on v0.0.7.
+- **Policy-derived traces.** The reasoning traces are generated from the same policies that define the benchmark's reference answers, so H9 measures how well a model learns those policies, not general reasoning.
+- **Prose, never JSON.** `format_valid` is 0.0 for every model; a consumer that needs structured output must parse prose.
+- **Abstention.** On v0.0.6, 22% of the test items expect decline labels absent from training (D3), and Ministral-8B and Hermes declined by scenario family rather than by evidence (H3). v0.0.7 trains those labels; H9's should-decline gain is not significant by groups. Whether Logos v0.0.2 declines by evidence rather than by scenario family (the shortcut found in H3 for Hermes) was not analyzed.
+- **Consistency.** Hermes changes its decision within 10 of 15 scenario families under logically irrelevant perturbations (correct agreement 0.333), though 6 of the 15 mix cases whose correct answers differ (finding H-F11, [Hermes run report](docs/experiments/kleos-v006-mistralnemo12b-run1-report.md#11-findings)). By `group_id`, against an oracle of 1.000, Hermes scores 0.769 and Logos v0.0.2 0.833.
+- **Serving GPU differs from evaluation GPU.** Evaluations ran on T4s; the Spaces run on an RTX PRO 6000 Blackwell slice. Hermes matched 9 of 9; Logos matched 8 of 9, and its live outputs are not re-measured.
+- **Not measured.** H2 (the out-of-distribution gap) is not measurable on a benchmark that is out of distribution by format throughout; H4 (general capability) and H5 (scale) were not run; `arm0_base` and `arm3_finetuned_orchestrated` were not run on the full benchmark, so H7 is half-measured.
+- **Coarse heuristics.** Faithfulness and citation checks are text-level heuristics, not entailment checks.
+- **Untuned hyperparameters.** The recipe uses engineering defaults.
+- **The 24B config is untested.** `mistral_small_3_2.yaml` is a vision-language adapter example that was never trained; its LoRA scoping fails on transformers 5 (finding L-F1, [Logos findings](docs/experiments/logos-findings.md)), held as strict xfails.
 
-## 17. Current limitations
+## Project structure
 
-Stated plainly, because the alternative is misleading:
-
-- **One GPU training run has been executed** (Ministral-8B QLoRA, Colab T4,
-  2026-09-15). Results and their caveats live in
-  [docs/experiments.md](docs/experiments.md). One run on one model is not a
-  finding about fine-tuning in general, and the Qwen and 24B arms are untested,
-  so no cross-model or cross-family claim is available.
-- **Out-of-distribution generalization was not measurable** on that run. The
-  v0.0.6 benchmark is 100% out-of-distribution by construction, so there is no
-  in-distribution population to compute a gap against. Neither arm produced
-  valid JSON on any of the 349 examples: the decision policy crossed the format
-  boundary, the output format did not.
-- **The bundled dataset is synthetic development fixtures.** It exists to exercise
-  the pipeline. Any number computed from it describes the plumbing, not KLEOS.
-- **Hyperparameters are engineering defaults, not tuned values.**
-- **The heuristic rubric grader is coarse.** It checks structure — required points,
-  citations, unsupported-claim phrasings — and is not a substitute for human or
-  LLM judging on open-ended quality.
-- **Frontier reference arms are interface-only** (spec §20).
-- **Model sizes constrain where they can run.** On a free 16GB T4, Qwen3-8B and
-  Ministral-8B are trainable in 4-bit; Mistral-Small-24B and Qwen3-30B-A3B are
-  not. `scripts/plan_run.py` tells you before you waste a session.
-
-## 18. Supported models
-
-| Config                   | Checkpoint                                      | Notes                          |
-| ------------------------ | ----------------------------------------------- | ------------------------------ |
-| `qwen3_8b`               | `Qwen/Qwen3-8B`                                 | Dense, switchable thinking     |
-| `qwen3_30b_a3b_thinking` | `Qwen/Qwen3-30B-A3B-Thinking-2507`              | MoE, ~3B active, thinking-only |
-| `mistral_small_3_2`      | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | **Vision-language model**      |
-| `ministral_8b`           | `mistralai/Ministral-8B-Instruct-2410`          | Scale-matched to Qwen3-8B      |
-
-Two facts worth knowing before you write a config:
-
-**Mistral Small 3.2 cannot be loaded with `AutoModelForCausalLM.`** It declares
-`Mistral3ForConditionalGeneration` (`model_type: mistral3`) and transformers
-registers it only for image-text-to-text. The family adapter loads it with
-`AutoModelForImageTextToText` and scopes LoRA to `language_model.*`, keeping the
-vision tower frozen and unquantized.
-
-**Qwen3-30B-A3B is a mixture of experts** — 48 layers × 128 experts. LoRA targets
-attention only; adapting the experts would create ~18,000 adapter modules. It is
-also thinking-only, so requesting non-thinking mode raises an error rather than
-silently producing a broken prompt.
-
-Inspect any model's real architecture:
-
-```bash
-python scripts/inspect_model.py --model Qwen/Qwen3-8B
+```
+Kleos-Models/
+├── .github/workflows/    CI: private-data scan, lint, types, tests with and without torch, configs, smoke test
+├── configs/              layered YAML: base, models (5), datasets, training, evaluation, deployment
+├── data/
+│   ├── schema/           JSON Schema for the data contract (generated)
+│   └── examples/         synthetic development fixtures, not research data
+├── deploy/
+│   ├── zerogpu-space/        Hermes ZeroGPU Space: app, pinned requirements, card
+│   └── zerogpu-space-logos/  Logos ZeroGPU Space
+├── docker/               Hermes serving image, compose file, environment example
+├── docs/
+│   ├── assets/           the KLEOS mark
+│   ├── datasets/         dataset repair specification
+│   ├── experiments/      frozen run reports, artifact audit, findings, serving records
+│   └── runbooks/         training and deployment procedures
+├── notebooks/            Colab notebooks; kaggle/ holds the Kaggle notebooks (Logos v0.0.2 and the output probe); all generated
+├── outputs/              local run outputs, git-ignored except a tracked .gitkeep
+├── scripts/              29 command-line entry points
+├── src/kleos_models/
+│   ├── config.py         typed, layered configuration and config_hash
+│   ├── compat.py         transformers 4.56 to 5.x compatibility
+│   ├── data/             schemas, validation, formatting, splitting, leakage, coverage
+│   ├── models/           family adapters, loading, quantization, PEFT, feasibility
+│   ├── training/         QLoRA trainer, callbacks, checkpointing, memory probe
+│   ├── evaluation/       graders, metrics, consistency, faithfulness, corrections, resume, reports
+│   ├── inference/        generation backends: Hugging Face, echo, frontier interface
+│   ├── experiments/      manifests, registry, environment capture
+│   └── serving/          package manifest, loader, FastAPI app, ZeroGPU path, status, client
+├── tests/                1,638 tests, no GPU required
+└── README.md, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, LICENSE, CITATION.cff,
+    pyproject.toml, requirements.txt, Makefile, .env.example
 ```
 
-## 19. Documentation
+## Documentation
 
-| Document                                           | Contents                                 |
-| -------------------------------------------------- | ---------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)       | How the layers fit together              |
-| [docs/data-contract.md](docs/data-contract.md)     | Schema, variation axes, policy-not-facts |
-| [docs/training.md](docs/training.md)               | QLoRA pipeline, memory, checkpointing    |
-| [docs/evaluation.md](docs/evaluation.md)           | Metrics, graders, consistency, OOD       |
-| [docs/experiments.md](docs/experiments.md)         | **Pre-registered hypotheses**            |
-| [docs/colab.md](docs/colab.md)                     | Step-by-step Colab procedure             |
-| [docs/privacy.md](docs/privacy.md)                 | Data boundary and safeguards             |
-| [docs/publishing.md](docs/publishing.md)           | Hugging Face publishing                  |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | OOM, gated repos, version issues         |
+| Page | Contents |
+| --- | --- |
+| [docs/README.md](docs/README.md) | Index of every page, by reader path |
+| [docs/hermes.md](docs/hermes.md) | KLEOS Hermes: base, recipe, H1 result, serving status |
+| [docs/logos.md](docs/logos.md) | KLEOS Logos: v0.0.1 and v0.0.2, H8 and H9, serving |
+| [docs/experiments.md](docs/experiments.md) | Pre-registered hypotheses, results log, deviations |
+| [docs/architecture.md](docs/architecture.md) | Layers, adapters, configuration, serving |
+| [docs/training.md](docs/training.md) | QLoRA pipeline, memory, two GPUs, resume |
+| [docs/evaluation.md](docs/evaluation.md) | Graders, metrics, consistency, intervals |
+| [docs/deployment.md](docs/deployment.md) | Packages, pinning, serving profiles, hosts |
+| [docs/serving-api.md](docs/serving-api.md) | Request, reply and status contract for the KLEOS backend |
 
-## 20. Research integrity
+## Contributing and security
 
-Committed to in code, not just in prose:
+Contributions are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, `make check`, the design constraints, and how to add a model family or a grader. Report a vulnerability or an accidental data exposure privately, as described in [SECURITY.md](SECURITY.md), never in a public issue. The private-data scanner (`scripts/check_no_private_data.py`) runs as the first CI job.
 
-- Evaluation examples are never cherry-picked; per-example records are always kept.
-- Failed runs stay in the registry.
-- OOD, consistency and capability results are reported separately, never blended.
-- No superiority claim without a significance test behind it.
-- Synthetic development data is labelled as such everywhere it appears.
+## Citation
 
-If fine-tuning wins, quantify the win. If it loses, analyse why. If it improves one
-task and harms another, that is likely the most interesting result available.
+If you use this software or its results, please cite it ([`CITATION.cff`](CITATION.cff) has the same metadata):
 
-## 21. Contributing
+```bibtex
+@software{naik2026kleosmodels,
+  author  = {Naik, Tejas},
+  title   = {{KLEOS Models}: Behavioral Fine-Tuning and Pre-Registered Evaluation of
+             Open-Weight Models for a Student {AI} Operating System},
+  year    = {2026},
+  version = {0.4.0},
+  url     = {https://github.com/TejasNaik24/Kleos-Models},
+  license = {MIT}
+}
+```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Run `make check` before opening a PR.
+## License
 
-## 22. Licence
+The code is MIT-licensed ([LICENSE](LICENSE)), and so are the synthetic fixtures in `data/examples/`. Base models carry their own licenses, and an adapter is generally subject to its base model's terms.
 
-MIT for the code — see [LICENSE](LICENSE). Base models carry their own licences,
-which you must accept on their Hugging Face pages; adapters are generally subject
-to the base model's terms.
+| Base model | Used for | License |
+| --- | --- | --- |
+| `mistralai/Mistral-Nemo-Instruct-2407` | Hermes | Apache-2.0 |
+| `mistralai/Ministral-3-14B-Instruct-2512-BF16`, `mistralai/Ministral-3-14B-Reasoning-2512` | Logos v0.0.1, Logos v0.0.2 | Apache-2.0 |
+| `mistralai/Ministral-8B-Instruct-2410` | The first research run | Mistral AI Research License (non-commercial, gated) |
+| `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | A config only; never trained | Apache-2.0 |
+
+Redistributing a derivative of an Apache-2.0 base requires attribution and a statement of modification.
+
+## Acknowledgements
+
+I am grateful to Mistral AI for releasing the open-weight models every KLEOS adapter is built on; to Hugging Face for Transformers, PEFT, Accelerate, the Hub and the free ZeroGPU hardware that serves both models; to the bitsandbytes maintainers for the 4-bit quantization that makes QLoRA fit a 16 GB GPU; and to Google Colab and Kaggle for the free GPUs that trained and evaluated every run.

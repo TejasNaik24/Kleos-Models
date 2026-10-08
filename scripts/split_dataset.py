@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Split a dataset into train/validation/test (spec §12).
+"""Split a dataset into train/validation/test.
 
 Random splitting is development-only. Generalization claims need a held-out
 strategy, because a random split of a dataset containing paraphrases puts

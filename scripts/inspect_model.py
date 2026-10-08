@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect a model's real architecture before configuring LoRA (spec §46).
+"""Inspect a model's real architecture before configuring LoRA.
 
 Do not copy LoRA target modules from a tutorial written for a different
 architecture. This prints the actual module tree of the checkpoint, the family
@@ -12,9 +12,9 @@ every adaptable leaf module.
 
 Usage::
 
-    python scripts/inspect_model.py --model Qwen/Qwen3-8B
+    python scripts/inspect_model.py --model mistralai/Mistral-Nemo-Instruct-2407
     python scripts/inspect_model.py --model mistralai/Mistral-Small-3.2-24B-Instruct-2506
-    python scripts/inspect_model.py --config configs/models/qwen3_8b.yaml --load
+    python scripts/inspect_model.py --config configs/models/mistral_nemo_12b.yaml --load
 """
 
 from __future__ import annotations

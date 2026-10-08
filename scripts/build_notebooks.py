@@ -108,7 +108,7 @@ except Exception as exc:
 
 if not os.environ.get("HF_TOKEN"):
     print()
-    print("Without a token you can still use ungated models such as Qwen/Qwen3-8B.")
+    print("Without a token you can still use ungated models such as mistralai/Mistral-Nemo-Instruct-2407.")
     print("To add one: sidebar key icon -> Add new secret -> name HF_TOKEN ->")
     print("enable 'Notebook access'.")
 """
@@ -194,10 +194,9 @@ supported model **on the GPU you were actually assigned**, with no downloads.
 | `inference_only` | Can be evaluated here, not trained. |
 | `infeasible` | Cannot even be loaded. |
 
-On a free T4 expect `qwen3_8b` and `ministral_8b` to be trainable, and
-`mistral_small_3_2` and `qwen3_30b_a3b_thinking` to be infeasible. That is not a
-bug — those need an A100-class GPU. The estimates are deliberately slightly
-pessimistic.
+On a free T4 expect `ministral_8b` and `mistral_nemo_12b` to be trainable and
+`mistral_small_3_2` to be infeasible: a 24B model needs an A100-class GPU. The
+estimates are deliberately slightly pessimistic.
 """
             ),
             markdown("## 6. Smoke test"),
@@ -314,7 +313,7 @@ of the model you plan to train.
             ),
             code(
                 """
-!python scripts/inspect_dataset.py --dataset {DATASET} --tokenizer Qwen/Qwen3-8B
+!python scripts/inspect_dataset.py --dataset {DATASET} --tokenizer mistralai/Mistral-Nemo-Instruct-2407
 """
             ),
             markdown(
@@ -397,10 +396,11 @@ Model configs available:
 
 | Config | Fits a free T4? |
 | --- | --- |
-| `qwen3_8b` | yes (4-bit) |
-| `ministral_8b` | yes (4-bit) — gated, needs HF_TOKEN |
-| `mistral_small_3_2` | no — needs A100 |
-| `qwen3_30b_a3b_thinking` | no — needs A100 |
+| `mistral_nemo_12b` | yes (4-bit); the KLEOS Hermes base |
+| `ministral_8b` | yes (4-bit); gated, needs HF_TOKEN |
+| `ministral3_14b` | yes (4-bit, text tower only); the KLEOS Logos v0.0.1 base |
+| `ministral3_14b_reasoning` | needs 2 GPUs (Kaggle 2×T4); the KLEOS Logos v0.0.2 base |
+| `mistral_small_3_2` | no; needs an A100 |
 """
             ),
             code(
@@ -569,10 +569,10 @@ private-data scanner.
             code(
                 """
 # Review what would be uploaded first.
-# !python scripts/publish_adapter.py --adapter {ADAPTER} --repo-id YOUR_USERNAME/kleos-qwen3-8b --dry-run
+# !python scripts/publish_adapter.py --adapter {ADAPTER} --repo-id <owner>/kleos-hermes-adapter --dry-run
 
 # Then publish:
-# !python scripts/publish_adapter.py --adapter {ADAPTER} --repo-id YOUR_USERNAME/kleos-qwen3-8b
+# !python scripts/publish_adapter.py --adapter {ADAPTER} --repo-id <owner>/kleos-hermes-adapter
 """
             ),
             markdown(

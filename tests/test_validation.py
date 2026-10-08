@@ -1,4 +1,4 @@
-"""Dataset validation and coverage tests (spec §25, §30)."""
+"""Dataset validation and coverage tests."""
 
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ class TestContentScanning:
 
 class TestPolicyNotFacts:
     def test_fact_teaching_phrasing_is_flagged(self):
-        # Spec §9: examples must teach a decision policy, not a private fact.
+        # examples must teach a decision policy, not a private fact.
         report = validate_examples(
             [build(assistant="Prioritize it because he works at that company.")]
         )

@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kleos-models"
-version = "0.1.0"
+version = "0.4.0"
 description = "Research engineering repository for KLEOS model fine-tuning and evaluation"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-authors = [{ name = "KLEOS Research" }]
+authors = [{ name = "Tejas Naik" }]
 keywords = ["llm", "qlora", "peft", "fine-tuning", "evaluation", "reproducibility"]
 classifiers = [
   "Programming Language :: Python :: 3.11",
@@ -78,12 +78,9 @@ all = [
   "kleos-models[train,quant,dev]",
 ]
 
-[project.scripts]
-kleos = "kleos_models.cli:main"
-
 [project.urls]
-Homepage = "https://github.com/kleos/kleos-models"
-Documentation = "https://github.com/kleos/kleos-models/tree/main/docs"
+Homepage = "https://github.com/TejasNaik24/Kleos-Models"
+Documentation = "https://github.com/TejasNaik24/Kleos-Models/tree/main/docs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kleos_models"]

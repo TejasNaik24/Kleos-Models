@@ -109,7 +109,7 @@ class TestHashNeutralField:
 
     def test_the_flag_is_refused_outside_the_mistral_family(self):
         with pytest.raises(ValueError, match="Mistral tokenizers only"):
-            ModelConfig(name="q", family="qwen", base_model="Qwen/Qwen3-8B", fix_mistral_regex=True)
+            ModelConfig(name="q", family="other", base_model="other/model", fix_mistral_regex=True)
 
 
 def _write_training_config(directory: Path, value: str) -> Path:
@@ -220,7 +220,7 @@ class TestSetModel:
     def test_the_override_reaches_through_extends(self, clean_env, tmp_path):
         parent = tmp_path / "parent.yaml"
         parent.write_text(
-            f"extends: {CONFIGS_DIR / 'base.yaml'}\nincludes:\n  model: {MODELS / 'qwen3_8b.yaml'}\n",
+            f"extends: {CONFIGS_DIR / 'base.yaml'}\nincludes:\n  model: {MODELS / 'mistral_nemo_12b.yaml'}\n",
             encoding="utf-8",
         )
         child = tmp_path / "child.yaml"

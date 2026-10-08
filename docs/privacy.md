@@ -1,159 +1,177 @@
 # Privacy and the public/private boundary
 
-**This repository is public. It must never contain real user data.**
+**This repository is public. It must never contain real user data.** This page is
+the single statement of that rule; other documents link here.
 
 ## What lives where
 
-| This public repository | The private `kleos-training-data` repository |
+| This public repository | The private `kleos-training-data` repository and private storage |
 | --- | --- |
 | Code, schemas, configs | Raw conversations and memory records |
 | Synthetic development fixtures | Sanitized real examples |
-| Dataset manifests and loaders | Supabase exports |
+| Dataset manifests and loaders | Dataset releases, and any Supabase export |
 | Validation and evaluation code | Private resumes and documents |
-| Aggregate metrics | Private evaluation traces |
-| Model cards, research docs | Anything identifying a person |
+| Aggregate metrics in reports | Per-example results with model responses |
+| Model cards, research documents | Trained adapters, deployment packages, anything identifying a person |
+
+Trained adapters and deployment packages live in private storage and private
+Hugging Face repositories ([publishing.md](publishing.md)). Run reports in
+[experiments/README.md](experiments/README.md) cite them by hash and by
+placeholder paths such as `<private storage>/outputs/<experiment-id>/`.
 
 ## Never in this repository
 
-- Real conversations, memory records, resumes or documents
-- Supabase exports, connection strings, anon keys or service-role keys
-- API keys, access tokens, cookies, JWTs, session identifiers
-- Personal contact information or private user identifiers
-- Production database dumps
-- Private evaluation traces
+- Real conversations, memory records, resumes or documents.
+- Supabase exports, connection strings, anon keys or service-role keys.
+- API keys, access tokens, cookies, JWTs, session identifiers.
+- Personal contact information or private user identifiers.
+- Production database dumps.
+- Private evaluation traces, including stored model responses to private
+  benchmark prompts.
 
 ## The boundary in practice
 
-The private repository produces a versioned artifact:
+The private repository produces a versioned release directory:
 
 ```
-dataset/
+<path to release>/
   manifest.json
   train.jsonl
   validation.jsonl
   test.jsonl
 ```
 
-This repository consumes it **by path**:
+This repository consumes it by path:
 
 ```bash
-python scripts/train.py --config configs/training/qlora_small.yaml \
-                        --dataset /path/to/private/dataset
+python scripts/train.py --config configs/training/kleos_hermes_v006.yaml \
+    --dataset <path to release>
 ```
 
-Neither repository imports the other. The public repo does not know or care where
-the dataset came from, and the private artifact is never copied here.
+Neither repository imports the other. The public code does not know where the
+dataset came from, and the private artifact is never copied here. On Colab the
+release sits on a private Drive folder; on Kaggle it is a private Kaggle dataset,
+copied to `/tmp`, which Kaggle never saves ([kaggle.md](kaggle.md)).
 
-There is **no Supabase dependency** in the training pipeline and there will not be
-one. Training operates on exported, versioned artifacts — which keeps the research
-reproducible and stops the public repo becoming coupled to production
-infrastructure.
+The training pipeline has no Supabase dependency. It operates on exported,
+versioned artifacts, which keeps the research reproducible and keeps the public
+code decoupled from production infrastructure.
 
 ## Safeguards
 
-### 1. `.gitignore` — deny-by-default under `data/`
+### 1. `.gitignore`: deny by default under `data/`
 
-Everything under `data/` is ignored unless explicitly allowlisted. Only three
-things are permitted: `data/README.md`, `data/schema/` (JSON Schema, no data) and
-`data/examples/` (synthetic fixtures).
+Everything under `data/` is ignored unless explicitly allowed. Only three things
+are permitted: `data/README.md`, `data/schema/` (JSON Schema, no data) and
+`data/examples/` (synthetic fixtures). Split files (`train.jsonl`,
+`validation.jsonl`, `test.jsonl`) are ignored anywhere else in the tree.
 
-This is an allowlist on purpose. A blocklist — "ignore `data/raw/`, ignore
-`*.jsonl`" — only blocks the filenames someone thought of in advance. A real
-export dropped in as `data/my_export.jsonl` or `data/memories.json` would sail
-straight into a public commit. Deny-by-default means a new file has to be
-*deliberately* permitted before it can ever be published.
+The allowlist is deliberate. A blocklist ("ignore `data/raw/`, ignore `*.jsonl`")
+blocks only the filenames someone thought of in advance; a real export dropped in
+as `data/my_export.jsonl` or `data/memories.json` would pass into a public
+commit. Deny by default means a new file has to be permitted deliberately before
+it can be published.
 
 Also ignored: `outputs/`, `checkpoints/`, `wandb/`, `reports/`, `.env`, and key
 material.
 
 `tests/test_gitignore.py` runs git against a throwaway repository containing the
-real `.gitignore` and asserts both halves — that private paths are blocked, and
-that the schema and fixtures are still tracked. Two subtleties it guards against,
-both of which were real bugs:
+real `.gitignore` and asserts both halves: private paths are blocked, and the
+schema and fixtures are still tracked. It guards against two subtleties, both of
+which were real bugs:
 
 - **Trailing comments are not supported.** `!data/schema/  # keep` is a literal
-  pattern matching nothing, so the negation silently does nothing.
+  pattern matching nothing, so the negation does nothing.
 - **A file cannot be re-included if its parent directory is excluded.**
   `outputs/` followed by `!outputs/.gitkeep` drops the `.gitkeep`; the rule must
   be `outputs/*`.
 
-A safety net, not a substitute for judgement.
+The ignore file is a safety net, not a substitute for judgment.
 
 ### 2. The private-data scanner
 
 ```bash
 python scripts/check_no_private_data.py .
+python scripts/check_no_private_data.py --strict .    # warnings fail too
 python scripts/check_no_private_data.py --staged      # pre-commit mode
 python scripts/check_no_private_data.py --install-hook
 ```
 
-Detects AWS/OpenAI/Anthropic/HF/GitHub/Slack/Google keys, JWTs, private key
-blocks, Supabase URLs and service keys, bearer tokens, assigned secrets, email
-addresses and phone numbers. Also flags files that must not exist at all
-(`.env`, anything under `data/raw/`, committed outputs).
+It detects AWS, OpenAI, Anthropic, Hugging Face, GitHub, Slack and Google keys,
+JWTs, private key blocks, Supabase URLs and service keys, bearer tokens and
+assigned secrets (errors), and email addresses and phone numbers (warnings, which
+fail only with `--strict`). It also flags files that must not exist at all:
+`.env`, anything under `data/raw/`, committed outputs. It runs in CI on every
+push.
 
-Runs in CI on every push.
+A short list of files is exempt (`SELF_EXEMPT`), because they define or test the
+patterns or document them: the scanner itself, the dataset and upload scanners
+and their tests, `.env.example`, `SECURITY.md` and this page.
 
 ### 3. Dataset validation
 
-`validate_dataset.py` scans example content for the same patterns. A dataset that
-contains an email address fails validation before it can be trained on.
+`validate_dataset.py` scans example content for the same patterns. A dataset
+that contains an email address fails validation before it can be trained on.
 
 ### 4. Publishing allowlist
 
-`publish_adapter.py` uploads only named artifacts — adapter weights, tokenizer,
-config, manifest, metrics, model card — and scans each one before upload. Training
-data, `.env`, checkpoints and logs are refused categorically.
+`publish_adapter.py` uploads only named artifacts: adapter weights and config,
+the effective config, the manifest, metrics and the generated model card. It
+scans each text file before upload. No tokenizer file is published (the tokenizer
+comes from the pinned base model), and training data, `.env`, checkpoints and logs
+are refused categorically ([publishing.md](publishing.md#what-gets-uploaded)).
+Deployment packages go only to private repositories, and
+`upload_deployment_package.py` refuses a repository that is or would be public.
 
 ### 5. Logging discipline
 
-Structured logs record scalars, identifiers and configuration. **Example text is
-never logged.** Helpers that accept free text redact it to a length and a digest.
-
-`--show-masking` prints token counts, not content, so it is safe against a private
-dataset.
+Structured logs record scalars, identifiers and configuration. Example text is
+never logged; helpers that accept free text redact it to a length and a digest.
+`--show-masking` prints token counts, not content, so it is safe against a
+private dataset. The inference service is written not to log prompts, answers or
+reasoning traces.
 
 ## Policy, not private facts
 
-The deepest privacy protection here is not a scanner — it is what the training
-data teaches.
+The deepest privacy protection is what the training data teaches.
 
-The model learns **decision policies**: weigh a nearer deadline against evidence
+The model learns decision policies: weigh a nearer deadline against evidence
 quality, route a request to the right tool, prefer the more reliable source when
-records conflict.
-
-It must not learn **facts about a person**: where someone works, what their resume
-says, what they discussed last Tuesday. Those belong in KLEOS's retrieval and
-memory layers, where they can be updated, scoped and deleted.
+records conflict. It must not learn facts about a person: where someone works,
+what their resume says, what they discussed last Tuesday. Those belong in KLEOS's
+retrieval and memory layers, where they can be updated, scoped and deleted.
 
 This matters beyond privacy: a memorized fact goes stale, cannot be corrected
-without retraining, and does not generalize to anyone else.
-
-The validator flags likely fact-teaching phrasing, but this rule is ultimately
-enforced by whoever writes the data. See [data-contract.md](data-contract.md).
+without retraining, and does not generalize to anyone else. The validator flags
+likely fact-teaching phrasing, but the rule is ultimately enforced by whoever
+writes the data ([data-contract.md](data-contract.md#policy-not-private-facts)).
 
 ## Handling secrets
 
-- Local: `.env` (git-ignored). Copy from `.env.example`.
-- Colab: **Colab Secrets**, never a literal token in a cell.
+- Local: `.env` (git-ignored), copied from `.env.example`.
+- Colab: Colab Secrets, never a literal token in a cell.
+- Kaggle: the notebooks need no token, because their base model is ungated.
 - CI: repository secrets.
+- Serving: the Space's secrets (`HERMES_*`, `LOGOS_*`), or for Docker the
+  `*_FILE` form, which reads a value from a mounted file.
 
 Nothing in the data, validation, splitting, leakage or offline evaluation
-pipelines requires a secret. `HF_TOKEN` is needed only for gated model downloads
-and publishing.
+pipelines needs a secret. `HF_TOKEN` is needed only for gated model downloads,
+publishing and private package repositories. [SECURITY.md](../SECURITY.md) covers
+secrets for serving in detail.
 
-**Never use production credentials for a training export.** Use a scoped,
-read-only, purpose-created credential and revoke it afterwards.
+Never use production credentials for a training export. Use a scoped, read-only,
+purpose-created credential and revoke it afterwards.
 
 ## If something leaks
 
 1. **Rotate the credential immediately.** Removing it from the working tree does
    not remove it from git history, and history is public.
-2. Report it — see [SECURITY.md](../SECURITY.md).
+2. Report it, as [SECURITY.md](../SECURITY.md) describes.
 3. Rewrite history only after rotating; assume anything pushed was captured.
 4. If a dataset leaked, treat every record in it as exposed.
 
-## Before you commit
+## Before committing
 
 ```bash
 python scripts/check_no_private_data.py .

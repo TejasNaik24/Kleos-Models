@@ -1,4 +1,4 @@
-"""Typed configuration for KLEOS experiments (spec section 6)."""
+"""Typed configuration for KLEOS experiments."""
 
 from __future__ import annotations
 
@@ -36,12 +36,10 @@ logger = get_logger(__name__)
 
 
 class ReasoningCapability(str, Enum):
-    """What a checkpoint can actually do with reasoning (spec section 39)."""
+    """What a checkpoint can actually do with reasoning."""
 
     #: No reasoning mode. e.g. Mistral Small 3.2, Ministral 8B.
     UNSUPPORTED = "unsupported"
-    #: Reasoning can be switched on or off, e.g. via `enable_thinking`.
-    SWITCHABLE = "switchable"
     #: Always reasons; cannot be disabled.
     ALWAYS_ON = "always_on"
 
@@ -50,7 +48,6 @@ class ReasoningMode(str, Enum):
     """Requested reasoning behaviour for a run."""
 
     STANDARD = "standard"
-    NON_THINKING = "non_thinking"
     THINKING = "thinking"
 
 
@@ -146,14 +143,14 @@ class ReasoningConfig(StrictModel):
         default=True,
         description=(
             "Remove reasoning spans from assistant targets before computing loss. "
-            "Keep this true: we train decision policy, not display chain-of-thought."
+            "Keep this true unless the model is trained to think; Logos v0.0.2 supervises its [THINK] trace."
         ),
     )
     strip_thinking_from_history: bool = Field(
         default=True,
         description=(
-            "Remove reasoning spans from prior assistant turns, per Qwen's "
-            "multi-turn guidance for Thinking checkpoints."
+            "Remove reasoning spans from prior assistant turns, as thinking "
+            "checkpoints' multi-turn guidance recommends."
         ),
     )
 
@@ -165,7 +162,7 @@ class ReasoningConfig(StrictModel):
 
 
 class QuantizationConfig(StrictModel):
-    """bitsandbytes quantization settings (spec section 13)."""
+    """bitsandbytes quantization settings."""
 
     mode: QuantizationMode = QuantizationMode.NF4
     compute_dtype: DType = Field(
@@ -196,7 +193,7 @@ class QuantizationConfig(StrictModel):
 
 
 class LoRAConfig(StrictModel):
-    """LoRA / QLoRA adapter configuration (spec section 6)."""
+    """LoRA / QLoRA adapter configuration."""
 
     r: int = Field(default=16, ge=1, le=512)
     alpha: int = Field(default=32, ge=1)
@@ -207,7 +204,7 @@ class LoRAConfig(StrictModel):
             "Module suffixes to adapt. 'auto' asks the model-family adapter for "
             "architecture-appropriate defaults. Never copy these from a Llama "
             "tutorial: they are validated against the loaded model and a missing "
-            "target is a hard error (spec section 46)."
+            "target is a hard error."
         ),
     )
     exclude_modules: list[str] = Field(
@@ -239,14 +236,14 @@ class LoRAConfig(StrictModel):
 class ModelConfig(StrictModel):
     """A base model plus everything family-specific about using it.
 
-    Fields such as ``architecture``, ``parameter_count`` and
-    ``active_parameter_count`` are recorded in the experiment manifest so results
-    can never be accidentally pooled across incompatible checkpoints
-    (spec sections 3 and 38).
+     Fields such as ``architecture``, ``parameter_count`` and
+     ``active_parameter_count`` are recorded in the experiment manifest so results
+     can never be accidentally pooled across incompatible checkpoints
+    .
     """
 
-    name: str = Field(description="Short config identifier, e.g. 'qwen3_8b'.")
-    family: str = Field(description="Model family: 'qwen', 'mistral', ...")
+    name: str = Field(description="Short config identifier, e.g. 'mistral_nemo_12b'.")
+    family: str = Field(description="Model family, e.g. 'mistral'.")
     base_model: str = Field(description="Hugging Face checkpoint id.")
     revision: str = Field(
         default="main",
@@ -259,7 +256,7 @@ class ModelConfig(StrictModel):
 
     # Optional; when set, cross-checked against the loaded checkpoint.
     model_type: str | None = Field(
-        default=None, description="HF config model_type, e.g. 'qwen3', 'mistral3'."
+        default=None, description="HF config model_type, e.g. 'mistral', 'mistral3'."
     )
     architecture: str | None = Field(default=None, description="Expected architecture class name.")
     parameter_count: float | None = Field(default=None, ge=0)
@@ -374,7 +371,7 @@ class DatasetFilters(StrictModel):
 
 
 class SplitConfig(StrictModel):
-    """How to partition examples (spec section 12)."""
+    """How to partition examples."""
 
     strategy: str = Field(
         default="random",
@@ -421,7 +418,7 @@ class DatasetConfig(StrictModel):
     """Where the data is and how it is prepared.
 
     ``path`` may point outside this repository. That is the supported route for
-    consuming the private ``kleos-training-data`` artifact (spec section 27):
+    consuming the private ``kleos-training-data`` artifact:
     this public repo never embeds private data and never reaches into Supabase.
     """
 
@@ -490,7 +487,7 @@ class TrainingConfig(StrictModel):
     """Trainer hyperparameters and run policy.
 
     The defaults are conservative engineering defaults for a first end-to-end
-    QLoRA run, **not** tuned research settings (spec sections 47 and 48).
+    QLoRA run, **not** tuned research settings.
     """
 
     output_dir: Path = Field(default=Path("outputs"))
@@ -606,7 +603,7 @@ class GenerationConfig(StrictModel):
 
 
 class ConsistencyConfig(StrictModel):
-    """Consistency testing settings (spec section 22)."""
+    """Consistency testing settings."""
 
     enabled: bool = True
     group_key: str = Field(
@@ -618,7 +615,7 @@ class ConsistencyConfig(StrictModel):
 
 
 class OODConfig(StrictModel):
-    """Out-of-distribution evaluation settings (spec section 23)."""
+    """Out-of-distribution evaluation settings."""
 
     enabled: bool = True
     benchmark_path: Path | None = None
@@ -630,7 +627,7 @@ class OODConfig(StrictModel):
 
 
 class CapabilityConfig(StrictModel):
-    """General-capability regression suite (spec section 24)."""
+    """General-capability regression suite."""
 
     enabled: bool = False
     benchmark_path: Path | None = None

@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 KLEOS Research
+Copyright (c) 2026 Tejas Naik
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,12 +24,12 @@ SOFTWARE.
 
 NOTE ON MODEL WEIGHTS AND DATASETS
 
-This licence covers the code in this repository only.
+This license covers the code in this repository only.
 
-Base models (Qwen3, Mistral Small, Ministral) carry their own licences, which
-you must accept on their respective Hugging Face model pages. A LoRA adapter
-trained from a base model is generally subject to that base model's licence
-terms; check them before redistributing an adapter.
+Base models (Mistral-Nemo, Ministral 3, Ministral-8B, Mistral Small) carry
+their own licenses, which you must accept on their respective Hugging Face
+model pages. A LoRA adapter trained from a base model is generally subject to
+that base model's license terms; check them before redistributing an adapter.
 
 The synthetic examples in data/examples/ are development fixtures released
-under this same licence. They are NOT the KLEOS research dataset.
+under this same license. They are NOT the KLEOS research dataset.

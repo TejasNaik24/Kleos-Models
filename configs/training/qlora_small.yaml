@@ -13,7 +13,7 @@
 
 extends: ../base.yaml
 includes:
-  model: ../models/qwen3_8b.yaml
+  model: ../models/mistral_nemo_12b.yaml
   dataset: ../datasets/example.yaml
   evaluation: ../evaluation/default.yaml
 

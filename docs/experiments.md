@@ -1,7 +1,27 @@
 # Experiments and pre-registration
 
-This document holds the **pre-registered hypotheses** for the KLEOS fine-tuning
-research (spec §37).
+This document is the pre-registration and results record of the KLEOS
+fine-tuning research: hypotheses H1 to H9, each written down before the run that
+tests it, the result recorded against each, the fixed protocol, the results log
+and the deviations log. The introduction and the status section are current as
+of 2026-10-07. Everything after them is the record as written at the time.
+Editorial changes for public release are limited to editor's notes, retargeted
+links, and these two sections.
+
+Identifiers used throughout:
+
+- **H1–H9**: the pre-registered hypotheses, in this document.
+- **D1–D13**: departures from the protocol, in the [deviations log](#deviations-log).
+- **F1–F3**: findings of the [Ministral-8B artifact audit](experiments/kleos-v006-ministral8b-run1-artifact-audit.md#findings).
+- **H-F1–H-F14**: findings recorded with the [Hermes run report](experiments/kleos-v006-mistralnemo12b-run1-report.md#11-findings).
+  H-F11 to H-F14 concern how the evaluation measures and were found while Logos
+  v0.0.1 was designed.
+- **L-F1–L-F8**: findings from the Logos work, in
+  [Logos findings](experiments/logos-findings.md).
+
+The index of every record, the evidence labels (VERIFIED, ESTIMATED, SOURCE,
+OBSERVED, INFERRED, NOT VERIFIED) and the placeholders used in the records are
+in [docs/experiments/README.md](experiments/README.md).
 
 ## Why pre-register
 
@@ -23,36 +43,43 @@ becoming a prompt to go looking for a different metric.
 
 ## Status
 
-**Three runs completed**, all QLoRA on `kleos-policy-v0.0.6`, all evaluated
-against the prompt-engineered orchestration baseline on the same 349-example
-held-out split:
+As of 2026-10-07, four runs are complete. All are QLoRA fine-tunes, and all were
+evaluated on the same 349-item held-out benchmark (sha256 `a11ffad7…`):
 
-- `kleos-v006-ministral8b-run1` (2026-09-15) — Ministral-8B. Research only: the
-  base is under the Mistral Research Licence.
-- `kleos-v006-mistralnemo12b-run1` (2026-09-22) — **KLEOS Hermes**, on
-  Apache-2.0 Mistral-Nemo-12B.
-- `kleos-v006-ministral314b-run1` (2026-10-01) — **KLEOS Logos v0.0.1**, on
-  Apache-2.0 Ministral 3 14B. It is tested under H8, below.
+| Run | Model | Base | Data | Completed |
+| --- | --- | --- | --- | --- |
+| `kleos-v006-ministral8b-run1` | Research only (the base is under the Mistral AI Research License) | Ministral-8B-Instruct-2410 | `kleos-policy-v0.0.6` | 2026-09-15 |
+| `kleos-v006-mistralnemo12b-run1` | **KLEOS Hermes v0.0.6** | Mistral-Nemo-Instruct-2407 (Apache-2.0) | `kleos-policy-v0.0.6` | 2026-09-22 |
+| `kleos-v006-ministral314b-run1` | **KLEOS Logos v0.0.1** | Ministral-3-14B-Instruct-2512-BF16, text tower (Apache-2.0) | `kleos-policy-v0.0.6` | 2026-10-01 |
+| `kleos-v007-ministral314breasoning-run1` | **KLEOS Logos v0.0.2** | Ministral-3-14B-Reasoning-2512, text tower (Apache-2.0) | `kleos-policy-v0.0.7` | 2026-10-06 |
 
-H1 is supported in both of the first two, with deviations recorded below. H3 is supported
-directionally in both, but the absolute consistency number stays poor — and is
-identical across the two base models. H2 is **not measurable** on this benchmark.
-H4–H7 remain untested; H7 is half-measured in each run.
+| Hypothesis | Status | Date |
+| --- | --- | --- |
+| [H1](#h1--primary-hypothesis): fine-tuning beats the prompt-engineered baseline | **Supported** on Ministral-8B (with deviations D1 and D2); **replicated** by Hermes | 2026-09-15; 2026-09-22 |
+| [H2](#h2--does-any-gain-generalize-out-of-distribution): gains generalize out of distribution | **Not measurable** on the v0.0.6 benchmark, which is entirely out of distribution | 2026-09-15 |
+| [H3](#h3--does-behaviour-survive-format-changes): decisions survive irrelevant perturbations | **Improved, still poor**; reproduced exactly by Hermes | 2026-09-15; 2026-09-22 |
+| [H4](#h4--does-fine-tuning-damage-general-capability): no loss of general capability | Not run | |
+| [H5](#h5--does-model-scale-change-the-effect): the effect depends on scale | Not run; re-scoped to two Mistral models | 2026-09-15 |
+| [H6](#h6--does-kleos-policy-learning-transfer-across-model-families): transfer across model families | **Closed**: not testable with one model family | 2026-09-15 |
+| [H7](#h7--do-fine-tuning-and-orchestration-interact): fine-tuning and orchestration interact | Partially measured: `arm1` and `arm2` only, in three runs | 2026-10-01 |
+| [H8](#h8--does-a-stronger-base-make-a-better-kleos-model): a stronger base makes a better model (Logos v0.0.1) | **H8a supported** (fine-tuning helps Logos); **H8b, the primary comparison with Hermes, inconclusive** | H8b 2026-09-29; H8a 2026-10-01 |
+| [H9](#h9--does-a-logos-trained-to-think-beat-hermes): a Logos trained to think beats Hermes (Logos v0.0.2) | **Supported: better.** Answerable subset +0.0409, cluster 95% CI +0.0040 to +0.0780 | 2026-10-06 |
 
-Read the Deviations log before quoting any number from here: the run departed
-from the pre-registered protocol in three ways, and 22% of the test label space
-turned out to be unlearnable from the training split.
+How to read the table:
 
-**KLEOS Logos v0.0.1** was pre-registered as H8 on 2026-09-24 and trained on
-2026-09-27.
+- **Deviations come first.** Read the [deviations log](#deviations-log) before
+  quoting a number. D1 (the baseline is `arm1`, not `arm0`), D2 (a format
+  holdout, not an entity holdout) and D3 (78 of the 349 test items, 22%, expect
+  labels that never occur in v0.0.6 training) apply to every run on v0.0.6.
+- **Intervals.** From H8 on, intervals resample groups (`group_id`) rather than
+  examples ([protocol amendment](#protocol-amendment--clustered-intervals-2026-09-24)).
+- **H8 and H9 together.** Fine-tuning helps the stronger base, but Logos v0.0.1
+  was not measurably better than Hermes on v0.0.6. Logos v0.0.2 is measurably
+  better. Its base release and its training data changed together, and each
+  model is a single training run, so H9 does not say which change produced the
+  gain or how large it is.
 
-- **H8b (primary), Logos vs Hermes, is inconclusive** (2026-09-29).
-- **H8a, fine-tuning helps Logos, is supported** (2026-10-01).
-- **Together:** fine-tuning works on the stronger base, but the fine-tuned Logos
-  is not measurably better than Hermes on v0.0.6.
-
-From H8 on, intervals resample groups rather than examples; see the protocol
-amendment below.
+The run card below was written when Hermes completed, and is kept as recorded.
 
 ### KLEOS Hermes — `kleos-v006-mistralnemo12b-run1`, completed 2026-09-22
 
@@ -302,7 +329,7 @@ not the model. The unit of logical equivalence is `group_id`: 78 test groups, ea
 label-identical by construction, where an oracle scores 1.000. The numbers above
 are unchanged and stay as reported. From H8 on, consistency is reported by
 `group_id` beside the family figure, each with its oracle ceiling
-([evaluation.md](evaluation.md#consistency-which-unit)); `scripts/rescore.py
+([evaluation.md](evaluation.md#which-unit)); `scripts/rescore.py
 --mode annotate` re-reports both earlier runs that way without touching their files.
 
 **Replication — KLEOS Hermes, 2026-09-22.** On Mistral-Nemo-12B every number above
@@ -353,7 +380,9 @@ must be reported as such.
 
 **Re-scoped 2026-09-15.** This hypothesis previously named `qwen3_8b` vs
 `qwen3_30b_a3b_thinking`. Qwen is permanently excluded from KLEOS, so the scale
-comparison is now between the two Mistral candidates.
+comparison is now between the two Mistral candidates. *[editor's note: the two
+configs named here were later removed from the repository; see the editor's note
+under H6.]*
 
 **Confound to state, not to hide:** `mistral_small_3_2` is a 24B *vision-language*
 model (`Mistral3ForConditionalGeneration`). Comparing it against text-only
@@ -391,6 +420,12 @@ The Qwen configs and `QwenDenseAdapter` / `QwenMoEAdapter` remain in the
 repository — the family abstraction is what keeps the pipeline architecture-
 agnostic, and deleting them would not make the pipeline simpler. They are simply
 not used by KLEOS.
+
+> *[editor's note, 2026-10-07: the paragraph above records the decision as
+> closed on 2026-09-15. In the public-release change of 2026-10-07 the Qwen configs,
+> adapters and their tests were removed from the repository; the family
+> abstraction (`ModelFamilyAdapter`) stays, with the Mistral adapters as its
+> only implementations.]*
 
 Reopening this would require adding a non-Mistral, non-Qwen family (e.g. Llama or
 Gemma) with its own adapter. That is a deliberate scope decision, not an
@@ -436,7 +471,7 @@ feasibility: [logos.md](logos.md).
 | | |
 | --- | --- |
 | **KLEOS model** | **Logos v0.0.1**: `mistralai/Ministral-3-14B-Instruct-2512-BF16` @ `3cea74c1ebaf5ce5f5a2553de470e2ceab825142`, text tower, QLoRA NF4 r=16 on all seven projections |
-| **Config** | [`configs/training/kleos_logos_v001.yaml`](../configs/training/kleos_logos_v001.yaml), `config_hash` **`18008c6716a58afc284c64eb7e1e96c9bfce34b8da2b8c489b6d59c0c45b6f71`** with `--dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 --output-dir /content/drive/MyDrive/kleos-private/outputs` and no `KLEOS_*` variables set |
+| **Config** | [`configs/training/kleos_logos_v001.yaml`](../configs/training/kleos_logos_v001.yaml), `config_hash` **`18008c6716a58afc284c64eb7e1e96c9bfce34b8da2b8c489b6d59c0c45b6f71`** with `--dataset /content/drive/MyDrive/kleos-private/kleos-policy-v0.0.6 --output-dir /content/drive/MyDrive/kleos-private/outputs` and no `KLEOS_*` variables set. *[editor's note: the literal `--dataset` and `--output-dir` paths are inputs to the recorded `config_hash` and are kept for that reason.]* |
 | **Experiment id** | `kleos-v006-ministral314b-run1` |
 | **Dataset** | `kleos-policy-v0.0.6`, sealed, unchanged |
 | **Benchmark** | `benchmark.jsonl`, sha256 `a11ffad75f5147f9d0ddad7bad4bfc073dc730df2b19173ff642774233b4b266`, built from `test.jsonl` (`a4decaaf029b2273…`); greedy decoding, `max_new_tokens` 512, seed 42, grader `kleos_policy`; identical to Hermes' |
@@ -605,12 +640,12 @@ interval excludes zero. 5 of 7 tasks improved and none regressed:
 > KLEOS Hermes.
 
 **Pre-registered 2026-10-06, before any Logos v0.0.2 training.** Design and
-runbook: [logos.md](logos.md#11-logos-v002-trained-to-think).
+runbook: [logos.md](logos.md#what-changed-in-v002), [runbooks/logos-v002-kaggle.md](runbooks/logos-v002-kaggle.md).
 
 | | |
 | --- | --- |
 | **KLEOS model** | **Logos v0.0.2**: `mistralai/Ministral-3-14B-Reasoning-2512` @ `51f9210f3cd20f3452a80d5819d15dc61cc50630`, text tower, QLoRA NF4 r=16 on all seven projections (280 modules, 60,948,480 trainable parameters) |
-| **Config** | [`configs/training/kleos_logos_v002.yaml`](../configs/training/kleos_logos_v002.yaml), `config_hash` **`d1961583546b5761dd854cfe845838ca91a87ea6189d54be617de21085e8cfa9`** with `--dataset /tmp/kleos-data/kleos-policy-v0.0.7 --output-dir /kaggle/working/outputs` and no `KLEOS_*` variables set |
+| **Config** | [`configs/training/kleos_logos_v002.yaml`](../configs/training/kleos_logos_v002.yaml), `config_hash` **`d1961583546b5761dd854cfe845838ca91a87ea6189d54be617de21085e8cfa9`** with `--dataset /tmp/kleos-data/kleos-policy-v0.0.7 --output-dir /kaggle/working/outputs` and no `KLEOS_*` variables set. *[editor's note: the literal `--dataset` and `--output-dir` paths are inputs to the recorded `config_hash` and are kept for that reason.]* |
 | **Experiment id** | `kleos-v007-ministral314breasoning-run1` |
 | **Dataset** | `kleos-policy-v0.0.7`, sealed (release content hash `b53afa4216bf6973…`). Train and validation answers carry a policy-derived reasoning trace (schema 1.1) and a "What decided it" line; `test.jsonl` is byte-identical to v0.0.6's (`a4decaaf029b2273…`) |
 | **Benchmark** | The H8 file, unchanged: sha256 `a11ffad75f5147f9d0ddad7bad4bfc073dc730df2b19173ff642774233b4b266`; greedy decoding, seed 42, grader `kleos_policy`, **`max_new_tokens` 1024**. Each completion is split at `[/THINK]` (token 35) and only the answer after it is graded |
@@ -804,7 +839,7 @@ subsets are reported separately.
 
 ```bash
 python scripts/run_experiment.py --config configs/training/qlora_small.yaml \
-                                 --dataset /path/to/private/dataset
+                                 --dataset <path to release>
 ```
 
 Every run writes a manifest. To list them, failures included:
@@ -880,7 +915,7 @@ happens.
 | 2026-09-15 | **D7.** The v0.0.6 run used `revision: main` for the base model. The commit it resolved to is **not recoverable** from the preserved artifacts. | Nothing in the pipeline resolved or recorded a Hub commit sha — every code path echoes back the requested pointer. The Colab HF cache that held it was wiped. See "Base-model revision" below. Future runs are pinned; the historical record is **not** backfilled. |
 | 2026-09-18 | **D8.** Hermes training was interrupted after step 250 and resumed from `checkpoint-250` eighteen hours later, on a different T4 instance. Steps 251–309 ran in the second session. | The Colab runtime died mid-save; `validate_checkpoint` rejected the half-written `checkpoint-300`. Resume state was verified faithful: gradient-check loss bit-identical across sessions, scheduler lag carried over, and the two independent evaluations of step 300 agree to 1.4 × 10⁻⁵. **No effect on the result:** the selected adapter (`checkpoint-200`) was written before the interruption. D1–D6 apply to the Hermes run unchanged; D7 does not (its base is pinned). |
 | 2026-09-27 | **D9.** Logos training ran across four Colab sessions between 2026-09-24 and 2026-09-27, and resumed twice. Session 1 was disconnected after the step-125 evaluation, leaving `checkpoint-125` without weights; `validate_checkpoint` rejected it, so session 2 resumed from `checkpoint-100`. Session 2 hit the Google Drive storage quota partway through, and the free GPU usage limit ended it between steps 250 and 275. Session 3 made no progress. Session 4 resumed from `checkpoint-250` and finished. | Free-tier Colab limits. Both resume points were complete: `checkpoint-100` by its size (368 MB, a full checkpoint), and `checkpoint-250` file by file (weights, optimizer, scheduler, RNG and scaler state). **No effect on the selected adapter:** `checkpoint-175` was written in session 2. The final validation pass on the loaded best weights reproduced its `eval_loss` (0.0382), and the exported adapter is byte-identical to it (sha256 `f3e8dcdc…70a7`). `train_loss` in `metrics.json` (0.0007) is a resume artifact: transformers divides the last session's loss sum by all 309 steps. Do not quote it. `training.log` may lack killed sessions' lines (L-F3); `events.jsonl` does not. |
-| 2026-09-29 | **D10.** Logos `arm2_finetuned` was evaluated in three sessions. The generations of the first two never reached Drive; the third generated all 349 in one pass (`resume`: 0 replayed, 349 new). | Finding L-F3 ([logos.md](logos.md#10-findings-from-this-phase)): the partial file was held open, and Colab's Drive mount uploads only closed files. **No effect on the result**, which is a single uninterrupted run at the pre-registered commit. |
+| 2026-09-29 | **D10.** Logos `arm2_finetuned` was evaluated in three sessions. The generations of the first two never reached Drive; the third generated all 349 in one pass (`resume`: 0 replayed, 349 new). | Finding L-F3 ([experiments/logos-findings.md](experiments/logos-findings.md)): the partial file was held open, and Colab's Drive mount uploads only closed files. **No effect on the result**, which is a single uninterrupted run at the pre-registered commit. |
 | 2026-09-29 | **D11. Declared before it runs:** Logos `arm1_base_orchestrated` will run at a commit later than H8's, which contains the L-F3 fix. The fix opens and closes the partial file for every record instead of holding one handle for the run. | An arm takes 2–3 hours, longer than a free session reliably lasts, and without the fix a killed session loses all its work. The change touches file handling only: generation, prompts, grading, configs and the benchmark are unchanged. The arm's resume identity records the commit it ran. **Done as declared, 2026-10-01:** the arm ran at `ed5a987` (clean), and the second of its two sessions resumed 172 recorded generations (L-F3 confirmed fixed). |
 | 2026-10-06 | **D12.** Both Kaggle notebooks ran on Kaggle's "Latest Container Image"; the runbook's "Pin to original environment" was not set. | The setting matters only when a run is resumed in a later version, which neither was: training finished in one session and the evaluation in one pass (0 replayed). The training libraries are installed at pinned versions over the image either way; Kaggle's torch is recorded in the run's `environment.txt`. **No effect on the result.** |
 | 2026-10-06 | **D13.** The training run is Version 2 of its Kaggle notebook. Version 1 stopped in its first cell, because `COMMIT` still held its placeholder. The evaluation result is Version 2 of its notebook. | Version 1 ran no code beyond the guard that refused it: no data was copied and no model was loaded. Both recorded runs used commit `a17ace7`, the pre-registration commit, and the training run's `config_hash` matched before training. **No effect on the result.** |
@@ -888,6 +923,9 @@ happens.
 ---
 
 ## Base-model revision
+
+*[editor's note: this section and the next, to the end of the document, are kept
+as written from the pre-registration, including their first-person wording.]*
 
 **v0.0.6 was trained with `revision: main`, an unmoored pointer.**
 

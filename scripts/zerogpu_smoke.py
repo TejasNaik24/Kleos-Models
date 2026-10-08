@@ -67,7 +67,7 @@ DEFAULT_RECORD = REPO_ROOT / "configs" / "deployment" / "kleos_hermes_v006.yaml"
 
 
 def _hf_token() -> str | None:
-    """The owner's token for a private Space: HF_TOKEN, else the stored login."""
+    """The operator's token for a private Space: HF_TOKEN, else the stored login."""
     token = os.environ.get("HF_TOKEN")
     if token:
         return token

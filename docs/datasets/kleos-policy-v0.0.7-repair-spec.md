@@ -1,5 +1,23 @@
 # `kleos-policy-v0.0.7` — repair specification
 
+> This is a frozen research record, written while the work was done and
+> preserved as written. Editorial changes for public release are limited to
+> replacing private storage paths and account identifiers with placeholders
+> (marked as editor's notes) and retargeting links to documents that moved. No
+> number, table, finding or decision was changed. Conventions:
+> [docs/experiments/README.md](../experiments/README.md).
+
+**Status, 2026-10-06.** This specification was written on 2026-09-24 for the
+private data repository that generates KLEOS releases, before
+`kleos-policy-v0.0.7` existed. The sealed v0.0.7 release (RELEASE.lock content
+hash `b53afa4216bf6973…`) ships R1 and part of R5: its `provenance.json` records
+the pinned data-contract commit, and `gate_report_hash` is still null. R2, R3, R4
+and the rest of R5 are open. v0.0.7 also adds a policy-derived reasoning trace to
+every train and validation answer, which this specification does not cover; it
+is what Logos v0.0.2 trained on
+([H9](../experiments.md#h9--does-a-logos-trained-to-think-beat-hermes)). The text
+below is as written on 2026-09-24.
+
 **For the private `kleos-training-data` repository, which generates KLEOS
 releases.** This repository only consumes sealed releases and never generates or
 edits one, so nothing here is implemented here. Written 2026-09-24 from an audit

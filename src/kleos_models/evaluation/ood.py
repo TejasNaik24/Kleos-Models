@@ -1,4 +1,4 @@
-"""Out-of-distribution evaluation (spec section 23)."""
+"""Out-of-distribution evaluation."""
 
 from __future__ import annotations
 
@@ -89,14 +89,14 @@ class OODReport:
         if not self.measurable:
             missing = "OOD" if self.ood.count == 0 else "in-distribution"
             return (
-                "OOD evaluation (spec section 23)\n"
+                "OOD evaluation\n"
                 f"  NOT MEASURABLE — the {missing} population is empty.\n"
                 "  Tag benchmark examples with split_tag='ood' and an ood_shift value.\n"
                 "  No generalization claim can be made from this run."
             )
 
         lines = [
-            "OOD evaluation (spec section 23)",
+            "OOD evaluation",
             f"  metric                  : {self.metric_name}",
             "",
             f"  in_distribution_score   : {self.in_distribution.render()}",

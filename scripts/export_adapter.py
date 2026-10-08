@@ -9,7 +9,7 @@ before anything is published.
 Usage::
 
     python scripts/export_adapter.py --run outputs/<experiment-id> \
-                                     --output exports/kleos-qwen3-8b
+                                     --output exports/kleos-hermes-adapter
 """
 
 from __future__ import annotations

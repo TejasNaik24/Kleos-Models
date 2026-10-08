@@ -1,4 +1,4 @@
-"""Comparison and report generation (spec sections 53, 54, 36)."""
+"""Comparison and report generation."""
 
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ class ComparisonReport:
         }
 
     def render(self, *, show_aggregate: bool = False) -> str:
-        """Render the comparison table (spec section 54)."""
+        """Render the comparison table."""
         left, right = self.labels
         lines = [
             "=" * 88,
@@ -307,7 +307,7 @@ class ComparisonReport:
         return "base", "finetuned"
 
     def _conclusion(self) -> str:
-        """State the outcome without overclaiming (spec sections 35, 36)."""
+        """State the outcome without overclaiming."""
         if self.incomparable:
             return "Conclusion: none. The two results are not comparable."
         if self.mode == "cross_model":
@@ -326,7 +326,7 @@ class ComparisonReport:
         if improved and regressed:
             return (
                 "Conclusion: MIXED. Fine-tuning improved "
-                f"{improved} task(s) and regressed {regressed}. Per spec section 58 this "
+                f"{improved} task(s) and regressed {regressed}. This "
                 "may be the most interesting outcome available — report both halves and "
                 "investigate what distinguishes them."
             )
@@ -510,7 +510,7 @@ def compare_results(
     primary_subset: str | None = None,
     equivalence_margin: float | None = None,
 ) -> ComparisonReport:
-    """Compare two saved evaluation-result payloads (spec section 54)."""
+    """Compare two saved evaluation-result payloads."""
     report = ComparisonReport(
         base_arm=base.get("arm", "base"),
         finetuned_arm=finetuned.get("arm", "finetuned"),
@@ -717,7 +717,7 @@ def render_markdown_report(
     dataset_version: str = "unknown",
     config_summary: dict[str, Any] | None = None,
 ) -> str:
-    """Render the experiment report (spec section 53)."""
+    """Render the experiment report."""
     left, right = comparison.labels
     lines = [
         f"# Experiment report — {experiment_id}",
@@ -842,7 +842,7 @@ def render_markdown_report(
                 "",
                 "_Not measured._ No OOD-tagged examples were present in this benchmark.",
                 "",
-                "**No generalization claim can be made from this run** (spec section 36).",
+                "**No generalization claim can be made from this run**.",
                 "",
             ]
         )

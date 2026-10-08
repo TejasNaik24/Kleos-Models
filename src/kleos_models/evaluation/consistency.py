@@ -1,4 +1,4 @@
-"""Consistency testing (spec section 22)."""
+"""Consistency testing."""
 
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ class ConsistencyReport:
 
     def render(self) -> str:
         lines = [
-            "Consistency (spec section 22)",
+            "Consistency",
             f"  grouping key            : {self.group_key}",
             f"  groups evaluated        : {self.evaluated_groups}",
             f"  singletons skipped      : {self.skipped_singletons}",

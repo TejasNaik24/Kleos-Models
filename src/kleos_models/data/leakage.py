@@ -1,4 +1,4 @@
-"""Data leakage detection (spec section 11)."""
+"""Data leakage detection."""
 
 from __future__ import annotations
 

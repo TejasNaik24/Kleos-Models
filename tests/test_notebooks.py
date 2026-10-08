@@ -183,7 +183,7 @@ class TestTrainingNotebookContent:
         assert "MyDrive" in text
 
     def test_it_does_not_publish_automatically(self, training):
-        """Publishing must require an explicit, deliberate action (spec §18)."""
+        """Publishing must require an explicit, deliberate action."""
         for cell in training["cells"]:
             if cell["cell_type"] != "code":
                 continue

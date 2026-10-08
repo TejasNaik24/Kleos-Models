@@ -1,4 +1,4 @@
-"""Runtime memory reporting and OOM diagnostics (spec sections 13, 14, 32)."""
+"""Runtime memory reporting and OOM diagnostics."""
 
 from __future__ import annotations
 
@@ -273,7 +273,7 @@ def render_environment_report(
     gpu: GPUInfo | None = None,
     seq_length: int | None = None,
 ) -> str:
-    """The pre-flight report the training script prints (spec section 13)."""
+    """The pre-flight report the training script prints."""
     from kleos_models.compat import library_versions
     from kleos_models.models.feasibility import estimate_memory
 
@@ -365,7 +365,7 @@ def diagnose_oom(
     *,
     stage: str = "training",
 ) -> InsufficientMemoryError:
-    """Convert a CUDA OOM into an actionable error (spec section 32)."""
+    """Convert a CUDA OOM into an actionable error."""
     gpu = probe_gpu()
     snapshot = snapshot_memory()
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-flight smoke test (spec §29).
+"""Pre-flight smoke test.
 
 Run this before spending a GPU session. It checks, in increasing order of cost:
 
@@ -18,7 +18,7 @@ Steps that cannot run are reported as SKIP with the reason, never as a pass.
 Usage::
 
     python scripts/smoke_test.py
-    python scripts/smoke_test.py --model configs/models/qwen3_8b.yaml
+    python scripts/smoke_test.py --model configs/models/mistral_nemo_12b.yaml
 """
 
 from __future__ import annotations

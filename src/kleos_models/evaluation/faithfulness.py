@@ -1,4 +1,4 @@
-"""Faithfulness: is the answer grounded in the supplied evidence? (spec section 21)"""
+"""Faithfulness: is the answer grounded in the supplied evidence?"""
 
 from __future__ import annotations
 

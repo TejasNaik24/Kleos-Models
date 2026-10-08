@@ -1,4 +1,4 @@
-"""Environment capture for reproducibility (spec sections 16, 34)."""
+"""Environment capture for reproducibility."""
 
 from __future__ import annotations
 

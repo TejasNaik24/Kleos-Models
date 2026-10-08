@@ -1,12 +1,19 @@
 # Training and evaluation report — `kleos-v006-mistralnemo12b-run1` (KLEOS Hermes)
 
+> This is a frozen research record, written while the work was done and
+> preserved as written. Editorial changes for public release are limited to
+> replacing private storage paths and account identifiers with placeholders
+> (marked as editor's notes) and retargeting links to documents that moved. No
+> number, table, finding or decision was changed. Conventions:
+> [docs/experiments/README.md](README.md).
+
 **Trained:** 2026-09-17 → 2026-09-18 · **Evaluated:** 2026-09-19 → 2026-09-22 ·
 **Verdict:** H1 replicated. 7/7 tasks improved at p < 0.001, none regressed. Ten
 findings recorded; none invalidates the result.
 
 Nothing was exported, published, uploaded or deployed in producing this report.
 The artifacts live on private storage outside this repository
-(`MyDrive/kleos-private/outputs/kleos-v006-mistralnemo12b-run1/`). They are **not**
+(`<private storage>/outputs/kleos-v006-mistralnemo12b-run1/` *[editor's note: private storage path replaced]*). They are **not**
 in version control and must not be. The hashes in §10 are the record.
 
 ---
@@ -640,10 +647,10 @@ unchanged.** The deployment work below happened separately, on a *copy*; see
    byte for byte**, across all seven task families plus two should-decline cases.
    This is a reproducibility check on the artifact, not a new score; the numbers
    in this report stand as they are. Details in
-   [../deployment.md](../deployment.md#verification-record--hermes-v006).
+   [serving-verification-records.md](serving-verification-records.md#verification-record--hermes-v006).
    The same held on Hugging Face ZeroGPU, on an RTX PRO 6000 Blackwell, on
    2026-09-23: **9/9 byte for byte**, with prompt token counts equal
-   ([../deployment.md](../deployment.md#verification-record--zerogpu)).
+   ([serving-verification-records.md](serving-verification-records.md#verification-record--zerogpu)).
 
 4. **Abstention and consistency** are not fixed by a larger base, and are not
    addressed by any of the above. They need the next dataset revision:
