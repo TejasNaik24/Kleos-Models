@@ -161,7 +161,7 @@
     },
     "VariationAxes": {
       "additionalProperties": true,
-      "description": "Situation descriptors used for coverage reporting (spec section 10).\n\nExtra keys are permitted so new axes can be piloted in the private dataset\nbefore being promoted into :data:`kleos_models.constants.VARIATION_AXES`.\nUnknown axes are surfaced by the coverage report rather than silently kept.",
+      "description": "Situation descriptors used for coverage reporting.\n\nExtra keys are permitted so new axes can be piloted in the private dataset\nbefore being promoted into :data:`kleos_models.constants.VARIATION_AXES`.\nUnknown axes are surfaced by the coverage report rather than silently kept.",
       "properties": {
         "ambiguity": {
           "anyOf": [

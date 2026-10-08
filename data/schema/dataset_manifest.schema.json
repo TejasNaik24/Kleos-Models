@@ -27,7 +27,7 @@
   "$id": "https://kleos.dev/schema/dataset_manifest.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Dataset-level provenance (spec section 26).\n\nA dataset version is immutable. ``scripts/split_dataset.py`` refuses to\noverwrite an existing version directory, because silently rewriting a version\nbreaks every comparison that referenced it.",
+  "description": "Dataset-level provenance.\n\nA dataset version is immutable. ``scripts/split_dataset.py`` refuses to\noverwrite an existing version directory, because silently rewriting a version\nbreaks every comparison that referenced it.",
   "properties": {
     "contains_private_data": {
       "default": false,
