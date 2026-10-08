@@ -413,5 +413,7 @@ currently exhausted. Please try again later.", and so on).
   account, shared with Hermes when both use the same account.
 - An answer takes about half a minute when the GPU worker is warm: ~290
   generated tokens at Hermes' measured ~12 tokens/s, on a slightly larger model.
+  **Measured on 2026-10-07:** about 20 s warm and 30 s cold, 24–26 GPU seconds
+  per answer, and 7 answers fitted one day's quota.
 - Plan for Logos being unavailable for most of the day. KLEOS caps Logos per day
   and falls back to the default model, as for Hermes.

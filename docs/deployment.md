@@ -861,7 +861,10 @@ instead. The evidence for either is in the smoke output.
 
 ## Logos v0.0.2 on ZeroGPU
 
-**Status, 2026-10-06: built and tested here; not yet deployed.** Logos v0.0.2
+**Status, 2026-10-07: live on the private Space `Tejas-Naik/logos-v002`, as a
+Beta.** The smoke test reproduced 8 of 9 answers byte for byte; one diverged on
+the Space's GPU and changed its decision, and the owner accepted that,
+documented ([Verification record — Logos](#verification-record--logos)). Logos v0.0.2
 (H9: better than Hermes, [run report](experiments/kleos-v007-ministral314breasoning-run1-report.md))
 gets its own private package repository and its own private ZeroGPU Space. It is
 served by the same code as Hermes; Hermes' Space, record and replies are
@@ -917,6 +920,12 @@ ESTIMATED until the smoke test measures throughput:
   that to about 5.
 - Calibrate after the smoke test: set the Space secret
   `LOGOS_GPU_TOKENS_PER_SECOND` to the measured warm median, and record it here.
+- **Measured on 2026-10-07:** 11.0 tokens/s warm; about 20 s per warm answer
+  (34 s for a 406-token one) and 24–26 GPU seconds per answer on average over
+  the 9 smoke-test answers; on day 1 the 8th call was refused, so
+  **7 answers fit one day's quota**. At 11 tokens/s the requested duration is
+  still the 60 s cap, so `LOGOS_GPU_TOKENS_PER_SECOND` is left unset: setting it
+  would change nothing.
 
 ### Deploying it
 
@@ -1002,9 +1011,73 @@ details, stop. No token is ever typed into a file or onto a command line.
 
 ### Verification record — Logos
 
-Not yet run. Filled in after the smoke test: Space and package commits, the
-startup line (`memory`, `load_s`), answers and traces reproduced out of 9, the
-measured warm tokens per second, and the GPU seconds the run used.
+**Deployed 2026-10-07; smoke test complete 2026-10-07: 8 of 9 identical.**
+
+| | |
+| --- | --- |
+| Space | `Tejas-Naik/logos-v002` (private, ZeroGPU), staged from kleos-models `c0db1e0f1f08` |
+| Package | `Tejas-Naik/kleos-logos-v002-package` (private) at `8b48069ad46f`, 9 files verified on the Hub |
+| Adapter | `e49724f6554db662…`, from `checkpoint-175` (eval_loss 0.0293) |
+| Startup | `Logos ready`: `download_s=1.9 load_s=57.1`, host `process_peak_gib` 30.6 of 2,000; the 4-bit model packed to 9.20 GB for the GPU. No out-of-memory: quantizing the 14B text tower on the Space's CPU works |
+| Runtime | torch 2.11.0+cu128, transformers 5.16.1, peft 0.20.0, bitsandbytes 0.50.2, gradio 6.28.0, spaces 0.51.3; NF4, double quant, float16 compute, SDPA |
+| GPU | NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 2g.48gb (sm 12.0, CUDA 12.8); peak 8.86 GiB |
+| Benchmark | rebuilt from v0.0.7, sha256 `a11ffad7…b266` |
+| Reference | Logos v0.0.2 `arm2_finetuned.json`, sha256 `0dd74661…0eb5` |
+
+**Day 1: 7 of the 9 prompts ran** before the quota refused the 8th.
+
+- **6 of 7 reproduced exactly:** answer and thinking trace, byte for byte.
+- **Prompt tokens equal the evaluation's on all 7.**
+- **1 of 7 differs, `kx-mcb-066bff4fa33aa29b`** (a briefing, answerable).
+  - The trace is identical for 568 of its 761 characters (75%). Then one
+    sentence goes another way: "Startup has…" where the evaluation wrote
+    "Startup is the active workspace…".
+  - From there the reasoning changes, and so does the answer. The evaluation
+    ranked the three items in the active workspace (deciding factor `scope`,
+    scored 1.0). The Space's answer declines and asks before looking in another
+    workspace (`ask_before_crossing`).
+- **Diagnosis: GPU arithmetic, not setup** (the three checks in
+  [If the outputs differ](#if-the-outputs-differ-stop)):
+  1. the prompt tokens are equal;
+  2. the text diverges late, after an identical 75% of the trace;
+  3. the decision does **not** agree on this item.
+
+  A different GPU rounds fp16 slightly differently. When two next tokens are
+  nearly tied, that can pick the other one, and a thinking model has a few
+  hundred tokens of trace in which it can happen before the answer. Hermes,
+  which does not think, matched 9/9.
+- **Timings:** warm median 19.7 s per call (19.4 s generating, 11.0 tokens/s);
+  cold median 29.9 s (5.5 s to acquire a GPU, 10.9 tokens/s). 161–174 GPU
+  seconds for the 7 answers.
+
+**Day 2 (evening of 2026-10-07): the remaining 2 prompts.**
+
+- **2 of 2 reproduced exactly** (`kx-trt-05103645026eb390`,
+  `kx-wsr-0761ffe45f4fe530`), answer and trace; prompt tokens equal; decisions
+  agree.
+- **Timings:** cold 25.2 s (2.1 s to acquire, 10.2 tokens/s, 236 tokens); warm
+  33.6 s (12.1 tokens/s, a 406-token answer). 56.5–58.8 GPU seconds for the 2.
+  Peak 8.86 GiB.
+- The reference was re-downloaded from the evaluation notebook's output after
+  the browser-saved copy was lost; its sha256 is the same `0dd74661…0eb5`.
+
+**All 9:** 8 identical, answer and trace. Prompt tokens equal on 9 of 9;
+decisions agree on 8 of 9. 217.8–232.3 GPU seconds for the 9 (24–26 per
+answer).
+
+**Decision (owner, 2026-10-07): accept and document.** Logos is served on the
+Space as a Beta, numerically different from the T4 evaluation: 8 of 9 checked
+answers identical, 1 diverged late in its thinking and changed its decision.
+
+- **What H9 measured** is the T4 outputs. The Space's outputs are not
+  re-measured: the full 349 would take about a month of the free quota.
+- **Serving on T4-class hardware**, to match exactly, needs a paid GPU host. It
+  is declined for now.
+- **Precision and decoding stay as evaluated.** Changing them to force a match
+  would change the model.
+- **Claims about Logos** say "measured better than Hermes on the benchmark",
+  not that the live Space reproduces that score.
+
 
 ## Checklist before serving
 
