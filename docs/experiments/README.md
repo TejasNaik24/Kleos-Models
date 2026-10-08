@@ -93,3 +93,40 @@ specification, opens with this notice:
 
 An editorial change made for public release is marked inline as
 *[editor's note: …]*. Frozen records keep their original spelling.
+
+## Commit identifiers after the history rewrite
+
+Before the repository went public, seven commit messages from 2026-09-08 to
+2026-09-15 carried an assistant co-author trailer. The trailers were removed by
+rewriting the commit messages, which changes the id of every commit from
+`e841ae4` onward (the content, author and dates of each commit are unchanged;
+the six commits before it keep their ids). The frozen records and the changelog
+cite the ids as they were when written. This table maps them.
+
+| Date | Id before | Id after | Commit |
+| --- | --- | --- | --- |
+| 2026-09-08 | `e841ae4` | `64a5edb` | Fix system-prompt loss and assistant masking on Mistral templates |
+| 2026-09-08 | `2ad7c9a` | `b64099b` | Declare ministral model_type; halve eval cadence for the v0.0.6 run |
+| 2026-09-14 | `aff3013` | `d543527` | Record the first KLEOS result: H1 supported, H2 not measurable, H3 mix |
+| 2026-09-15 | `7145edd` | `a6bae0c` | Re-scope H5 and close H6: both still named Qwen arms |
+| 2026-09-15 | `3e789a6` | `201b5c9` | Freeze kleos-v006-ministral8b-run1 with a verified artifact audit |
+| 2026-09-15 | `705446d` | `57cbd76` | F1: bound nDCG so repeated items cannot score above a perfect ranking |
+| 2026-09-15 | `a6ef0ef` | `9ac9547` | Record the F1 re-grade: 7/7 tasks significant, gap widens to +0.3271 |
+| 2026-09-15 | `f759aac` | `52929be` | pushed f2 |
+| 2026-09-15 | `8df52a0` | `0ac4b4b` | fixed bugs |
+| 2026-09-15 | `ab07905` | `19de146` | fix: pin serving revision in model cards |
+| 2026-09-15 | `4cd76c4` | `22ca978` | added training |
+| 2026-09-22 | `728f214` | `5a75969` | Harden Hermes v0.0.6 for deployment: pinned package, tokenizer contrac |
+| 2026-09-23 | `2574bc8` | `a0aac58` | Add Hermes container and free ZeroGPU hosting (package schema v2) |
+| 2026-09-23 | `32b989a` | `2508359` | Pin pydantic 2.12.5 in the ZeroGPU Space (Gradio's mcp extra caps it) |
+| 2026-09-23 | `6f7547b` | `590e480` | Read the Hermes adapter on the CPU at ZeroGPU startup |
+| 2026-09-23 | `c8b9825` | `98a3bfa` | Record Hermes on ZeroGPU: 9/9 verified; log the Space startup report |
+| 2026-09-24 | `ec4f9e3` | `81e3e9a` | Add KLEOS Logos v0.0.1: Ministral 3 14B text view, H8 pre-registration |
+| 2026-09-29 | `ed5a987` | `e915060` | Logos: record H8b (inconclusive) and run deviations; fix evaluation re |
+| 2026-10-01 | `c4c3a41` | `cbbc6ed` | Logos: record H8a (supported) and the full run report; add findings L- |
+| 2026-10-06 | `a17ace7` | `6d7e450` | Logos v0.0.2: reasoning field, thinking split, two-GPU training, Kaggl |
+| 2026-10-06 | `45a9200` | `b28fb18` | logos v0.0.2 |
+| 2026-10-06 | `c0db1e0` | `371dfb2` | Logos v0.0.2: fill the deployment record from the run; package README  |
+| 2026-10-07 | `7342482` | `9b39f46` | Logos v0.0.2: live on ZeroGPU; smoke test 8 of 9 identical, accepted a |
+| 2026-10-07 | `873fbcc` | `3087684` | Trim comments and docstrings: remove banners, narration and anecdotes; |
+| 2026-10-07 | `a04505b` | `60498cf` | Public release: rewrite documentation, remove Qwen support, add citati |

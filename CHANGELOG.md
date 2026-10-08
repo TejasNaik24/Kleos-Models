@@ -27,6 +27,9 @@ no KLEOS model uses.
 
 ### Changed
 
+- The commit history was rewritten to remove assistant co-author trailers from seven
+  2026-09 commit messages; ids cited in the records map to the new ids in
+  [docs/experiments/README.md](docs/experiments/README.md#commit-identifiers-after-the-history-rewrite).
 - **Documentation rewritten** for outside readers: README, CONTRIBUTING,
   SECURITY, this changelog and the reference pages under `docs/`.
   `docs/kleos-hermes-integration.md` is now `docs/serving-api.md`. The serving
