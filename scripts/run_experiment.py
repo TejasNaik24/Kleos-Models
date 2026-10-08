@@ -61,7 +61,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  model  : {config.model.base_model}")
     print(f"  arms   : {config.evaluation.arms}")
 
-    # --- 1. train -----------------------------------------------------------
     adapter_path = args.adapter
     experiment_id = "unknown"
     if not args.skip_training:
@@ -89,7 +88,6 @@ def main(argv: list[str] | None = None) -> int:
     elif adapter_path is None:
         parser.error("--skip-training requires --adapter")
 
-    # --- 2-3. evaluate both arms -------------------------------------------
     import evaluate as evaluate_script
 
     output_root = Path(config.training.output_dir)
@@ -119,7 +117,6 @@ def main(argv: list[str] | None = None) -> int:
     if code != 0:
         return code
 
-    # --- 4. compare ---------------------------------------------------------
     import compare as compare_script
 
     report_dir = args.report or (REPO_ROOT / "reports" / experiment_id)

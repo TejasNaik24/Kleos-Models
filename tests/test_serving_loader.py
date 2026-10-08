@@ -1,9 +1,4 @@
-"""Loading a deployment, and refusing to.
-
-The checks here are the ones that prevent a silent failure: an adapter attached
-to the wrong base revision produces no error, just worse answers. Everything a
-laptop can check runs here; the parts that need real weights are marked and skip.
-"""
+"""Loading a deployment, and refusing to."""
 
 from __future__ import annotations
 
@@ -86,17 +81,13 @@ class TestPackageSelfConsistency:
             check_config_matches_manifest(config, manifest)
 
     def test_the_raw_training_config_is_not_accepted_as_the_served_model(self):
-        # The training config says compute_dtype: auto, which resolved to
-        # float16 on the T4 that trained Hermes and would resolve to bfloat16 on
-        # any newer GPU. Served as-is it would not be the measured model.
+        # compute_dtype: auto meant float16 on Hermes' T4 but bfloat16 on newer GPUs.
         config = load_model_config(CONFIGS_DIR / "models" / "mistral_nemo_12b.yaml")
         with pytest.raises(ConfigError, match="contradicts itself") as error:
             check_config_matches_manifest(config, build_manifest())
         assert "compute_dtype is 'auto'" in " ".join(error.value.details["problems"])
 
     def test_the_training_config_with_the_runtime_contract_applied_is_accepted(self):
-        # What build_deployment_package.py packages: same base and revision,
-        # with the runtime contract stated.
         config = load_model_config(CONFIGS_DIR / "models" / "mistral_nemo_12b.yaml")
         config.quantization.compute_dtype = DType.FLOAT16
         check_config_matches_manifest(config, build_manifest())

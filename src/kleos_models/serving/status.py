@@ -1,16 +1,7 @@
-# ---------------------------------------------------------------------------
-# The Hermes status contract.
-#
-# One small, provider-neutral vocabulary for "did Hermes answer, and if not,
-# why". The KLEOS backend branches on `status`; the frontend renders from it.
-# Neither needs to know whether Hermes runs on ZeroGPU or behind the Docker
-# service, and neither ever sees an infrastructure message verbatim.
-#
-# The values are an API. Renaming one breaks KLEOS; tests pin them.
-#
-# Hermes is optional. Every status other than `ready` means "use the fallback
-# model", and none of them is an error KLEOS should surface as a failure.
-# ---------------------------------------------------------------------------
+# The Hermes status contract: a provider-neutral vocabulary for "did Hermes answer,
+# and if not, why". KLEOS never sees an infrastructure message verbatim.
+# The values are an API: renaming one breaks KLEOS (tests pin them). Every status
+# other than `ready` means "use the fallback model", not a failure to surface.
 
 from __future__ import annotations
 
@@ -21,8 +12,7 @@ from typing import Any
 
 #: Bumped only on a breaking change to the response shape.
 CONTRACT_VERSION = 1
-#: A reply that also carries the model's thinking trace (`reasoning`). Served by
-#: a thinking model such as Logos v0.0.2; version 1 replies never carry it.
+#: Replies that also carry the thinking trace (`reasoning`); version 1 never does.
 REASONING_CONTRACT_VERSION = 2
 #: What a client accepts.
 SUPPORTED_CONTRACT_VERSIONS = (CONTRACT_VERSION, REASONING_CONTRACT_VERSION)
@@ -50,11 +40,7 @@ class HermesStatus(str, Enum):
 
 
 def public_messages(short_name: str, display_name: str) -> dict[HermesStatus, str]:
-    """Messages safe to show a KLEOS user, for one model.
-
-    No provider names, quotas, paths or ids. ``short_name`` is "Hermes" or
-    "Logos"; ``display_name`` carries the version ("Hermes v0.0.6").
-    """
+    """Messages safe to show a KLEOS user, for one model."""
     possessive = short_name + ("'" if short_name.endswith("s") else "'s")
     return {
         HermesStatus.READY: f"{display_name} is available.",
@@ -72,7 +58,7 @@ def public_messages(short_name: str, display_name: str) -> dict[HermesStatus, st
     }
 
 
-#: Hermes v0.0.6's messages, exactly as they have always been.
+#: Hermes v0.0.6's messages, unchanged since release.
 PUBLIC_MESSAGES: dict[HermesStatus, str] = public_messages("Hermes", "Hermes v0.0.6")
 
 #: Statuses where the same request may succeed later without changes.
@@ -94,12 +80,7 @@ def ok_response(
     reasoning: str | None = None,
     contract_version: int = CONTRACT_VERSION,
 ) -> dict[str, Any]:
-    """A successful generation, in the contract's shape.
-
-    Version 2 adds ``reasoning``: the trace a thinking model wrote before its
-    answer, or ``None`` when it wrote none. ``text`` is always the answer alone.
-    A version 1 reply has no ``reasoning`` key at all.
-    """
+    """A successful generation, in the contract's shape."""
     reply: dict[str, Any] = {
         "contract_version": contract_version,
         "ok": True,
@@ -122,18 +103,7 @@ def ok_response(
 
 
 def finish_reason(completion_tokens: int, max_new_tokens: int, backend_reason: str = "stop") -> str:
-    """``"length"`` when the completion was cut off, else ``"stop"``.
-
-    Decoding is greedy with no stop strings, so generation ends either on the
-    end-of-sequence token or at the budget. A completion that fills the budget
-    was almost certainly cut off — for Hermes that usually means unfinished
-    JSON, which KLEOS should treat as incomplete rather than parse.
-
-    ``backend_reason`` is the backend's own verdict. A thinking model's
-    backend says ``"length"`` when the thinking never closed: there is no
-    answer, even if the budget was not filled. Hermes' backend always says
-    ``"stop"``, so for Hermes this is the budget rule alone.
-    """
+    """``"length"`` when the completion was cut off, else ``"stop"``."""
     if completion_tokens >= max_new_tokens or backend_reason == "length":
         return "length"
     return "stop"
@@ -148,11 +118,7 @@ def error_response(
     messages: Mapping[HermesStatus, str] | None = None,
     contract_version: int = CONTRACT_VERSION,
 ) -> dict[str, Any]:
-    """A non-answer, in the contract's shape.
-
-    ``retry_after_seconds`` is only ever set from a figure the provider itself
-    supplied. The contract never invents a countdown.
-    """
+    """A non-answer, in the contract's shape."""
     if status is HermesStatus.READY:
         raise ValueError("error_response cannot carry the ready status")
     return {
@@ -166,15 +132,8 @@ def error_response(
     }
 
 
-# ---------------------------------------------------------------------------
-# ZeroGPU error classification
-#
-# The `spaces` package raises gradio errors with a title and a message
-# (spaces/zero/client.py and wrappers.py, 0.51.3). Both are matched, because
-# the title parameter only exists on newer Gradio versions. Queue conditions
-# are checked first: `spaces` files a queue timeout for a caller without a quota
-# token under a "quota exceeded" title.
-# ---------------------------------------------------------------------------
+# `spaces` (0.51.3) raises gradio errors with a title and a message. Both are matched:
+# older Gradio has no title. Queue phrases win, as some arrive under a quota title.
 
 _QUOTA_TITLES = ("zerogpu quota exceeded",)
 _QUOTA_PHRASES = (
@@ -184,14 +143,11 @@ _QUOTA_PHRASES = (
 )
 _QUEUE_TITLES = ("zerogpu queue timeout", "zerogpu pending credits exceeded")
 _QUEUE_PHRASES = (
-    # "You have too many ZeroGPU credits allocated to running tasks. Try again
-    # once some of those tasks have completed." Quota is reserved, not spent.
+    # Quota reserved by running tasks, not spent.
     "too many zerogpu credits",
-    # Checked before the quota titles: a caller without a quota token who times
-    # out in the GPU queue gets this message under a "quota exceeded" title.
+    # A queue timeout; arrives under a "quota exceeded" title without a quota token.
     "no gpu was available",
-    # The per-request proxy token outlived its validity while the request
-    # waited in the Space's queue: congestion, and a later retry gets a new one.
+    # Token expired while queued (congestion); a retry gets a new one.
     "expired zerogpu proxy token",
     # The ZeroGPU scheduler itself failed (a RuntimeError, no title).
     "zerogpu api /schedule error",
@@ -229,9 +185,7 @@ def classify_zerogpu_error(title: str | None, message: str | None) -> HermesStat
         return HermesStatus.QUEUE_UNAVAILABLE
     if t in _QUOTA_TITLES or any(phrase in m for phrase in _QUOTA_PHRASES):
         return HermesStatus.QUOTA_EXHAUSTED
-    # "ZeroGPU worker error", "ZeroGPU illegal duration" (a configuration
-    # problem on our side), "ZeroGPU client error" without the no-GPU phrase,
-    # and anything unrecognised: the model did not produce an answer.
+    # Worker errors, "illegal duration" (our config) and anything unrecognised.
     return HermesStatus.MODEL_ERROR
 
 
@@ -244,10 +198,7 @@ def classify_exception(error: BaseException) -> tuple[HermesStatus, int | None]:
     return status, retry
 
 
-# ---------------------------------------------------------------------------
-# The Docker/FastAPI service reports through HTTP status codes; this is how a
-# client maps them onto the same contract, so KLEOS has one vocabulary.
-# ---------------------------------------------------------------------------
+# The Docker/FastAPI service reports through HTTP codes; map them onto the same contract.
 
 HTTP_STATUS_MAP: dict[int, HermesStatus] = {
     401: HermesStatus.UNAUTHORIZED,

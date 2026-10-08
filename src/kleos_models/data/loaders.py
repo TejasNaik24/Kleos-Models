@@ -1,20 +1,4 @@
-"""Dataset loading (spec sections 27 and 50).
-
-The loader consumes a directory shaped like::
-
-    dataset/
-      manifest.json
-      train.jsonl
-      validation.jsonl
-      test.jsonl
-
-That directory may live anywhere on disk. This is the boundary with the private
-``kleos-training-data`` repository: it produces the artifact, this repository
-consumes it, and neither imports the other. Nothing here touches Supabase or any
-production service.
-
-This module imports no torch.
-"""
+"""Dataset loading (spec sections 27 and 50)."""
 
 from __future__ import annotations
 
@@ -64,11 +48,7 @@ class LoadReport:
 
 
 def iter_jsonl(path: Path | str) -> Iterator[tuple[int, dict[str, Any]]]:
-    """Yield ``(line_number, record)`` from a JSONL file.
-
-    Raises:
-        DataValidationError: on malformed JSON, naming the exact line.
-    """
+    """Yield ``(line_number, record)`` from a JSONL file."""
     file_path = Path(path)
     if not file_path.exists():
         raise DataValidationError(
@@ -109,18 +89,7 @@ def load_examples(
     model: type[ExampleT] = TrainingExample,  # type: ignore[assignment]
     strict: bool = True,
 ) -> tuple[list[ExampleT], LoadReport]:
-    """Parse and validate a JSONL file into typed examples.
-
-    Args:
-        path: File to read.
-        model: ``TrainingExample`` or ``EvaluationExample``.
-        strict: Raise on the first invalid example. When false, invalid rows are
-            collected in the report and skipped — useful for triaging a new
-            dataset drop, never for a research run.
-
-    Returns:
-        ``(examples, report)``.
-    """
+    """Parse and validate a JSONL file into typed examples."""
     file_path = Path(path)
     report = LoadReport(path=file_path)
     examples: list[ExampleT] = []
@@ -226,11 +195,7 @@ class DatasetBundle:
         return self.manifest.version if self.manifest else "unversioned"
 
     def dataset_hash(self) -> str:
-        """Content digest over every example, independent of file layout.
-
-        Recorded in the experiment manifest so a run identifies the exact data it
-        saw, even if the dataset was supplied as loose files without a manifest.
-        """
+        """Content digest over every example, independent of file layout."""
         digest = hashlib.sha256()
         for split_name in ("train", "validation", "test"):
             digest.update(split_name.encode("utf-8"))
@@ -246,17 +211,7 @@ def load_dataset_bundle(
     strict: bool = True,
     require_splits: Iterable[str] = ("train",),
 ) -> DatasetBundle:
-    """Load every configured split, apply filters, and check integrity.
-
-    Args:
-        config: Dataset configuration, typically from the experiment config.
-        strict: Fail on the first invalid example.
-        require_splits: Splits that must be present and non-empty.
-
-    Raises:
-        DatasetIntegrityError: on duplicate ids across splits or a missing
-            required split.
-    """
+    """Load every configured split, apply filters, and check integrity."""
     bundle = DatasetBundle(source_path=config.path)
 
     if config.path is not None:
@@ -271,9 +226,8 @@ def load_dataset_bundle(
             )
 
     if bundle.manifest is not None and bundle.manifest.contains_private_data:
-        # Loud, but not fatal: the user may legitimately be training on a private
-        # artifact stored outside this repository. What must never happen is that
-        # artifact being committed here.
+        # Loud, not fatal: training on a private artifact stored elsewhere is legitimate;
+        # committing it here is not.
         logger.warning(
             "Dataset %s is flagged contains_private_data=true. This is expected for "
             "the private kleos-training-data artifact. Do NOT copy it into this "
@@ -330,11 +284,7 @@ def load_dataset_bundle(
 
 
 def apply_filters(bundle: DatasetBundle, config: DatasetConfig) -> DatasetBundle:
-    """Apply configured row filters to every split.
-
-    ``max_examples`` truncates deterministically (first N after ordering) so a
-    truncated run stays reproducible.
-    """
+    """Apply configured row filters to every split."""
     filters = config.filters
     allowed_status = set(filters.quality_statuses)
     if config.allow_unreviewed:
@@ -368,11 +318,7 @@ def apply_filters(bundle: DatasetBundle, config: DatasetConfig) -> DatasetBundle
 
 
 def _check_id_uniqueness(bundle: DatasetBundle) -> None:
-    """Reject duplicate ids within or across splits.
-
-    A duplicate id is not cosmetic: it makes per-example attribution ambiguous
-    and can hide the same scenario appearing in both train and test.
-    """
+    """Reject duplicate ids within or across splits."""
     seen: dict[str, str] = {}
     collisions: list[dict[str, str]] = []
     for split_name in ("train", "validation", "test"):

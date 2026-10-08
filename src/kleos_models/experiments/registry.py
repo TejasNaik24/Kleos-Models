@@ -1,17 +1,4 @@
-"""Experiment registry (spec sections 36, 53).
-
-Scans an outputs directory and indexes every run, including failed ones.
-
-The research-integrity requirement this serves: failed and negative runs must stay
-visible. A registry that only listed successful runs would make it trivially easy
-to report a favourable subset without ever deciding to.
-
-The registry also refuses to compare runs whose manifests say they are not
-comparable — different dataset version, different model family, different config
-hash — because pooling those silently is how a result stops meaning anything.
-
-This module imports no torch.
-"""
+"""Experiment registry (spec sections 36, 53)."""
 
 from __future__ import annotations
 
@@ -62,11 +49,7 @@ class ExperimentRegistry:
         self.root = Path(root)
 
     def scan(self) -> list[RegistryEntry]:
-        """Find every run directory containing a manifest.
-
-        Unreadable manifests are warned about, not skipped silently: a corrupt
-        manifest is itself information about a run that went wrong.
-        """
+        """Find every run directory containing a manifest."""
         entries: list[RegistryEntry] = []
         if not self.root.exists():
             return entries
@@ -172,19 +155,7 @@ def assert_comparable(
     require_same_task: bool = True,
     allow_cross_family: bool = True,
 ) -> list[str]:
-    """Check two runs can be meaningfully compared.
-
-    Returns a list of warnings. Raises only when a difference makes the comparison
-    invalid rather than merely interesting.
-
-    Cross-family comparison is *allowed by default* — comparing Qwen against
-    Mistral is the point of the research — but comparing across different dataset
-    versions or different tasks is not, because then the number reflects the data,
-    not the model.
-
-    Raises:
-        ValueError: when the runs are not comparable.
-    """
+    """Check two runs can be meaningfully compared."""
     problems: list[str] = []
     warnings: list[str] = []
 

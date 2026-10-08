@@ -1,10 +1,4 @@
-"""Experiment manifest, registry and checkpointing tests (spec §16, §33, §34, §36).
-
-The properties under test are the ones that make a research record trustworthy:
-a manifest identifies a run completely, failed runs stay recorded, adjustments are
-never silent, and checkpoint retention cannot leave a Colab user with nothing to
-resume from.
-"""
+"""Experiment manifest, registry and checkpointing tests (spec §16, §33, §34, §36)."""
 
 from __future__ import annotations
 
@@ -84,7 +78,6 @@ class TestManifestLifecycle:
         assert manifest.duration_seconds is not None
 
     def test_failure_is_recorded_not_discarded(self, config):
-        # Spec §36: failed runs must stay in the record.
         manifest = build_manifest(config)
         manifest.mark_started()
         manifest.mark_failed(ValueError("something went wrong"), stage="training")
@@ -190,7 +183,7 @@ class TestRegistry:
         assert len(ExperimentRegistry(tmp_path).scan()) == 2
 
     def test_failed_runs_stay_visible(self, config, tmp_path):
-        # Spec §36: a registry that hid failures would make cherry-picking easy.
+        # Spec §36: hiding failures would make cherry-picking easy.
         self._write_run(tmp_path, config, "run-ok")
         self._write_run(tmp_path, config, "run-bad", status=RunStatus.FAILED)
         registry = ExperimentRegistry(tmp_path)
@@ -351,8 +344,7 @@ class TestCheckpointRetention:
         assert [c.step for c in discover_checkpoints(tmp_path)] == [40, 30]
 
     def test_retention_never_empties_the_directory(self, tmp_path):
-        # A Colab runtime can die at any moment; leaving zero checkpoints would
-        # discard the whole session.
+        # A Colab runtime can die anytime; zero checkpoints would discard the session.
         for step in (10, 20):
             make_checkpoint(tmp_path, step)
         prune_checkpoints(tmp_path, keep=0)
@@ -372,10 +364,8 @@ class TestCheckpointRetention:
         assert removed
         assert len(discover_checkpoints(tmp_path)) == 3
 
-    # Finding H-F9: the KLEOS pass runs after transformers' rotation and used to
-    # keep the newest N by recency alone, so a best checkpoint older than the
-    # newest N was deleted and load_best_model_at_end silently shipped the final
-    # weights.
+    # Finding H-F9: pruning by recency alone deleted an older best checkpoint, so
+    # load_best_model_at_end shipped the final weights.
 
     def test_best_checkpoint_survives_beyond_the_newest_n(self, tmp_path):
         for step in (200, 225, 250, 275):
@@ -398,8 +388,7 @@ class TestCheckpointRetention:
         assert [c.step for c in discover_checkpoints(tmp_path)] == [30, 10]
 
     def test_save_total_limit_one_keeps_latest_and_best(self, tmp_path):
-        # transformers keeps two checkpoints here (best and latest); the KLEOS
-        # pass must not cut that to one.
+        # transformers keeps best and latest here; the KLEOS pass must not cut that to one.
         for step in (50, 100):
             make_checkpoint(tmp_path, step)
         prune_checkpoints(tmp_path, keep=1, protect=(str(tmp_path / "checkpoint-50"),))

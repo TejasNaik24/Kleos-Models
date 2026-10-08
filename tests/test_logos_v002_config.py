@@ -1,11 +1,4 @@
-"""KLEOS Logos v0.0.2's run configuration, pre-registered under H9.
-
-Logos v0.0.2 changes three things against v0.0.1, and only those: the base model
-(the Reasoning release of Ministral 3 14B), the data (kleos-policy-v0.0.7, with
-policy-derived reasoning traces), and the evaluation's token budget (room for
-the trace before the answer). The training recipe is v0.0.1's, value for value.
-These tests hold that, and pin the config hash H9 records.
-"""
+"""KLEOS Logos v0.0.2's run configuration, pre-registered under H9."""
 
 from __future__ import annotations
 
@@ -18,9 +11,8 @@ from kleos_models.models.adapters import Ministral3ReasoningTextAdapter, get_ada
 
 TRAINING = CONFIGS_DIR / "training"
 
-#: The paths H9's hash is computed with: the Kaggle training notebook's. The
-#: dataset sits in /tmp, which Kaggle never saves, so the private release can
-#: never reach a notebook's saved output.
+#: The Kaggle notebook's paths, which H9's hash uses. Kaggle never saves /tmp,
+#: so the private release never reaches a notebook's saved output.
 KAGGLE_DATASET = "/tmp/kleos-data/kleos-policy-v0.0.7"
 KAGGLE_OUTPUTS = "/kaggle/working/outputs"
 #: The Colab paths v0.0.1's hash was computed with (tests/test_logos_config.py).

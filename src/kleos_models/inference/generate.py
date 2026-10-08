@@ -1,24 +1,4 @@
-"""Orchestration scaffolding and prompt assembly for evaluation arms.
-
-Spec section 20 defines four arms. The distinction between them is *what context
-the model receives*, not which model it is:
-
-``arm0_base``                   base model, task prompt only
-``arm1_base_orchestrated``      base model + KLEOS retrieval/context scaffolding
-``arm2_finetuned``              fine-tuned model, controlled task context
-``arm3_finetuned_orchestrated`` fine-tuned model + the same scaffolding
-
-This module owns that difference so the runner does not have to. Scaffolding is
-applied identically to base and fine-tuned arms, which is what makes
-"orchestration helps" and "fine-tuning helps" separable questions rather than one
-confounded one.
-
-The orchestration layer here is a *prompt-assembly* layer. It does not query
-Supabase or any production service (spec section 51): retrieval output arrives as
-data in the benchmark example.
-
-This module imports no torch.
-"""
+"""Orchestration scaffolding and prompt assembly for evaluation arms."""
 
 from __future__ import annotations
 
@@ -77,20 +57,14 @@ def build_prompt(
     example: EvaluationExample,
     orchestration: OrchestrationConfig,
 ) -> list[Message]:
-    """Assemble the message list a backend will receive.
-
-    The example's own messages are always preserved verbatim. Orchestration only
-    *prepends* a system prompt, so the task the model is asked to perform is
-    identical across arms and the arms differ only in scaffolding.
-    """
+    """Assemble the message list a backend will receive."""
     messages = list(example.prompt_messages)
 
     if not orchestration.enabled or not orchestration.system_prompt:
         return messages
 
     if messages and messages[0].role == "system":
-        # Compose rather than replace: dropping the task's own system prompt would
-        # change the task, not just the scaffolding.
+        # Compose rather than replace: dropping the task's system prompt would change the task.
         combined = f"{orchestration.system_prompt.strip()}\n\n{messages[0].content}"
         return [messages[0].model_copy(update={"content": combined}), *messages[1:]]
 
@@ -128,11 +102,7 @@ def summarize_arm(arm: str, orchestration: OrchestrationConfig) -> dict[str, Any
 
 
 def render_conversation(messages: Sequence[Message], *, max_chars: int = 400) -> str:
-    """Truncated conversation rendering for debugging.
-
-    Truncates by design: evaluation prompts can contain sanitized-but-still-
-    sensitive context, and full prompts do not belong in logs.
-    """
+    """Truncated conversation rendering for debugging."""
     parts = []
     for message in messages:
         content = message.content

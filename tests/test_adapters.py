@@ -1,14 +1,4 @@
-"""Model-family adapter tests (spec §3, §38, §39, §46).
-
-These pin the architectural facts that are easy to get wrong and expensive to
-discover late:
-
-* Mistral Small 3.2 needs AutoModelForImageTextToText, not AutoModelForCausalLM.
-* Qwen3-30B-A3B is MoE and thinking-only; its experts must not be adapted.
-* Reasoning is a declared capability, validated, not a prompt string.
-
-They need no torch: adapters expose their metadata without loading weights.
-"""
+"""Model-family adapter tests (spec §3, §38, §39, §46)."""
 
 from __future__ import annotations
 
@@ -58,10 +48,7 @@ class TestAdapterResolution:
 
     @pytest.mark.parametrize("model_type", ["mistral", "ministral"])
     def test_both_mistral_model_types_resolve(self, model_type):
-        # transformers 4.x reports Ministral checkpoints as 'mistral' and 5.x as
-        # 'ministral'. The loader trusts whatever the checkpoint says, so a
-        # missing entry here breaks the same config on a version bump — which is
-        # exactly how it failed on Colab against transformers 5.16.
+        # transformers 4.x reports Ministral as 'mistral', 5.x as 'ministral'.
         config = config_for("ministral_8b").model_copy(update={"model_type": model_type})
         assert isinstance(get_adapter(config), MistralDenseAdapter)
 
@@ -87,7 +74,6 @@ class TestAdapterResolution:
             get_adapter(ModelConfig(name="x", family="", base_model="acme/unknown-arch-v1"))
 
     def test_family_mismatch_is_caught(self):
-        # Usually means the wrong checkpoint was pasted into a config.
         with pytest.raises(ModelCompatibilityError, match="declares family"):
             get_adapter(
                 ModelConfig(
@@ -127,8 +113,7 @@ class TestAdapterResolution:
 
 class TestAutoClassSelection:
     def test_mistral_small_requires_the_image_text_to_text_class(self):
-        # Verified against transformers: mistral3 appears only in
-        # MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES, never the causal-LM mapping.
+        # mistral3 is only in transformers' image-text-to-text mapping, not causal-LM.
         adapter = get_adapter(config_for("mistral_small_3_2"))
         assert adapter.capabilities.auto_class == "AutoModelForImageTextToText"
 
@@ -212,7 +197,6 @@ class TestReasoningCapability:
             adapter.resolve_reasoning_mode(ReasoningMode.NON_THINKING)
 
     def test_thinking_only_model_sends_no_enable_thinking_kwarg(self):
-        # Qwen3-30B-A3B-Thinking-2507's template does not accept the flag at all.
         adapter = get_adapter(config_for("qwen3_30b_a3b_thinking"))
         assert adapter.chat_template_kwargs(ReasoningMode.THINKING) == {}
 

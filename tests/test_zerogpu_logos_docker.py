@@ -1,11 +1,4 @@
-"""A thinking reply end to end on ZeroGPU's request path, with a real tokenizer.
-
-The host tests fake the backend. Here the real `HuggingFaceBackend.finish`
-splits a completion on the `[THINK]`/`[/THINK]` token ids of a real fast
-tokenizer, inside the real `LoadedDeployment` and `ZeroGPUService`, so the reply
-KLEOS receives is what Logos v0.0.2 will send. Needs transformers; runs in the
-project's Docker image.
-"""
+"""A thinking reply end to end on ZeroGPU's request path, with a real tokenizer."""
 
 from __future__ import annotations
 

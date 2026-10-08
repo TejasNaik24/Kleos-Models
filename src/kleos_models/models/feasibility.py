@@ -1,26 +1,4 @@
-"""GPU probing, memory estimation and feasibility assessment (spec sections 3, 13, 14).
-
-The requirement this implements: *architectural support is not the same as
-trainability on a free GPU*, and the pipeline must never silently shrink a
-configuration until the experiment stops being comparable.
-
-So there are two separable things here:
-
-1. **Estimation** — how much memory would this run need? Pure arithmetic over the
-   model's shape, runnable with no GPU and no torch, which is what lets a Colab
-   notebook print a feasibility table for every model config *before* downloading
-   28GB of weights.
-2. **Policy** — what to do when it does not fit. Adjustments are proposed, logged
-   and recorded in the manifest. Under ``training.strict_config`` they are refused
-   outright.
-
-The estimate is arithmetic over explicit terms, each stating its assumption, and
-it is checked against peaks measured on real runs (:data:`EMPIRICAL_ANCHORS`,
-enforced by the tests). The fit decision then adds overheads measured on the same
-hardware rather than a round-number margin. A run whose estimate is within that
-overhead of the limit is reported as *marginal*: allowed to start, because the
-trainer's memory probe measures the longest batch before the first step.
-"""
+"""GPU probing, memory estimation and feasibility assessment (spec sections 3, 13, 14)."""
 
 from __future__ import annotations
 
@@ -42,47 +20,33 @@ logger = get_logger(__name__)
 
 BYTES_PER_GB = 1024**3
 
-#: Memory PyTorch's caching allocator holds beyond the peak it hands out
-#: (fragmentation slack). Measured on Hermes' T4 run: 13.58 GiB reserved against
-#: a 13.09 GiB peak allocation (docs/experiments/kleos-v006-mistralnemo12b-run1-
-#: report.md, section 4). PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-#: shrinks it; it is the one overhead a user can influence.
+#: Allocator fragmentation slack above peak allocation: 13.58 GiB reserved vs a
+#: 13.09 GiB peak on Hermes' T4 run. expandable_segments:True shrinks it.
 ALLOCATOR_RESERVE_GB = 0.5
 
-#: Device memory in use outside PyTorch's allocator on that run: the CUDA context
-#: plus bitsandbytes' paged optimizer state (57,016,320 LoRA parameters x 2 bytes
-#: = 0.106 GiB of it). Measured at step 299: 14.56 total - 13.58 reserved - 0.84
-#: free = 0.14 GiB. Subtracted from a budget that is total memory; free memory
-#: measured live already excludes the context.
+#: Memory outside PyTorch's allocator on that run (CUDA context + paged optimizer
+#: state). Subtract only from total memory; live free memory already excludes it.
 NON_ALLOCATOR_GB = 0.14
 #: The paged optimizer state included in ``NON_ALLOCATOR_GB``.
 REFERENCE_PAGED_GB = 57_016_320 * 2 / BYTES_PER_GB
 
-#: Headroom below which a fit is reported as marginal: half the measured
-#: allocator reserve, the least certain overhead (measured once). A policy
-#: threshold, not a measurement.
+#: Headroom below which a fit is marginal; a policy threshold, not a measurement.
 MARGINAL_HEADROOM_GB = ALLOCATOR_RESERVE_GB / 2
 
-#: bitsandbytes 4-bit state per quantized weight: one absmax per 64-weight block,
-#: in fp32 (4/64 bytes); with double quantization, a uint8 per block plus an fp32
-#: second-level absmax per 256 blocks.
+#: bitsandbytes 4-bit state per weight: an fp32 absmax per 64-weight block; double
+#: quantization stores a uint8 per block plus an fp32 absmax per 256 blocks.
 NF4_STATE_BYTES = 4 / 64
 NF4_DOUBLE_QUANT_STATE_BYTES = 1 / 64 + 4 / (64 * 256)
 
-#: Bytes per logit at the loss: the 16-bit logits, their fp32 upcast inside the
-#: loss, and the fp32 gradient flowing back.
+#: Bytes per logit at the loss: 16-bit logits, their fp32 upcast, the fp32 gradient.
 LOGIT_BYTES = 2 + 4 + 4
 
-#: Activations one decoder layer keeps for its backward pass, per token, in 16-bit:
-#: about sixteen hidden-width tensors (norms, projections, attention output, LoRA
-#: dropout copies) and eight intermediate-width ones (gate, up, activation,
-#: product). With gradient checkpointing only one layer's worth is live at a time.
-#: Modelling assumptions; the anchors below check the total.
+#: 16-bit tensors per token one decoder layer keeps for backward. Modelling
+#: assumptions; EMPIRICAL_ANCHORS check the total.
 LAYER_HIDDEN_TENSORS = 16
 LAYER_INTERMEDIATE_TENSORS = 8
 
-#: Fraction of total VRAM that must remain free for a run to count as
-#: FULL_RESEARCH rather than merely fitting.
+#: Fraction of total VRAM that must stay free for a run to count as FULL_RESEARCH.
 RESEARCH_HEADROOM_FRACTION = 0.15
 
 #: Optimizer state bytes per trainable parameter.
@@ -155,11 +119,7 @@ class GPUInfo:
 
 
 def probe_gpu() -> GPUInfo:
-    """Detect the available accelerator.
-
-    Tries torch first, then ``nvidia-smi``, so a notebook can report hardware even
-    before the training extra is installed. Never raises.
-    """
+    """Detect the available accelerator."""
     try:
         import torch
 
@@ -178,7 +138,6 @@ def probe_gpu() -> GPUInfo:
                 torch_version=torch.__version__,
                 source="torch.cuda",
             )
-        # Apple Silicon. Usable for small CPU/MPS checks, not for bitsandbytes QLoRA.
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             return GPUInfo(
                 available=False,
@@ -222,18 +181,9 @@ def probe_gpu() -> GPUInfo:
     return GPUInfo(available=False, source="torch not installed and no nvidia-smi")
 
 
-# ---------------------------------------------------------------------------
-# Model shape
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class ModelShape:
-    """Enough architecture to estimate memory without downloading weights.
-
-    ``parameter_count`` counts the language model only; a vision tower is
-    ``vision_parameter_count`` and costs memory only when it is loaded.
-    """
+    """Enough architecture to estimate memory without downloading weights."""
 
     parameter_count: float
     hidden_size: int = 4096
@@ -242,15 +192,13 @@ class ModelShape:
     vocab_size: int = 32000
     active_parameter_count: float | None = None
     is_moe: bool = False
-    #: Attention geometry. When known, LoRA counts are exact; otherwise k/v
-    #: projections are approximated at a quarter of the hidden width.
+    #: When known, LoRA counts are exact; otherwise k/v width is taken as hidden/4.
     num_attention_heads: int | None = None
     num_key_value_heads: int | None = None
     head_dim: int | None = None
     tie_word_embeddings: bool = False
     vision_parameter_count: float = 0.0
-    #: Where the shape came from: a verified table entry, a downloaded config,
-    #: or the generic fallback.
+    #: A verified table entry, a downloaded config, or the generic fallback.
     source: str = "generic"
 
     @property
@@ -291,12 +239,7 @@ class ModelShape:
 
     @classmethod
     def from_config(cls, config: ModelConfig) -> ModelShape:
-        """Derive a shape from a model config, using known checkpoint facts.
-
-        :data:`KNOWN_SHAPES` is verified against each checkpoint's published
-        ``config.json``. Unknown models fall back to a generic 7B-ish shape and the
-        estimate is flagged as low-confidence.
-        """
+        """Derive a shape from a model config, using known checkpoint facts."""
         facts = KNOWN_SHAPES.get(config.base_model)
         if facts is not None:
             return cls(
@@ -341,11 +284,8 @@ class ModelShape:
         )
 
 
-#: Architecture facts per checkpoint, from its ``config.json``. The Mistral
-#: entries carry full attention geometry (so LoRA counts are exact) and the
-#: text-only parameter count; the vision counts come from instantiating the
-#: container on the meta device at the pinned revision (vision tower 403,305,472
-#: plus projector 35,652,608).
+#: Architecture facts per checkpoint, from its ``config.json``. Parameter counts
+#: are text-only; vision counts were measured on the meta device at the pinned revision.
 KNOWN_SHAPES: dict[str, dict[str, Any]] = {
     "Qwen/Qwen3-8B": {
         "parameter_count": 8.2e9,
@@ -363,9 +303,7 @@ KNOWN_SHAPES: dict[str, dict[str, Any]] = {
         "vocab_size": 151936,
         "is_moe": True,
     },
-    # Verified against config.json; the Ministral-8B run's manifest reports the
-    # 43,646,976 LoRA parameters this geometry gives at r=16 on all seven
-    # projections.
+    # Matches the run manifest's 43,646,976 LoRA parameters at r=16, seven projections.
     "mistralai/Ministral-8B-Instruct-2410": {
         "parameter_count": 8.0e9,
         "hidden_size": 4096,
@@ -377,7 +315,7 @@ KNOWN_SHAPES: dict[str, dict[str, Any]] = {
         "head_dim": 128,
         "tie_word_embeddings": False,
     },
-    # KLEOS Hermes. config.json @ 04d8a905; 12,247,782,400 parameters.
+    # Hermes; config.json @ 04d8a905.
     "mistralai/Mistral-Nemo-Instruct-2407": {
         "parameter_count": 12_247_782_400,
         "hidden_size": 5120,
@@ -389,8 +327,7 @@ KNOWN_SHAPES: dict[str, dict[str, Any]] = {
         "head_dim": 128,
         "tie_word_embeddings": False,
     },
-    # KLEOS Logos: the ministral3 text tower of the container, config.json @
-    # 3cea74c1. 13,506,073,600 text parameters counted on the meta device.
+    # Logos: the container's ministral3 text tower; config.json @ 3cea74c1.
     "mistralai/Ministral-3-14B-Instruct-2512-BF16": {
         "parameter_count": 13_506_073_600,
         "hidden_size": 5120,
@@ -403,9 +340,7 @@ KNOWN_SHAPES: dict[str, dict[str, Any]] = {
         "tie_word_embeddings": False,
         "vision_parameter_count": 438_958_080,
     },
-    # KLEOS Logos v0.0.2: the Reasoning release of the same model. config.json @
-    # 51f9210f has the Instruct text tower's shape exactly; 13,506,073,600 text
-    # parameters counted on the meta device (transformers 5.16.1), lm_head untied.
+    # Logos v0.0.2; config.json @ 51f9210f, same text-tower shape as the Instruct model.
     "mistralai/Ministral-3-14B-Reasoning-2512": {
         "parameter_count": 13_506_073_600,
         "hidden_size": 5120,
@@ -418,7 +353,6 @@ KNOWN_SHAPES: dict[str, dict[str, Any]] = {
         "tie_word_embeddings": False,
         "vision_parameter_count": 438_958_080,
     },
-    # Text 23,572,403,200 + vision 438,958,080 = 24.0B total.
     "mistralai/Mistral-Small-3.2-24B-Instruct-2506": {
         "parameter_count": 23_572_403_200,
         "hidden_size": 5120,
@@ -436,14 +370,7 @@ KNOWN_SHAPES: dict[str, dict[str, Any]] = {
 
 @dataclass
 class MemoryEstimate:
-    """Estimated peak VRAM, broken down so a user can see what to change.
-
-    ``peak_allocated_gb`` is comparable with ``torch.cuda.max_memory_allocated``.
-    ``total_gb`` is what PyTorch's allocator must be able to reserve: the peak
-    plus the fragmentation reserve. ``minimum_gb`` is the peak alone. A paged
-    optimizer's state lives outside the allocator and is taken from the budget
-    instead (:func:`memory_budget_gb`).
-    """
+    """Estimated peak VRAM, broken down so a user can see what to change."""
 
     base_weights_gb: float
     lora_params: int
@@ -451,8 +378,7 @@ class MemoryEstimate:
     gradients_gb: float
     optimizer_gb: float
     activations_gb: float
-    #: Part of ``base_weights_gb`` kept unquantized (embeddings, lm_head, norms,
-    #: a loaded vision tower).
+    #: Part of ``base_weights_gb`` kept unquantized (embeddings, norms, vision tower).
     unquantized_weights_gb: float = 0.0
     paged_optimizer: bool = False
     reserve_gb: float = ALLOCATOR_RESERVE_GB
@@ -460,12 +386,10 @@ class MemoryEstimate:
     batch_size: int = 1
     confidence: str = "medium"
     assumptions: list[str] = field(default_factory=list)
-    #: Weights as loaded for inference (no k-bit upcast), and a single-sequence
-    #: activation budget computed independently of the training batch size.
+    #: Inference: weights without the k-bit upcast; single-sequence activations.
     inference_weights_gb: float = 0.0
     inference_activations_gb: float = 0.0
-    #: Peak allocation on each GPU when ``device_map: auto`` spreads the model
-    #: over several (:func:`device_peaks`). Empty for one GPU.
+    #: Per-GPU peaks under ``device_map: auto`` (:func:`device_peaks`); empty for one GPU.
     device_peaks_gb: tuple[float, ...] = ()
 
     @property
@@ -501,12 +425,7 @@ class MemoryEstimate:
 
     @property
     def inference_gb(self) -> float:
-        """Weights plus a single-sequence activation budget, without training state.
-
-        Deliberately independent of the *training* batch size and sequence length:
-        whether a model can be loaded at all is a property of the weights, not of
-        how large a training batch someone asked for.
-        """
+        """Weights plus a single-sequence activation budget, without training state."""
         return self.inference_weights_gb + self.inference_activations_gb + self.reserve_gb
 
     def to_dict(self) -> dict[str, Any]:
@@ -564,12 +483,7 @@ class MemoryEstimate:
 
 
 def estimate_lora_parameters(shape: ModelShape, rank: int, target_modules: list[str]) -> int:
-    """Count trainable LoRA parameters for a target set.
-
-    A LoRA on a ``d_in x d_out`` matrix adds ``r * (d_in + d_out)`` parameters.
-    Exact when the shape carries its attention geometry; unknown module names
-    are counted as hidden x hidden.
-    """
+    """Count trainable LoRA parameters for a target set."""
     dims = shape.projection_dims
     fallback = (shape.hidden_size, shape.hidden_size)
     per_layer = sum(rank * sum(dims.get(module, fallback)) for module in target_modules)
@@ -588,15 +502,12 @@ class MemoryTerms:
     activations: float
     inference_weights: float
     inference_activations: float
-    # How ``activations`` and ``unquantized_weights`` divide when the layers are
-    # spread over several GPUs (:func:`device_peaks`). Their sum is unchanged.
+    # Splits of ``activations`` and ``unquantized_weights`` for :func:`device_peaks`.
     #: The fp32 ``embed_tokens`` (part of ``unquantized_weights``).
     embedding_weights: float = 0.0
-    #: Activations that scale with the number of layers on a GPU: checkpointed
-    #: layer boundaries, or every layer's activations without checkpointing.
+    #: Activations that scale with the number of layers on a GPU.
     layered_activations: float = 0.0
-    #: Activations every GPU holds once: the layer being recomputed under
-    #: checkpointing and one dequantized weight.
+    #: Activations every GPU holds once: the recomputed layer and one dequantized weight.
     working_activations: float = 0.0
     #: fp32 logits at the loss, on the GPU holding lm_head.
     logits: float = 0.0
@@ -616,20 +527,7 @@ def memory_terms(
     seq: int,
     loads_vision_tower: bool,
 ) -> MemoryTerms:
-    """Every memory term of a QLoRA/LoRA training step, from first principles.
-
-    What the terms encode, beyond the obvious:
-
-    * ``prepare_model_for_kbit_training`` upcasts every weight it cannot
-      quantize (embeddings, ``lm_head``, norms, a loaded vision tower) to fp32.
-      For a 131k-token vocabulary that is ~5 GiB, the term earlier versions of
-      this estimator missed (finding H-F10).
-    * Under 16-bit autocast the fp32 ``lm_head`` is cast to a 16-bit copy for its
-      matmul, and that copy is saved for the backward pass.
-    * PEFT keeps adapter weights, and so their gradients, in fp32.
-    * The residual stream is fp32 after the embedding upcast, so each layer
-      boundary saved by gradient checkpointing costs 4 bytes per value.
-    """
+    """Every memory term of a QLoRA/LoRA training step, from first principles."""
     quantized = quantization_mode is not QuantizationMode.NONE
     if quantization_mode.is_4bit:
         per_weight = 0.5 + (NF4_DOUBLE_QUANT_STATE_BYTES if double_quant else NF4_STATE_BYTES)
@@ -658,8 +556,7 @@ def memory_terms(
     head_cast = shape.vocab_size * hidden * 2.0 if quantized else 0.0
     dequantized_weight = hidden * inter * 2.0 if quantized else 0.0
 
-    # Inference: weights as loaded (no fp32 upcast), a KV cache over up to 2048
-    # tokens and one row of fp32 logits.
+    # Inference: a KV cache over up to 2048 tokens and one row of fp32 logits.
     inference_seq = min(seq, 2048)
     if shape.num_key_value_heads and shape.head_dim:
         kv_width = shape.num_key_value_heads * shape.head_dim
@@ -685,19 +582,7 @@ def memory_terms(
 
 
 def device_peaks(terms: MemoryTerms, devices: int, *, paged: bool) -> tuple[float, ...]:
-    """Peak allocation on each GPU when ``device_map: auto`` spreads the layers, in bytes.
-
-    Assumes what accelerate's balanced map does for a decoder: the layers, and
-    so the quantized weights, adapters and their optimizer state, are divided
-    evenly; ``embed_tokens`` sits on the first GPU; the final norm, ``lm_head``,
-    its 16-bit autocast copy and the fp32 logits on the last. Every GPU holds one
-    working layer. The map is computed at load time, before the k-bit upcast, so
-    it does not see the fp32 embeddings; the trainer's per-GPU memory probe
-    measures what really happens before step 1.
-
-    The GPUs together hold the single-GPU peak plus ``devices - 1`` extra working
-    layers.
-    """
+    """Peak allocation on each GPU when ``device_map: auto`` spreads the layers, in bytes."""
     count = max(1, devices)
     spread = (
         terms.quantized_weights
@@ -716,12 +601,7 @@ def device_peaks(terms: MemoryTerms, devices: int, *, paged: bool) -> tuple[floa
 
 @dataclass(frozen=True)
 class EmpiricalAnchor:
-    """A training peak measured on a real run, used to check the estimator.
-
-    ``measured_peak_gb`` is ``torch.cuda.max_memory_allocated`` over the run, in
-    GiB. ``sequence_length`` is the longest training sequence after padding,
-    which is what sets the activation peak at batch size 1.
-    """
+    """A training peak measured on a real run, used to check the estimator."""
 
     run: str
     base_model: str
@@ -770,16 +650,14 @@ class EmpiricalAnchor:
         return self.estimate_gb() / self.measured_peak_gb - 1.0
 
 
-#: Peaks measured on the project's own T4 runs: QLoRA NF4 with double
-#: quantization, r=16 on all seven projections, batch 1, gradient
-#: checkpointing, paged 8-bit AdamW, fp16.
+#: Measured T4 peaks: NF4 double-quant, r=16 on seven projections, batch 1,
+#: gradient checkpointing, paged 8-bit AdamW, fp16.
 EMPIRICAL_ANCHORS: tuple[EmpiricalAnchor, ...] = (
     EmpiricalAnchor(
         run="kleos-v006-mistralnemo12b-run1 (Hermes)",
         base_model="mistralai/Mistral-Nemo-Instruct-2407",
         measured_peak_gb=13.09,
-        # Measured: the repo's formatter over the v0.0.6 train split with Nemo's
-        # tokenizer at the pinned revision gives a longest example of 440 tokens.
+        # Measured longest train example with Nemo's tokenizer at the pinned revision.
         sequence_length=440,
         source="docs/experiments/kleos-v006-mistralnemo12b-run1-report.md, section 4",
     ),
@@ -787,9 +665,7 @@ EMPIRICAL_ANCHORS: tuple[EmpiricalAnchor, ...] = (
         run="kleos-v006-ministral8b-run1",
         base_model="mistralai/Ministral-8B-Instruct-2410",
         measured_peak_gb=9.67,
-        # Not measured directly (the tokenizer is gated): same data, the same
-        # Tekken vocabulary and [INST] template as Nemo, and the run's config
-        # records a longest example of ~440 tokens.
+        # Not measured (gated tokenizer); same data, vocabulary and template as Nemo.
         sequence_length=440,
         source="docs/experiments/kleos-v006-ministral8b-run1-artifact-audit.md",
     ),
@@ -807,23 +683,7 @@ def estimate_memory(
     loads_vision_tower: bool | None = None,
     devices: int = 1,
 ) -> MemoryEstimate:
-    """Estimate peak training VRAM for a configuration.
-
-    Args:
-        seq_length: The longest training sequence. Defaults to
-            ``model.max_seq_length``, the worst case the configuration allows.
-            With batch size 1 and padding to the longest in the batch, the real
-            peak follows the longest example actually present, so pass it when
-            known (``scripts/train.py`` measures it before loading weights).
-        loads_vision_tower: Whether a vision tower is resident. Defaults to
-            ``model.is_multimodal`` (a text-only view loads none).
-        devices: GPUs the model is spread over (``device_map: auto``). Above 1,
-            the estimate is per GPU and its peak is the fullest GPU's
-            (:func:`device_peaks`); at 1 it is exactly the single-GPU estimate.
-
-    The arithmetic is deliberately explicit rather than a fitted heuristic, so a
-    user can see which term is dominating and change the right knob.
-    """
+    """Estimate peak training VRAM for a configuration."""
     shape = shape or ModelShape.from_config(model_config)
     targets = target_modules or ["q_proj", "k_proj", "v_proj", "o_proj"]
     seq = seq_length or model_config.max_seq_length
@@ -943,11 +803,7 @@ def estimate_memory(
 
 @dataclass
 class Adjustment:
-    """A recorded change to the requested configuration.
-
-    Spec section 14: automatic fallbacks are permitted, silent ones are not.
-    Every adjustment lands in the experiment manifest.
-    """
+    """A recorded change to the requested configuration."""
 
     field: str
     original: Any
@@ -979,11 +835,9 @@ class FeasibilityReport:
     blocking_reasons: list[str] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
     proposed_adjustments: list[Adjustment] = field(default_factory=list)
-    #: Memory the run may use: free memory when probed live, otherwise total
-    #: memory less the CUDA context.
+    #: Free memory when probed live, otherwise total memory less the CUDA context.
     budget_gb: float = 0.0
-    #: Fits only if the allocator fragments less than on the reference run: the
-    #: estimate without the reserve fits, the estimate with it does not.
+    #: Fits without the allocator reserve but not with it.
     marginal: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -1031,12 +885,7 @@ class FeasibilityReport:
 
 
 def memory_budget_gb(gpu: GPUInfo, *, paged_gb: float = 0.0) -> float:
-    """Memory PyTorch's allocator may use on this GPU.
-
-    Measured free memory, less the paged optimizer state that will be allocated
-    outside the allocator later. Without a measurement: total memory less the
-    non-allocator use of the reference run, plus any paged state beyond its.
-    """
+    """Memory PyTorch's allocator may use on this GPU."""
     if gpu.free_memory_gb > 0:
         return max(0.0, gpu.free_memory_gb - paged_gb)
     excess_paged = max(0.0, paged_gb - REFERENCE_PAGED_GB)
@@ -1052,15 +901,8 @@ def assess_feasibility(
     target_modules: list[str] | None = None,
     seq_length: int | None = None,
 ) -> FeasibilityReport:
-    """Decide which feasibility tier a configuration reaches on the given GPU.
-
-    Args:
-        seq_length: The longest training sequence, when measured. Defaults to
-            ``model.max_seq_length`` (see :func:`estimate_memory`).
-    """
+    """Decide which feasibility tier a configuration reaches on the given GPU."""
     gpu = gpu or probe_gpu()
-    # device_map: auto spreads the layers over every visible GPU; any other map
-    # (or none) keeps the model on one.
     devices = gpu.device_count if model_config.device_map == "auto" else 1
     estimate = estimate_memory(
         model_config,
@@ -1096,8 +938,7 @@ def assess_feasibility(
             ],
         )
 
-    # A smoke-sized variant: the smallest configuration still exercising the path,
-    # which includes the gradient checkpointing an adjustment would switch on.
+    # Smallest config that still exercises the path, with checkpointing switched on.
     smoke_estimate = estimate_memory(
         model_config,
         training_config.model_copy(update={"gradient_checkpointing": True}),
@@ -1143,7 +984,7 @@ def assess_feasibility(
             f"batch={training_config.per_device_train_batch_size} needs about "
             f"{estimate.total_gb:.1f} GB, more than the {budget:.1f} GB available."
         )
-        # Propose, do not apply. The caller decides, and strict_config can refuse.
+        # Propose, never apply: the caller decides, and strict_config can refuse.
         if model_config.max_seq_length > 512:
             adjustments.append(
                 Adjustment(
@@ -1183,9 +1024,7 @@ def assess_feasibility(
             ]
         )
     elif headroom < MARGINAL_HEADROOM_GB:
-        # Too close to call: the answer depends on allocator fragmentation, which
-        # was measured once. Not refused: the trainer's memory probe measures the
-        # longest batch before the first step, so a wrong call costs minutes.
+        # Not refused: the trainer's memory probe catches a wrong call before step 1.
         tier = FeasibilityTier.ADAPTER_TRAIN
         marginal = True
         recommendations.extend(
@@ -1235,19 +1074,7 @@ def assess_feasibility(
 def enforce_feasibility(
     report: FeasibilityReport, training_config: TrainingConfig
 ) -> list[Adjustment]:
-    """Apply the feasibility policy.
-
-    Args:
-        report: Assessment for this run.
-        training_config: Supplies ``strict_config``.
-
-    Returns:
-        Adjustments that should be applied and recorded.
-
-    Raises:
-        InsufficientMemoryError: when the run cannot proceed, or when adjustments
-            would be required but ``strict_config`` forbids them.
-    """
+    """Apply the feasibility policy."""
     if report.tier is FeasibilityTier.INFEASIBLE:
         raise InsufficientMemoryError(
             f"{report.model_name} cannot run on the available hardware.",
@@ -1326,14 +1153,13 @@ def render_feasibility_table(reports: list[FeasibilityReport]) -> str:
     return "\n".join(lines)
 
 
-#: Runtimes this project has measured, for planning without the hardware
-#: (``plan_run.py --simulate-gpu``). Only measured capacities belong here.
+#: Measured runtimes for ``plan_run.py --simulate-gpu``. Only measured capacities belong here.
 GPU_PRESETS: dict[str, GPUInfo] = {
     "t4-colab": GPUInfo(
         available=True,
         name="Tesla T4 (Colab free tier, simulated)",
         total_memory_gb=14.56,
-        # Unmeasured at start-up, so the budget comes from total memory.
+        # Unmeasured, so the budget comes from total memory.
         free_memory_gb=0.0,
         compute_capability=(7, 5),
         device_count=1,
@@ -1347,17 +1173,7 @@ GPU_PRESETS: dict[str, GPUInfo] = {
 
 
 def simulated_gpu(spec: str) -> GPUInfo:
-    """A GPU to plan against: a preset name, or ``NAME:TOTAL_GIB:MAJOR.MINOR[:COUNT]``.
-
-    The custom form is for hardware without a measured preset, e.g.
-    ``L4:22.0:8.9``; its budget is the stated total less the measured
-    non-allocator overhead. ``COUNT`` identical GPUs (default 1), e.g.
-    ``T4:14.56:7.5:2`` for Kaggle's 2 x T4, are planned per GPU with the model
-    spread over them.
-
-    Raises:
-        ValueError: for an unknown preset or a malformed custom spec.
-    """
+    """A GPU to plan against: a preset name, or ``NAME:TOTAL_GIB:MAJOR.MINOR[:COUNT]``."""
     if spec in GPU_PRESETS:
         return GPU_PRESETS[spec]
     parts = spec.split(":")

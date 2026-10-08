@@ -1,11 +1,4 @@
-"""The reference KLEOS-side client: every outcome becomes the status contract.
-
-"Quota must never become a KLEOS error." This is where that is enforced for the
-caller: a sleeping Space, a spent quota, a full queue, a dead network and a
-malformed reply all come back as a status the KLEOS backend can branch on, and
-none of them raises. The transports are fakes shaped like gradio_client and
-httpx; nothing here touches a network.
-"""
+"""The reference KLEOS-side client: every outcome becomes the status contract."""
 
 from __future__ import annotations
 
@@ -303,7 +296,7 @@ class TestConnectingToTheSpace:
 
         started = time.perf_counter()
         assert client.generate(MESSAGES)["status"] == "starting"
-        assert time.perf_counter() - started < 2  # the caller was not held hostage
+        assert time.perf_counter() - started < 2  # the caller is not blocked
 
         factory.gate.set()
         deadline = time.perf_counter() + 5
@@ -546,11 +539,7 @@ def logos_settings(**overrides: Any) -> HermesClientSettings:
 
 
 class TestLogosClientRefusals:
-    """The client's own refusals speak for the model it calls, in its contract version.
-
-    `disabled` and `starting` never reach the Space: the client makes them, and
-    KLEOS shows their message to its users.
-    """
+    """The client's own refusals speak for the model it calls, in its contract version."""
 
     def test_from_env_takes_the_models_contract_version(self):
         settings = HermesClientSettings.from_env({}, prefix="LOGOS", contract_version=2)

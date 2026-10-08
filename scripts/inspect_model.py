@@ -55,7 +55,6 @@ def main(argv: list[str] | None = None) -> int:
 
     print_header(f"Model inspection — {config.base_model}")
 
-    # --- what the config file claims ---------------------------------------
     adapter = get_adapter(config)
     caps = adapter.capabilities
     print("Resolved by the KLEOS model-family adapter:")
@@ -75,7 +74,6 @@ def main(argv: list[str] | None = None) -> int:
         for note in caps.notes:
             print(f"    - {note}")
 
-    # --- what the checkpoint actually says ---------------------------------
     print("\n── checkpoint config.json " + "─" * 37)
     try:
         from kleos_models.models.loading import load_hf_config
@@ -121,7 +119,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {str(exc).splitlines()[0]}")
         print("\n  Install the training extra and set HF_TOKEN for gated repositories.")
 
-    # --- the real module tree ----------------------------------------------
     if args.load:
         print("\n── adaptable modules (weights loaded) " + "─" * 26)
         from kleos_models.models.loading import list_candidate_modules, load_model

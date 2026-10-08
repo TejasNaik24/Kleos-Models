@@ -1,35 +1,4 @@
-"""Corrected measures, reported beside the originals (findings H-F11 to H-F14).
-
-The audit of the Hermes evaluation found four ways the original numbers mislead
-on the KLEOS benchmark. None of them is fixed by changing an original field: every
-v1 key keeps its definition and its value, so published numbers stay reproducible.
-The corrections are computed *beside* them, from per-example records, by this one
-code path for fresh runs (``runner.py``) and for results stored before it existed
-(``scripts/rescore.py --mode annotate``).
-
-H-F11, the consistency unit
-    Consistency grouped by ``scenario_family`` mixes cases whose correct answers
-    differ, so even a perfect model "flips" (on v0.0.6 an oracle scores 9 of 15
-    families). ``group_id`` is the unit of logical equivalence: perturbations of
-    one case, label-identical by construction. Both are reported, each with the
-    score an oracle would get, so a metric's ceiling is visible next to it.
-H-F12, the citation heuristic
-    The fabricated-citation check flags gold answers too. It is reported with its
-    gold floor (``rescore.py --gold-targets``) and marked uncalibrated.
-H-F13, evidence coverage
-    No benchmark item carries ``reference.evidence_ids``, so every response scores
-    1.0: the metric is vacuous here and is labelled so.
-H-F14, clustering
-    349 examples come in 78 groups. Intervals that resample examples treat them
-    as independent and come out too narrow; the corrected intervals resample
-    groups (``metrics.cluster_bootstrap_mean``).
-
-Subsets: a benchmark item whose reference says ``confident: false`` should be
-declined. On v0.0.6 those 78 cases carry the four decline labels that never occur
-in training, so the two subsets measure different things and are reported apart.
-
-This module imports no torch.
-"""
+"""Corrected measures, reported beside the originals (findings H-F11 to H-F14)."""
 
 from __future__ import annotations
 
@@ -63,12 +32,7 @@ def subset_of(reference: Mapping[str, Any]) -> str | None:
 
 
 def benchmark_index(examples: Iterable[Any]) -> dict[str, dict[str, Any]]:
-    """Map example id to its grouping facts.
-
-    Accepts ``EvaluationExample`` objects or raw benchmark rows (dicts), so a
-    stored result can be annotated from the JSONL file without validation
-    dependencies.
-    """
+    """Map example id to its grouping facts."""
     index: dict[str, dict[str, Any]] = {}
     for example in examples:
         if isinstance(example, Mapping):
@@ -94,13 +58,7 @@ def benchmark_index(examples: Iterable[Any]) -> dict[str, dict[str, Any]]:
 def annotate_records(
     records: Sequence[Mapping[str, Any]], index: Mapping[str, Mapping[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Copies of ``records`` with ``group_id`` and ``subset`` joined from the benchmark.
-
-    Raises:
-        ValueError: when a record is missing from the benchmark, or already
-            carries a value the benchmark contradicts. Either means the results
-            and the benchmark are not the same evaluation.
-    """
+    """Copies of ``records`` with ``group_id`` and ``subset`` joined from the benchmark."""
     annotated: list[dict[str, Any]] = []
     for record in records:
         example_id = str(record["example_id"])
@@ -126,12 +84,7 @@ def annotate_records(
 
 
 def targets_fingerprint(records: Iterable[Mapping[str, Any]]) -> str:
-    """sha256 over the evaluated targets: sorted (example id, task, reference decision).
-
-    Identifies *what was graded* from a results file alone, so two results can be
-    checked for the same benchmark even when neither recorded the file's hash
-    (finding H-F5). Duplicate rows from several seeds collapse to one.
-    """
+    """sha256 over the evaluated targets: sorted (example id, task, reference decision)."""
     rows = sorted(
         {
             (
@@ -153,13 +106,7 @@ def consistency_summary(
     subset: str | None = None,
     min_group_size: int = 2,
 ) -> dict[str, Any]:
-    """Consistency grouped by ``key``, with the score an oracle would get.
-
-    The oracle answers every item with its reference decision. Under a sound
-    grouping it agrees within every group (``oracle_agreement_rate`` 1.0); below
-    that, the grouping itself mixes different correct answers and the model's
-    agreement rate cannot be read as stability.
-    """
+    """Consistency grouped by ``key``, with the score an oracle would get."""
     rows = [r for r in records if r.get(key) and (subset is None or r.get("subset") == subset)]
     summary: dict[str, Any] = {"key": key, "subset": subset or "all", "examples": len(rows)}
     if not rows:
@@ -245,11 +192,7 @@ def _distribution(values: Sequence[float]) -> dict[str, float]:
 def generation_stats(
     records: Sequence[Mapping[str, Any]], *, max_new_tokens: int | None = None
 ) -> dict[str, Any]:
-    """What generation cost and where it hit limits.
-
-    ``hit_max_new_tokens`` counts responses that used the whole budget: those
-    were probably cut off, and a truncated answer is graded as if complete.
-    """
+    """What generation cost and where it hit limits."""
     completion = [int(r.get("completion_tokens") or 0) for r in records]
     latency = [float(r.get("latency_seconds") or 0.0) for r in records]
     stats: dict[str, Any] = {
@@ -265,8 +208,7 @@ def generation_stats(
     }
     if all("response" in r for r in records):
         stats["empty_responses"] = sum(1 for r in records if not str(r["response"]).strip())
-    # Schema 3 onwards. A thinking model whose budget ran out mid-thought has no
-    # answer; it is graded as given (empty) and counted here.
+    # Schema 3+: a thinking model that ran out of budget has no answer; graded empty, counted.
     if records and all("finish_reason" in r for r in records):
         stats["thinking_truncated"] = sum(1 for r in records if r["finish_reason"] == "length")
     traces = [str(r["reasoning"]) for r in records if r.get("reasoning") is not None]
@@ -314,12 +256,7 @@ def build_corrected(
     iterations: int = 2000,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """The ``corrected`` block: every correction, from per-example records.
-
-    Records need ``group_id`` and ``subset`` (fresh runs carry them; stored ones
-    get them from :func:`annotate_records`). Without them the affected parts say
-    so rather than fall back silently.
-    """
+    """The ``corrected`` block: every correction, from per-example records."""
     corrected: dict[str, Any] = {
         "version": CORRECTIONS_VERSION,
         "cluster_key": CLUSTER_KEY,

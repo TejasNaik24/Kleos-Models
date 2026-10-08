@@ -26,8 +26,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-#: Packages that pull torch transitively. Installed with --no-deps so pip cannot
-#: swap out Colab's torch build.
+#: Packages that pull torch transitively; --no-deps stops pip swapping Colab's torch.
 TORCH_DEPENDENT = (
     ("transformers", ">=4.56,<6"),
     ("peft", ">=0.12"),
@@ -147,7 +146,6 @@ def main(argv: list[str] | None = None) -> int:
 
     failures: list[str] = []
 
-    # Prerequisites of the --no-deps installs.
     missing_requirements = [p for p in NO_DEPS_REQUIREMENTS if not _installed(p)]
     if missing_requirements and _pip(*missing_requirements) != 0:
         failures.extend(missing_requirements)
@@ -170,11 +168,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  · {name} already present ({_installed(name)})")
             continue
         spec = f"{name}{constraint}" if constraint else name
-        # --no-deps is the whole point: it stops pip replacing Colab's torch.
+        # --no-deps stops pip replacing Colab's torch.
         if _pip(spec, "--no-deps") != 0:
             failures.append(name)
 
-    # Install the repository itself without dependencies, for the same reason.
+    # --no-deps for the same reason.
     print("\n── installing kleos-models " + "─" * 37)
     if _pip("-e", str(REPO_ROOT), "--no-deps") != 0:
         failures.append("kleos-models")

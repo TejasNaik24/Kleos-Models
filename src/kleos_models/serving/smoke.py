@@ -1,13 +1,4 @@
-"""The frozen-output smoke suite, shared by every serving path.
-
-`scripts/hermes_smoke.py` (in-process, any GPU host or the Docker image) and
-`scripts/zerogpu_smoke.py` (over the network, against a ZeroGPU Space) must run
-the *same* examples and judge them the *same* way, or their results cannot be
-compared. Both import from here.
-
-This produces reproducibility evidence, never a score: nine examples say nothing
-about quality that the 349-example benchmark does not already say better.
-"""
+"""The frozen-output smoke suite, shared by every serving path."""
 
 from __future__ import annotations
 
@@ -17,8 +8,7 @@ from typing import Any
 
 from kleos_models.errors import KleosError
 
-#: Task families the suite must cover. Named rather than derived so a benchmark
-#: that silently loses a family is caught instead of quietly skipped.
+#: Named, not derived, so a benchmark that loses a family fails instead of skipping it.
 REQUIRED_TASKS = (
     "workspace_reasoning",
     "memory_conflict_resolution",
@@ -31,13 +21,7 @@ REQUIRED_TASKS = (
 
 
 def select_suite(examples: list[Any], *, per_task: int = 1, abstention: int = 2) -> list[Any]:
-    """Pick a small, deterministic, representative set.
-
-    Sorted by example id, so the same benchmark always yields the same suite and
-    a passing run today is comparable with one next month. Abstention cases are
-    added explicitly because they are the behaviour most likely to reveal a
-    tokenizer or prompt-assembly difference.
-    """
+    """Pick a small, deterministic, representative set."""
     by_task: dict[str, list[Any]] = defaultdict(list)
     for example in sorted(examples, key=lambda e: str(e.id)):
         by_task[str(example.task)].append(example)
@@ -65,12 +49,7 @@ def select_suite(examples: list[Any], *, per_task: int = 1, abstention: int = 2)
 
 
 def compare_output(expected: str, actual: str) -> dict[str, Any]:
-    """Exact comparison, plus where the two first diverge when they differ.
-
-    The divergence position helps tell a numeric drift late in generation
-    (identical opening, one token flips) from a setup error (different from the
-    first word).
-    """
+    """Exact comparison, plus where the two first diverge when they differ."""
     want = (expected or "").strip()
     have = (actual or "").strip()
     if want == have:
@@ -94,8 +73,7 @@ def load_reference(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {str(r["example_id"]): r for r in records if "example_id" in r}
 
 
-#: Roles the serving API accepts. A benchmark turn outside these cannot be sent
-#: as-is, and is reported rather than silently rewritten.
+#: Roles the serving API accepts; other turns are reported, never silently rewritten.
 API_ROLES = frozenset({"system", "user", "assistant"})
 
 
@@ -112,13 +90,7 @@ def api_messages(example: Any) -> list[dict[str, str]] | None:
 def judge_response(
     example: Any, reference: dict[str, Any] | None, response: dict[str, Any]
 ) -> dict[str, Any]:
-    """One example's reproducibility evidence from a status-contract response.
-
-    Exact text first. Then the two diagnostics that localise a difference:
-    prompt token count (equal means tokenization and chat template agree, so a
-    difference is in the arithmetic) and the extracted decision (equal means a
-    difference did not change what Hermes decided).
-    """
+    """One example's reproducibility evidence from a status-contract response."""
     record: dict[str, Any] = {
         "example_id": str(example.id),
         "task": str(example.task),
@@ -164,8 +136,7 @@ def judge_response(
         }
     )
     if "reasoning" in reference:
-        # A thinking model's evaluation stored its trace beside the answer; the
-        # Space reproduces the model only if the trace is the same too.
+        # The Space reproduces a thinking model only if its trace matches too.
         record["reasoning"] = response.get("reasoning")
         record["reasoning_exact"] = compare_output(
             reference.get("reasoning") or "", response.get("reasoning") or ""
@@ -231,8 +202,7 @@ def summarize_run(records: list[dict[str, Any]]) -> dict[str, Any]:
             ),
             "cold": phase(cold),
             "warm": phase(warm),
-            # Upper bound on quota used: includes scheduling and, on a cold
-            # call, moving the weights onto the GPU.
+            # Upper bound on quota: includes scheduling and, when cold, moving weights to GPU.
             "gpu_call_seconds_total": round(sum(r["timings"]["gpu_call_s"] for r in answered), 1),
             # Lower bound: time spent generating.
             "gpu_generate_seconds_total": round(

@@ -1,17 +1,4 @@
-"""PEFT / LoRA attachment (spec sections 13, 45, 46).
-
-The central guarantee: **this is real parameter-efficient fine-tuning, and it
-either works or fails loudly.**
-
-Three ways a QLoRA setup fails quietly, all of which are checked here:
-
-1. Target modules match nothing, so the adapter trains zero parameters while the
-   loss curve still looks plausible. Caught by the adapter's target validation.
-2. The adapter attaches but every parameter is frozen, so nothing learns.
-   Caught by the trainable-parameter assertion.
-3. The quantization silently drops and the run becomes a full fine-tune of a
-   16-bit model. Refused unless ``training.allow_full_finetune`` is set.
-"""
+"""PEFT / LoRA attachment (spec sections 13, 45, 46)."""
 
 from __future__ import annotations
 
@@ -83,8 +70,7 @@ def build_lora_config(
     if lora.modules_to_save:
         kwargs["modules_to_save"] = lora.modules_to_save
 
-    # Keep the adapter off modules the family forbids. PEFT accepts a regex or a
-    # list here depending on version; a list of substrings is the portable form.
+    # PEFT takes a regex or a list depending on version; a substring list is portable.
     exclusions = [*adapter.excluded_module_patterns, *lora.exclude_modules]
     if exclusions and "exclude_modules" in getattr(peft.LoraConfig, "__dataclass_fields__", {}):
         kwargs["exclude_modules"] = exclusions
@@ -98,11 +84,7 @@ def build_lora_config(
 
 
 def prepare_for_kbit_training(model: Any, training: TrainingConfig) -> Any:
-    """Run PEFT's k-bit preparation on a quantized model.
-
-    Upcasts layer norms to fp32, makes the input embeddings produce gradients (so
-    gradient checkpointing works), and freezes the base weights.
-    """
+    """Run PEFT's k-bit preparation on a quantized model."""
     peft = _require_peft()
     return peft.prepare_model_for_kbit_training(
         model,
@@ -119,19 +101,12 @@ def attach_lora(
     *,
     is_quantized: bool,
 ) -> PeftSetupResult:
-    """Validate targets, attach the LoRA adapter and verify it will train.
-
-    Raises:
-        ModelCompatibilityError: when targets are absent, nothing is trainable, or
-            the setup silently became a full fine-tune.
-    """
+    """Validate targets, attach the LoRA adapter and verify it will train."""
     peft = _require_peft()
     lora = model_config.lora
 
-    # 1. Validate targets against the *loaded* model. Raises with candidates.
     resolution = adapter.validate_target_modules(model, lora)
 
-    # 2. k-bit preparation before attaching, for quantized bases.
     if is_quantized:
         model = prepare_for_kbit_training(model, training_config)
     elif training_config.gradient_checkpointing:
@@ -139,17 +114,14 @@ def attach_lora(
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
 
-    # 3. Attach. The base revision goes into adapter_config.json, so an adapter
-    # loaded on its own (AutoPeftModel) finds the weights it was trained against
-    # rather than whatever `main` points to (finding H-F1). PEFT reads it only
-    # there; adapter files are still fetched at the caller's revision.
+    # The revision goes into adapter_config.json so AutoPeftModel finds the trained-against
+    # base, not `main` (H-F1). Adapter files are still fetched at the caller's revision.
     lora_config = build_lora_config(lora, resolution.matched, adapter=adapter)
     model = peft.get_peft_model(model, lora_config, revision=model_config.revision)
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
 
-    # 4. Verify the adapter is actually trainable.
     if trainable == 0:
         raise ModelCompatibilityError(
             "LoRA attached but no parameter requires gradients.",
@@ -201,17 +173,7 @@ def attach_lora(
 
 
 def verify_gradients_flow(model: Any, sample_batch: dict[str, Any]) -> dict[str, Any]:
-    """Run one forward/backward pass and confirm LoRA parameters receive gradients.
-
-    This is the check that distinguishes a real training pipeline from one that
-    merely prints a loss. Used by the smoke test and the tiny-model tests.
-
-    Returns:
-        Diagnostics: loss value, how many LoRA parameters got a non-zero gradient.
-
-    Raises:
-        ModelCompatibilityError: when no LoRA parameter receives a gradient.
-    """
+    """Run one forward/backward pass and confirm LoRA parameters receive gradients."""
     import torch
 
     model.train()

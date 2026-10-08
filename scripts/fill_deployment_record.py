@@ -130,12 +130,7 @@ def _render(value: Any) -> str:
 
 
 def fill_text(text: str, values: dict[str, Any]) -> tuple[str, list[str]]:
-    """The record with its ``null`` lines filled, and what changed.
-
-    Raises:
-        ConfigError: a key is missing or appears twice, or already holds a
-            different value.
-    """
+    """The record with its ``null`` lines filled, and what changed."""
     lines = text.splitlines(keepends=True)
     changed = []
     for key, value in _targets(values):

@@ -1,13 +1,4 @@
-"""Trainer callbacks: structured logging, memory tracking, checkpoint metadata.
-
-Spec section 31 requires structured logs carrying experiment id, stage, step,
-loss, learning rate, metrics, checkpoint and GPU information — and explicitly
-requires *not* logging raw examples. These callbacks emit JSONL events with
-numbers and identifiers only; no example text ever passes through them.
-
-``transformers`` is imported lazily so the module can be imported for inspection
-in the light environment.
-"""
+"""Trainer callbacks: structured logging, memory tracking, checkpoint metadata."""
 
 from __future__ import annotations
 
@@ -26,11 +17,7 @@ logger = get_logger(__name__)
 
 
 def _base_callback_class() -> Any:
-    """Return ``transformers.TrainerCallback``, or a stub when unavailable.
-
-    The stub keeps this module importable (and unit-testable) without
-    transformers, while real training always gets the real base class.
-    """
+    """Return ``transformers.TrainerCallback``, or a stub when unavailable."""
     try:
         from transformers import TrainerCallback
 
@@ -47,11 +34,7 @@ TrainerCallbackBase = _base_callback_class()
 
 
 class StructuredLoggingCallback(TrainerCallbackBase):  # type: ignore[misc,valid-type]
-    """Write training events to a JSONL stream.
-
-    Privacy: only scalars, identifiers and configuration values are recorded.
-    Example content is never logged, per spec section 31.
-    """
+    """Write training events to a JSONL stream."""
 
     def __init__(self, event_logger: EventLogger, *, experiment_id: str) -> None:
         self.events = event_logger
@@ -79,9 +62,7 @@ class StructuredLoggingCallback(TrainerCallbackBase):  # type: ignore[misc,valid
     ) -> None:
         if not logs:
             return
-        # Build one payload rather than splatting two dicts: `logs` already
-        # carries keys such as `epoch`, which would collide with an explicit
-        # keyword and raise TypeError mid-training.
+        # One payload, not two splatted dicts: `logs` carries `epoch`, which would raise TypeError.
         payload: dict[str, Any] = {
             "step": getattr(state, "global_step", None),
             "epoch": round(getattr(state, "epoch", 0.0) or 0.0, 4),
@@ -119,11 +100,7 @@ class StructuredLoggingCallback(TrainerCallbackBase):  # type: ignore[misc,valid
 
 
 class MemoryMonitorCallback(TrainerCallbackBase):  # type: ignore[misc,valid-type]
-    """Track peak VRAM and warn as the run approaches the limit.
-
-    An early warning is worth a lot on Colab: an OOM three hours into a run that
-    could have been avoided by a shorter sequence length is a wasted session.
-    """
+    """Track peak VRAM and warn as the run approaches the limit."""
 
     def __init__(self, *, warn_threshold: float = 0.92, log_every: int = 50) -> None:
         self.warn_threshold = warn_threshold
@@ -153,12 +130,7 @@ class MemoryMonitorCallback(TrainerCallbackBase):  # type: ignore[misc,valid-typ
 
 
 class CheckpointMetadataCallback(TrainerCallbackBase):  # type: ignore[misc,valid-type]
-    """Attach KLEOS metadata to each checkpoint and enforce retention.
-
-    Writing experiment context into the checkpoint means a directory recovered
-    from Drive later still identifies the run, the dataset and the config that
-    produced it.
-    """
+    """Attach KLEOS metadata to each checkpoint and enforce retention."""
 
     def __init__(
         self,
@@ -200,8 +172,7 @@ class CheckpointMetadataCallback(TrainerCallbackBase):  # type: ignore[misc,vali
             except OSError as exc:  # pragma: no cover
                 logger.warning("Could not update manifest after checkpoint: %s", exc)
 
-        # Retention with a floor: never leave zero checkpoints behind, and never
-        # delete the checkpoint load_best_model_at_end will load (H-F9).
+        # Never leave zero checkpoints, nor delete the one load_best_model_at_end loads (H-F9).
         prune_checkpoints(
             self.output_dir,
             keep=self.save_total_limit,
@@ -210,11 +181,7 @@ class CheckpointMetadataCallback(TrainerCallbackBase):  # type: ignore[misc,vali
 
 
 class ProgressCallback(TrainerCallbackBase):  # type: ignore[misc,valid-type]
-    """Concise console progress with an ETA.
-
-    transformers' own progress bar renders poorly in a Colab cell that is being
-    scrolled; a periodic line is easier to read and survives cell re-rendering.
-    """
+    """Concise console progress with an ETA."""
 
     def __init__(self, *, log_every: int = 10) -> None:
         self.log_every = log_every
@@ -256,11 +223,7 @@ class ProgressCallback(TrainerCallbackBase):  # type: ignore[misc,valid-type]
 
 
 class EarlyOOMGuardCallback(TrainerCallbackBase):  # type: ignore[misc,valid-type]
-    """Fail fast when the first steps already exhaust memory.
-
-    Discovering at step 3 that the configuration cannot fit is far better than
-    discovering it at step 300 after a checkpoint has been written.
-    """
+    """Fail fast when the first steps already exhaust memory."""
 
     def __init__(self, *, check_steps: int = 5, threshold: float = 0.97) -> None:
         self.check_steps = check_steps

@@ -1,16 +1,4 @@
-"""Training-side changes made for KLEOS Logos, testable without torch.
-
-* The pre-flight memory check is sized by the longest real training sequence,
-  measured with the model's own tokenizer before any weights load.
-* ``--feasibility record`` trains on without enforcing the estimate (the memory
-  probe decides); ``enforce`` stays the default.
-* The gradient check runs at the configured batch size.
-* The smoke gate turns a smoke run's manifest into GO or NO-GO.
-
-The real training loop, the memory probe and the text-only view on real weights
-are covered by the torch tests (``test_training_tiny_model.py`` and
-``test_ministral3_text_view.py``).
-"""
+"""Training-side changes made for KLEOS Logos, testable without torch."""
 
 from __future__ import annotations
 
@@ -91,11 +79,6 @@ class TestGradientCheckBatch:
         trainer._sample_batch(rows, collator, size=3)  # type: ignore[arg-type]
         trainer._sample_batch(rows, collator, size=9)  # type: ignore[arg-type]
         assert seen == [1, 3, 5]
-
-
-# ---------------------------------------------------------------------------
-# scripts/train.py
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -219,11 +202,6 @@ class TestTrainScript:
             self.args(dataset_dir, tmp_path, "--feasibility", "record", "--skip-memory-probe")
         )
         assert calls["probe_memory"] is False
-
-
-# ---------------------------------------------------------------------------
-# scripts/check_smoke_gate.py
-# ---------------------------------------------------------------------------
 
 
 def smoke_manifest(**changes: Any) -> dict[str, Any]:

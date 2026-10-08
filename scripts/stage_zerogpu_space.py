@@ -127,8 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     api = HfApi(token=token)
-    # The Space is created by hand, where its hardware (ZeroGPU) and visibility
-    # are chosen. This script never creates one, and never changes either.
+    # The Space is made by hand; this never creates one or changes its hardware or visibility.
     info = api.space_info(args.space)
     hardware = getattr(getattr(info, "runtime", None), "hardware", None)
     print(f"\n  space        : {args.space} ({'private' if info.private else 'PUBLIC'})")

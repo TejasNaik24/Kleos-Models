@@ -1,9 +1,4 @@
-"""Actionable exception types.
-
-Spec section 32: an error must tell the user what happened *and* what to do next.
-Every exception here carries an optional list of suggested remedies which the
-CLI renders as a numbered list.
-"""
+"""Actionable exception types."""
 
 from __future__ import annotations
 
@@ -11,13 +6,7 @@ from collections.abc import Sequence
 
 
 class KleosError(Exception):
-    """Base class for all KLEOS errors.
-
-    Args:
-        message: What went wrong, in one sentence.
-        details: Optional key/value diagnostics printed verbatim.
-        suggestions: Concrete next actions, most likely fix first.
-    """
+    """Base class for all KLEOS errors."""
 
     def __init__(
         self,
@@ -63,12 +52,7 @@ class LeakageError(KleosError):
 
 
 class ModelCompatibilityError(KleosError):
-    """The requested model cannot be used the way the config asks.
-
-    Raised for genuine architectural mismatches: an auto-class that cannot load
-    the checkpoint, LoRA target modules absent from the model, or a reasoning
-    mode the checkpoint does not support.
-    """
+    """The requested model cannot be used the way the config asks."""
 
 
 class MissingDependencyError(KleosError):

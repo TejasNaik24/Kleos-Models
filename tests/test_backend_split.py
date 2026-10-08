@@ -1,15 +1,4 @@
-"""The prepare / generate_ids / finish split generates exactly what generate() did.
-
-ZeroGPU bills GPU time, so the Space runs only the middle step on a GPU and the
-other two on the CPU, with the prepared prompt pickled across a process
-boundary in between. This must be a pure refactor: the frozen 9/9 match was
-measured through the monolithic ``generate`` this replaced. Here the split and
-a verbatim copy of the pre-split method run side by side on a tiny random
-Mistral with a real (offline) fast tokenizer, and must agree token for token.
-
-Needs torch and transformers; skipped without them. It runs inside the Hermes
-Docker image on CPU (see docs/deployment.md, "Verification record").
-"""
+"""The prepare / generate_ids / finish split generates exactly what generate() did."""
 
 from __future__ import annotations
 
@@ -138,19 +127,13 @@ def test_the_split_reproduces_the_monolithic_generate(backend, messages, max_new
 
 @pytest.mark.parametrize("messages", PROMPTS)
 def test_a_prepared_prompt_survives_the_trip_to_a_gpu_worker(backend, messages):
-    # ZeroGPU pickles the arguments of the GPU function into a forked worker.
-    # This test pickles its own freshly built object; nothing untrusted.
+    # ZeroGPU pickles GPU-function arguments into a forked worker; this object is our own.
     config = GenerationConfig(do_sample=False, temperature=0.0, max_new_tokens=12)
     prepared = backend.prepare(messages)
     shipped = pickle.loads(pickle.dumps(prepared))
     ids = backend.generate_ids(shipped, config)
     assert all(type(token) is int for token in ids)
     assert backend.finish(prepared, ids).text == backend.generate(messages, config).text
-
-
-# ---------------------------------------------------------------------------
-# A thinking model (Logos v0.0.2): the trace is split off on token ids
-# ---------------------------------------------------------------------------
 
 
 def build_thinking_backend() -> Any:

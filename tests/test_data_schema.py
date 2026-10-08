@@ -1,9 +1,4 @@
-"""Data-contract tests (spec §30).
-
-Valid examples are accepted; malformed ones are rejected with a useful message.
-The published JSON Schema is checked against the pydantic models so the two
-cannot drift apart.
-"""
+"""Data-contract tests (spec §30)."""
 
 from __future__ import annotations
 
@@ -199,8 +194,7 @@ class TestReasoningStripping:
         assert strip_reasoning(text) == "The answer is alpha."
 
     def test_dangling_close_tag_is_removed(self):
-        # Qwen Thinking templates pre-open <think>, so generated text often has
-        # only the closing tag.
+        # Templates that pre-open <think> leave only the closing tag in the output.
         text = "reasoning that was never opened</think>The answer is beta."
         assert strip_reasoning(text) == "The answer is beta."
 

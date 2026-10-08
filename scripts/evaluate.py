@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     output = args.output or Path(config.training.output_dir) / f"eval_{args.arm}.json"
     partial = partial_path(output)
 
-    # --- identity: everything that could change a generation ----------------
+    # Identity: everything that could change a generation.
     from kleos_models.compat import library_versions
     from kleos_models.experiments.environment import capture_git_info
     from kleos_models.models.feasibility import probe_gpu
@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     digest = identity_sha256(identity)
 
-    # --- never overwrite a finished result by accident ------------------------
+    # Never overwrite a finished result by accident.
     if args.overwrite:
         partial.unlink(missing_ok=True)
     elif output.exists():
@@ -257,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\n" + result.render())
 
     result.save(output, include_responses=not args.no_responses)
-    # The finished result holds every generation; the partial has done its job.
+    # The finished result supersedes the partial.
     partial.unlink(missing_ok=True)
 
     manifest = build_manifest(

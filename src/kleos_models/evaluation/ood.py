@@ -1,23 +1,4 @@
-"""Out-of-distribution evaluation (spec section 23).
-
-Spec section 36 forbids claiming OOD generalization without OOD evaluation, and
-spec section 23 forbids collapsing everything into one score. This module enforces
-both by construction: it reports
-
-``in_distribution_score``
-``ood_score``
-``generalization_gap``
-
-as three separate numbers, plus a per-shift breakdown. There is deliberately no
-"overall" field, because a single blended number is exactly what hides the case
-that matters — a model that improves in-distribution while degrading OOD.
-
-Shift kinds come from :data:`kleos_models.constants.OOD_SHIFT_KINDS`: unseen
-entities, unseen domains, unseen formats, unseen source types, context-length
-shift, reordered evidence, conflicting evidence.
-
-This module imports no torch.
-"""
+"""Out-of-distribution evaluation (spec section 23)."""
 
 from __future__ import annotations
 
@@ -165,18 +146,7 @@ def build_ood_report(
     shift_kinds: Sequence[str | None] | None = None,
     metric_name: str = "score",
 ) -> OODReport:
-    """Partition per-example scores into in-distribution and OOD populations.
-
-    Args:
-        scores: One score per evaluated example.
-        split_tags: ``"in_distribution"`` or ``"ood"`` per example. Anything else
-            (including ``"capability"``) is excluded from both populations.
-        shift_kinds: Optional OOD shift label per example.
-        metric_name: Name of the metric being partitioned.
-
-    Returns:
-        An :class:`OODReport`.
-    """
+    """Partition per-example scores into in-distribution and OOD populations."""
     if len(scores) != len(split_tags):
         raise ValueError(
             f"scores and split_tags must be the same length: {len(scores)} vs {len(split_tags)}"
@@ -241,11 +211,7 @@ def build_ood_report(
 
 
 def compare_ood_reports(base: OODReport, finetuned: OODReport) -> dict[str, Any]:
-    """Compare two OOD reports (base vs fine-tuned).
-
-    Surfaces the case spec section 58 calls the most interesting result: an
-    in-distribution gain that comes with an OOD loss.
-    """
+    """Compare two OOD reports (base vs fine-tuned)."""
     in_delta = finetuned.in_distribution_score - base.in_distribution_score
     ood_delta = finetuned.ood_score - base.ood_score
     gap_delta = finetuned.generalization_gap - base.generalization_gap

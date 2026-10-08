@@ -1,16 +1,4 @@
-"""Corrected evaluation measures (findings H-F5, H-F7, H-F11 to H-F14).
-
-The corrections are computed *beside* the original numbers: every version-1 field
-keeps its definition and value. What is pinned here:
-
-* the cluster bootstrap is deterministic, refuses to estimate from too few
-  groups, and renders a zero p-value as a bound;
-* consistency by ``group_id`` and by family, each with an oracle ceiling, so a
-  metric that even a perfect model fails is visible as such;
-* the answerable and should-decline subsets;
-* the runner's version-2 record: group, subset and grader details per example,
-  the benchmark's identity, generation statistics, atomic writes.
-"""
+"""Corrected evaluation measures (findings H-F5, H-F7, H-F11 to H-F14)."""
 
 from __future__ import annotations
 
@@ -45,10 +33,6 @@ from kleos_models.evaluation.runner import (
     write_json_atomic,
 )
 from kleos_models.inference.backends import EchoBackend, GenerationOutput
-
-# ---------------------------------------------------------------------------
-# Cluster bootstrap
-# ---------------------------------------------------------------------------
 
 
 class TestClusterBootstrap:
@@ -106,11 +90,6 @@ class TestClusterBootstrap:
     def test_p_value_rendering(self):
         assert render_p_value(0.0123) == "p=0.0123"
         assert render_p_value(None) == "p n/a"
-
-
-# ---------------------------------------------------------------------------
-# Corrections over records
-# ---------------------------------------------------------------------------
 
 
 def record(
@@ -216,7 +195,7 @@ class TestSubsetsAndIdentity:
         stored = [{"example_id": "ex-0", "task": "tool_routing", "score": 1.0}]
         (annotated,) = annotate_records(stored, index)
         assert annotated["group_id"] == "grp-0" and annotated["subset"] == ANSWERABLE
-        assert "group_id" not in stored[0]  # the input is not mutated
+        assert "group_id" not in stored[0]
 
     @pytest.mark.parametrize(
         "stored",
@@ -313,11 +292,6 @@ class TestCorrectedBlock:
     def test_the_block_renders(self):
         text = render_corrected(build_corrected(self.rows()))
         assert "answerable" in text and "oracle" in text
-
-
-# ---------------------------------------------------------------------------
-# The runner's version-2 record
-# ---------------------------------------------------------------------------
 
 
 def benchmark() -> list[EvaluationExample]:

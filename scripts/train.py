@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     setup_logging(args)
 
-    # --- 1-2. load and validate config -------------------------------------
+    # Spec §15 steps 1-2: config.
     print_header("KLEOS training")
     config = load_config(
         args.config,
@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
 
     seeding = set_global_seed(config.seed)
 
-    # --- 7-8. dataset -------------------------------------------------------
+    # Steps 7-8: dataset.
     print("\n── dataset " + "─" * 52)
     bundle = load_dataset_bundle(config.dataset, strict=True, require_splits=("train",))
     print(f"  version : {bundle.version}")
@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  leakage : {len(cross)} cross-split finding(s)")
         enforce_leakage_policy(leakage, fail_on=args.leakage_policy)
 
-    # --- 3. environment and feasibility ------------------------------------
+    # Step 3: environment and feasibility.
     manifest = build_manifest(
         config,
         kind="training",
@@ -174,9 +174,6 @@ def main(argv: list[str] | None = None) -> int:
     manifest.seeding = seeding
     print(f"\n  experiment id : {manifest.experiment_id}")
     if args.resume_from_checkpoint == "auto" and not args.experiment_id:
-        # 'auto' searches this run's own output directory. Without a pinned id
-        # that directory is brand new, so 'auto' quietly finds no checkpoint and
-        # restarts from zero — the failure this warning exists to prevent.
         print(
             "  ! --resume-from-checkpoint auto with a generated experiment id: "
             "this run has its own new directory, so 'auto' will find no "
@@ -189,10 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     from kleos_models.models.feasibility import assess_feasibility, enforce_feasibility
     from kleos_models.training.trainer import measure_sequence_lengths
 
-    # The activation peak follows the longest example actually present, so size
-    # the estimate from the data: tokenize the train split (tokenizer only, no
-    # weights). Without a tokenizer only a dry run may continue, on the worst
-    # case of model.max_seq_length.
+    # Tokenizer only, no weights; only a dry run may fall back to max_seq_length.
     lengths = None
     try:
         lengths = measure_sequence_lengths(config, bundle)
@@ -231,8 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.feasibility == "record":
-        # Recorded, not enforced; and nothing is adjusted either, so the run
-        # uses exactly the configuration it was given.
+        # Nothing is adjusted either: the run uses exactly the given configuration.
         adjustments = []
         manifest.note(
             f"--feasibility record: assessed {feasibility.tier.value} "
@@ -249,7 +242,6 @@ def main(argv: list[str] | None = None) -> int:
         manifest.add_adjustment(
             adjustment.field, adjustment.original, adjustment.adjusted, adjustment.reason
         )
-        # Apply the recorded adjustment to the live config.
         if adjustment.field == "model.max_seq_length":
             config.model.max_seq_length = adjustment.adjusted
         elif adjustment.field == "training.gradient_checkpointing":
@@ -261,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
             factor = max(1, original // max(1, adjustment.adjusted))
             config.training.gradient_accumulation_steps *= factor
 
-    # --- 4-17. train --------------------------------------------------------
+    # Steps 4-17: train.
     output_dir = Path(config.training.output_dir) / manifest.experiment_id
     output_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(args, log_file=output_dir / TRAINING_LOG_FILENAME)
@@ -278,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
         longest_sequence=longest_sequence,
     )
 
-    # --- 18. report artifacts ----------------------------------------------
+    # Step 18: report artifacts.
     print("\n" + result.render())
     return 0
 

@@ -1,30 +1,4 @@
-"""Train/validation/test splitting (spec section 12).
-
-Random splitting is the default only for development. A random split of a dataset
-containing paraphrases and reordered variants of the same scenario puts near-copies
-on both sides of the boundary, and the resulting "generalization" number measures
-nothing.
-
-The held-out strategies exist to make generalization claims checkable:
-
-``random``
-    Development only.
-``group``
-    Related examples stay together via an explicit grouping key.
-``entity_holdout``
-    Test contains entities never seen in training — does behaviour transfer?
-``domain_holdout``
-    Test contains unseen domains.
-``format_holdout``
-    Train on one presentation format, test on another.
-``scenario_family_holdout``
-    Logically related scenarios never straddle the split.
-
-Every strategy is deterministic given a seed, and every result is checked for
-overlap before being returned.
-
-This module imports no torch.
-"""
+"""Train/validation/test splitting (spec section 12)."""
 
 from __future__ import annotations
 
@@ -84,12 +58,7 @@ class SplitResult:
 
 
 def _stable_rank(key: str, seed: int) -> float:
-    """Deterministic pseudo-random value in [0, 1) for a key.
-
-    Hashing rather than shuffling means an example's assignment depends only on
-    its key and the seed — adding new examples does not reshuffle existing ones.
-    That property matters when a dataset grows between runs.
-    """
+    """Deterministic pseudo-random value in [0, 1) for a key."""
     digest = hashlib.sha256(f"{seed}:{key}".encode()).digest()
     return int.from_bytes(digest[:8], "big") / float(1 << 64)
 
@@ -196,13 +165,7 @@ def _split_holdout(
     attribute: str,
     strategy: str,
 ) -> SplitResult:
-    """Hold out whole attribute values for the test split.
-
-    Validation is carved out of the *remaining* (seen-attribute) examples, so
-    validation stays in-distribution while test is genuinely out-of-distribution.
-    That asymmetry is intentional: early stopping on OOD data would leak the very
-    thing we are trying to measure.
-    """
+    """Hold out whole attribute values for the test split."""
     by_value: dict[str, list[TrainingExample]] = defaultdict(list)
     for example in examples:
         by_value[_holdout_attribute(example, attribute)].append(example)
@@ -230,8 +193,7 @@ def _split_holdout(
                 suggestions=["Fix split.holdout_values, or leave it empty to choose by seed."],
             )
     else:
-        # Choose deterministically: take values in stable-hash order until the
-        # test split is at least the configured fraction.
+        # Deterministic: take values in stable-hash order until the test fraction is reached.
         ranked = sorted(values, key=lambda v: _stable_rank(v, config.seed))
         target = max(1, int(len(examples) * config.test_fraction))
         holdout = []
@@ -256,7 +218,6 @@ def _split_holdout(
     for value, members in sorted(by_value.items()):
         (test if value in holdout else remaining).extend(members)
 
-    # Split the remainder into train/validation, keeping groups intact.
     remainder_fraction = config.train_fraction + config.validation_fraction
     inner = SplitConfig(
         strategy="group",
@@ -315,16 +276,7 @@ def split_examples(
     *,
     verify: bool = True,
 ) -> SplitResult:
-    """Partition examples according to the configured strategy.
-
-    Args:
-        examples: Examples to split.
-        config: Split strategy, seed and fractions.
-        verify: Run the post-hoc overlap and determinism assertions.
-
-    Raises:
-        DatasetIntegrityError: when the split is impossible or produces overlap.
-    """
+    """Partition examples according to the configured strategy."""
     if not examples:
         raise DatasetIntegrityError(
             "Cannot split an empty dataset.",
@@ -356,14 +308,7 @@ def split_examples(
 
 
 def verify_split(result: SplitResult, *, expected_total: int | None = None) -> None:
-    """Assert a split is well-formed.
-
-    Checks that no example id appears in two splits, that nothing was lost, and
-    that grouped strategies really kept groups together.
-
-    Raises:
-        DatasetIntegrityError: on any violation.
-    """
+    """Assert a split is well-formed."""
     ids = {name: {e.id for e in result.split(name)} for name in ("train", "validation", "test")}
 
     for left, right in (("train", "validation"), ("train", "test"), ("validation", "test")):

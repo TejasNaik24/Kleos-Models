@@ -1,30 +1,4 @@
-"""Data leakage detection (spec section 11).
-
-The failure this module exists to prevent: a model appears to generalize because
-an evaluation example is a near-copy of something it trained on. That produces a
-number that looks like a research result and is not one.
-
-Detectors, cheapest first:
-
-``exact``
-    Byte-identical conversations.
-``normalized``
-    Identical after case-folding, whitespace collapse and punctuation stripping.
-``near_duplicate``
-    High character-n-gram Jaccard similarity, via MinHash + LSH banding so the
-    cost stays near-linear instead of quadratic.
-``id_collision``
-    The same id in more than one split.
-``scenario_repeat``
-    The same scenario family on both sides of the split boundary.
-``entity_leak``
-    Entities held out of training that nevertheless appear in it.
-
-Implemented in pure Python — no extra dependency for a check that must always be
-runnable. Output is machine-readable JSON plus a Markdown summary.
-
-This module imports no torch.
-"""
+"""Data leakage detection (spec section 11)."""
 
 from __future__ import annotations
 
@@ -47,7 +21,7 @@ logger = get_logger(__name__)
 
 #: Character n-gram width for near-duplicate shingling.
 SHINGLE_SIZE = 5
-#: Number of MinHash permutations. More = better recall, linearly more work.
+#: MinHash permutations; more improves recall at linear cost.
 MINHASH_PERMUTATIONS = 64
 #: LSH bands. bands × rows must equal MINHASH_PERMUTATIONS.
 LSH_BANDS = 16
@@ -93,13 +67,7 @@ class _HasText(Protocol):
 
 
 def normalize_text(text: str) -> str:
-    """Aggressively normalize for duplicate detection.
-
-    Case-folds, strips accents, removes punctuation, collapses whitespace and
-    replaces digit runs with a placeholder — so "Deadline: Mar 3" and
-    "deadline mar 7" normalize to the same string. That is intentional: changing
-    only a number does not make a scenario new.
-    """
+    """Aggressively normalize for duplicate detection."""
     decomposed = unicodedata.normalize("NFKD", text)
     stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
     lowered = stripped.casefold()
@@ -363,20 +331,7 @@ def check_leakage(
     detect_near_duplicates: bool = True,
     within_split: bool = True,
 ) -> LeakageReport:
-    """Run every leakage detector across the supplied splits.
-
-    Args:
-        splits: Mapping of split name to examples, e.g.
-            ``{"train": [...], "test": [...]}``.
-        threshold: Jaccard similarity at or above which a pair is a near duplicate.
-        detect_near_duplicates: Run the MinHash stage. Disable for very large
-            datasets where only exact checks are affordable.
-        within_split: Also report duplicates inside a single split. Those are not
-            leakage but they do inflate effective dataset size.
-
-    Returns:
-        A :class:`LeakageReport`.
-    """
+    """Run every leakage detector across the supplied splits."""
     items: list[_Item] = []
     examined: dict[str, int] = {}
     for split_name, examples in splits.items():
@@ -405,7 +360,6 @@ def check_leakage(
             )
         )
 
-    # --- id collisions ------------------------------------------------------
     by_id: dict[str, list[_Item]] = defaultdict(list)
     for item in items:
         by_id[item.id].append(item)
@@ -419,7 +373,6 @@ def check_leakage(
                 f"id {example_id!r} appears in multiple splits",
             )
 
-    # --- exact duplicates ---------------------------------------------------
     by_hash: dict[str, list[_Item]] = defaultdict(list)
     for item in items:
         by_hash[item.exact_hash].append(item)
@@ -431,7 +384,6 @@ def check_leakage(
             record(LeakageKind.EXACT_DUPLICATE, group[0], group[index], 1.0)
             exact_pairs.add(tuple(sorted((group[0].id, group[index].id))))  # type: ignore[arg-type]
 
-    # --- normalized duplicates ---------------------------------------------
     by_normalized: dict[str, list[_Item]] = defaultdict(list)
     for item in items:
         by_normalized[item.normalized].append(item)
@@ -450,7 +402,6 @@ def check_leakage(
                 "identical after case/punctuation/number normalization",
             )
 
-    # --- near duplicates via MinHash + LSH ---------------------------------
     if detect_near_duplicates:
         buckets: dict[tuple[int, tuple[int, ...]], list[_Item]] = defaultdict(list)
         for item in items:
@@ -460,8 +411,7 @@ def check_leakage(
         candidates: set[tuple[int, int]] = set()
         for bucket in buckets.values():
             if len(bucket) < 2 or len(bucket) > 200:
-                # Huge buckets mean degenerate/empty text; comparing them all is
-                # quadratic and uninformative.
+                # Huge buckets mean degenerate text; comparing them is quadratic and useless.
                 continue
             for i in range(len(bucket)):
                 for j in range(i + 1, len(bucket)):
@@ -485,7 +435,6 @@ def check_leakage(
                     f"character-{SHINGLE_SIZE}-gram Jaccard >= {threshold}",
                 )
 
-    # --- scenario families straddling splits -------------------------------
     by_family: dict[str, dict[str, list[_Item]]] = defaultdict(lambda: defaultdict(list))
     for item in items:
         if item.scenario_family:
@@ -504,7 +453,6 @@ def check_leakage(
                 f"scenario_family {family!r} spans splits {split_names}",
             )
 
-    # --- entities marked unseen that were actually trained on --------------
     train_entities = {
         item.entities
         for item in items
@@ -533,17 +481,7 @@ def check_leakage(
 
 
 def enforce_leakage_policy(report: LeakageReport, *, fail_on: str = "fatal") -> None:
-    """Raise when a report violates the configured policy.
-
-    Args:
-        report: The scan result.
-        fail_on: ``"none"`` never raises, ``"fatal"`` raises on cross-split exact
-            or normalized duplicates and id collisions, ``"any"`` raises on any
-            cross-split finding at all.
-
-    Raises:
-        LeakageError: when the policy is violated.
-    """
+    """Raise when a report violates the configured policy."""
     if fail_on == "none":
         return
 

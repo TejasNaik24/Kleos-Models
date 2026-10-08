@@ -1,19 +1,9 @@
-# ---------------------------------------------------------------------------
-# Getting Hermes onto Hugging Face: the private package and the ZeroGPU Space.
+# Getting Hermes onto Hugging Face: a private package repo (adapter, frozen tokenizer,
+# manifest; no checkpoints or data) and a Space repo (app, README, requirements, serving
+# record; no weights, data or secrets, which arrive as Space secrets and pinned downloads).
 #
-# Two artifacts leave this machine, and each has one job:
-#
-#   package repo (PRIVATE model repo)  adapter + frozen tokenizer + manifest.
-#                                      Nothing else: no checkpoints, no data.
-#   Space repo                         app.py, README.md, requirements.txt and
-#                                      the serving record. No weights, no data,
-#                                      no secrets — those arrive as Space
-#                                      secrets and pinned downloads.
-#
-# Everything here is a check or a pure transformation, so it is testable
-# without network access. scripts/upload_deployment_package.py and
+# Checks and pure transformations only; scripts/upload_deployment_package.py and
 # scripts/stage_zerogpu_space.py do the I/O.
-# ---------------------------------------------------------------------------
 
 from __future__ import annotations
 
@@ -40,15 +30,10 @@ from kleos_models.serving.profile import profile_from_record
 
 _PINNED = re.compile(r"^[0-9a-f]{40}$")
 
-# ---------------------------------------------------------------------------
-# The package
-# ---------------------------------------------------------------------------
 
 #: Human-readable files the build writes beside the hashed artifacts.
 PACKAGE_DOC_FILES = frozenset({"deployment/README.md"})
-#: Text files scanned for secrets and personal data before upload. The weights
-#: are binary, and the tokenizer files are pinned by hash to the frozen
-#: research copies, so neither can carry anything new.
+#: Text files scanned before upload; weights are binary and tokenizer files are hash-pinned.
 _SCANNED_SUFFIXES = frozenset({".json", ".yaml", ".yml", ".md", ".txt"})
 
 
@@ -69,16 +54,7 @@ def git_blob_sha1(path: Path) -> str:
 
 
 def package_upload_files(package_dir: Path | str) -> tuple[DeploymentManifest, list[str]]:
-    """Verify a package and list exactly the files that may be uploaded.
-
-    Fails closed on anything unexpected: a file the manifest does not record
-    (a stray checkpoint, an optimizer state, a dataset shard, ``.DS_Store``),
-    a name on the forbidden list, or text matching the sensitive-data scanner.
-
-    Returns:
-        The verified manifest, and every file to upload as a POSIX path
-        relative to the package root.
-    """
+    """Verify a package and list exactly the files that may be uploaded."""
     root = Path(package_dir)
     manifest = verify_package(root)
 
@@ -118,11 +94,7 @@ def package_upload_files(package_dir: Path | str) -> tuple[DeploymentManifest, l
 def compare_remote_files(
     package_dir: Path | str, files: list[str], remote: dict[str, RemoteFile]
 ) -> list[str]:
-    """Check the Hub holds exactly the bytes that were verified locally.
-
-    LFS files are compared by sha256 (the same hash the manifest uses);
-    regular files by git blob id. Returns human-readable problems.
-    """
+    """Check the Hub holds exactly the bytes that were verified locally."""
     root = Path(package_dir)
     problems: list[str] = []
     for relative in files:
@@ -146,10 +118,6 @@ def compare_remote_files(
     return problems
 
 
-# ---------------------------------------------------------------------------
-# The Space
-# ---------------------------------------------------------------------------
-
 SPACE_SOURCE_DIR = Path("deploy") / "zerogpu-space"
 REQUIREMENTS_TEMPLATE = "requirements.txt.template"
 RECORD_NAME = "hermes_record.yaml"
@@ -157,10 +125,8 @@ COMMIT_PLACEHOLDER = "{{KLEOS_MODELS_COMMIT}}"
 #: The Space repository holds these files and nothing else.
 STAGED_FILES = ("README.md", "app.py", "requirements.txt", RECORD_NAME)
 
-#: The base checkpoint files ZeroGPU bakes into the image: the Hugging Face
-#: shards and their configs. Not consolidated.safetensors, which is the same
-#: 24.5 GB of weights in Mistral's native format, and not the tokenizer, which
-#: Hermes takes from its own frozen package.
+#: Base files baked into the image: the HF shards and configs. Not consolidated.safetensors
+#: (the same 24.5 GB in Mistral's format), nor the tokenizer, which Hermes' package supplies.
 BASE_PRELOAD_FILES = frozenset(
     {
         "config.json",
@@ -169,8 +135,7 @@ BASE_PRELOAD_FILES = frozenset(
         *(f"model-{i:05d}-of-00005.safetensors" for i in range(1, 6)),
     }
 )
-#: What the Space must run on: the Gradio version this was written against and
-#: the Python the torch wheel is built for.
+#: The Gradio version this was written against and the Python the torch wheel targets.
 SPACE_SDK = {"sdk": "gradio", "sdk_version": "6.28.0", "python_version": "3.12"}
 
 
@@ -188,11 +153,7 @@ def parse_front_matter(text: str) -> dict[str, Any]:
 
 
 def check_space_readme(readme: str, record: dict[str, Any]) -> list[str]:
-    """Problems with the Space configuration against the serving record.
-
-    ``record`` is the record's ``deployment:`` mapping. The files to preload
-    are its serving profile's ``base_files``: Hermes' Nemo shards by default.
-    """
+    """Problems with the Space configuration against the serving record."""
     config = parse_front_matter(readme)
     problems: list[str] = []
     for key, want in {**SPACE_SDK, "app_file": "app.py"}.items():
@@ -245,11 +206,7 @@ def stage_space(
     *,
     commit: str,
 ) -> list[Path]:
-    """Render the Space repository into ``out_dir``, checked and allowlisted.
-
-    ``out_dir`` must not exist or be empty, so nothing left over from earlier
-    work can ride along into the Space.
-    """
+    """Render the Space repository into ``out_dir``, checked and allowlisted."""
     source = Path(source_dir)
     out = Path(out_dir)
     if out.exists() and any(out.iterdir()):

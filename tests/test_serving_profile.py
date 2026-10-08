@@ -1,10 +1,4 @@
-"""A model's serving names and options come from its deployment record.
-
-Hermes was the only served model, so its names were constants: the `HERMES_*`
-secrets, the `x-hermes-key` header, the Space folder, the base files baked into
-the Space image. A record's optional `serving` block now carries them per model.
-With no block, every value is today's Hermes constant, so Hermes is unchanged.
-"""
+"""A model's serving names and options come from its deployment record."""
 
 from __future__ import annotations
 

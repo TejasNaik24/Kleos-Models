@@ -92,7 +92,6 @@ def main(argv: list[str] | None = None) -> int:
         print("\n! Random split: development use only. Near-duplicate scenarios can")
         print("  land on both sides, which inflates apparent generalization.")
 
-    # Verify the split did not leak before writing it.
     leakage = check_leakage(
         {name: result.split(name) for name in ("train", "validation", "test") if result.split(name)}
     )

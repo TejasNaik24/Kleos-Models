@@ -1,12 +1,4 @@
-"""The Hermes status contract: what KLEOS branches on when Hermes does not answer.
-
-The values are an API between this repository and KLEOS, so they are pinned
-here. The ZeroGPU cases use the exact titles and messages that `spaces` 0.51.3
-raises (spaces/zero/client.py and wrappers.py), assembled the way that code
-assembles them, so a classifier that drifts from the real strings fails here
-rather than in production, where every misfiled quota error would surface to a
-user as "Hermes could not generate a response".
-"""
+"""The Hermes status contract: what KLEOS branches on when Hermes does not answer."""
 
 from __future__ import annotations
 
@@ -84,8 +76,7 @@ ZEROGPU_CASES = [
         id="queue-timeout",
     ),
     pytest.param(
-        # A caller without a quota token who times out in the queue: spaces
-        # uses the quota title, but nothing was used up.
+        # Queue timeout without a quota token: spaces uses the quota title, but none was used.
         "ZeroGPU quota exceeded",
         "No GPU was available after 60s. "
         "Try re-running outside of examples if it happened after clicking one",
@@ -204,7 +195,6 @@ class TestResponseShapes:
             error_response(HermesStatus.READY, request_id=None)
 
     def test_no_countdown_is_invented(self):
-        # Without a provider-stated figure there is no retry time at all.
         assert (
             error_response(HermesStatus.QUOTA_EXHAUSTED, request_id=None)["retry_after_seconds"]
             is None

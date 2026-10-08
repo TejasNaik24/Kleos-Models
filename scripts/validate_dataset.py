@@ -87,7 +87,6 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 0
     splits: dict[str, list] = {}
 
-    # --- training splits ----------------------------------------------------
     if args.dataset:
         found = _discover_splits(args.dataset)
         if not found:
@@ -121,7 +120,6 @@ def main(argv: list[str] | None = None) -> int:
                 exit_code = 1
             splits[split_name] = examples
 
-    # --- evaluation benchmark ----------------------------------------------
     if args.eval_path:
         print(f"\n── evaluation: {args.eval_path.name} " + "─" * 30)
         eval_examples, eval_load = load_examples(
@@ -144,7 +142,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  ✓ {tagged} OOD-tagged example(s)")
         splits["evaluation"] = eval_examples
 
-    # --- leakage ------------------------------------------------------------
     if len(splits) >= 1:
         print("\n── leakage " + "─" * 52)
         leakage = check_leakage(splits)

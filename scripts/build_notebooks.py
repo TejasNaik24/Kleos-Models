@@ -54,10 +54,6 @@ def notebook(cells: list[dict[str, Any]], *, title: str) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Shared cells
-# ---------------------------------------------------------------------------
-
 CLONE_CELL = code(
     f"""
 # Clone the repository (skip if already present) and enter it.
@@ -138,11 +134,6 @@ elif not gpu.bf16_supported:
     print("float16 here automatically. Nothing to change.")
 """
 )
-
-
-# ---------------------------------------------------------------------------
-# 00 — environment check
-# ---------------------------------------------------------------------------
 
 
 def build_environment_notebook() -> dict[str, Any]:
@@ -230,11 +221,6 @@ work.
         ],
         title="Environment check",
     )
-
-
-# ---------------------------------------------------------------------------
-# 01 — dataset validation
-# ---------------------------------------------------------------------------
 
 
 def build_dataset_notebook() -> dict[str, Any]:
@@ -364,11 +350,6 @@ the strategy, seed, held-out values and per-file hashes.
         ],
         title="Dataset validation",
     )
-
-
-# ---------------------------------------------------------------------------
-# 02 — QLoRA training (the canonical entry point)
-# ---------------------------------------------------------------------------
 
 
 def build_training_notebook() -> dict[str, Any]:
@@ -607,11 +588,6 @@ decided by evaluation on a held-out split, not by the loss reaching a low number
         ],
         title="QLoRA training",
     )
-
-
-# ---------------------------------------------------------------------------
-# 03 — evaluation
-# ---------------------------------------------------------------------------
 
 
 def build_evaluation_notebook() -> dict[str, Any]:

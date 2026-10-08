@@ -1,8 +1,4 @@
-"""Configuration tests (spec §6, §30).
-
-Defaults work, invalid hyperparameters fail, model configs resolve, composition
-behaves, and the config hash is a reliable identity for a run.
-"""
+"""Configuration tests (spec §6, §30)."""
 
 from __future__ import annotations
 
@@ -187,8 +183,7 @@ class TestConfigComposition:
         assert merged == {"a": {"b": 10, "c": 2}, "d": 3, "e": 4}
 
     def test_deep_merge_replaces_lists_outright(self):
-        # Merging lists element-wise would silently produce a target set nobody
-        # wrote down.
+        # Element-wise list merging would produce a target set nobody wrote down.
         merged = deep_merge({"targets": ["a", "b"]}, {"targets": ["c"]})
         assert merged["targets"] == ["c"]
 

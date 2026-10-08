@@ -1,11 +1,4 @@
-"""The build, upload and smoke scripts serve Logos under its own profile.
-
-Each script reads its model's serving profile from the record it is given.
-Pinned here: the Logos package README carries no Hermes serving instructions
-while Hermes' is rendered exactly as before, the upload and push steps use the
-owner's stored `hf auth login` token when no HF_TOKEN is set, and the smoke test
-refuses a Space whose budget or reasoning reply is not the record's.
-"""
+"""The build, upload and smoke scripts serve Logos under its own profile."""
 
 from __future__ import annotations
 
@@ -62,7 +55,6 @@ class TestPackageReadme:
         assert text == build.DEPLOYMENT_README.format(**FIELDS)
 
     def test_a_research_copy_that_already_pins_the_revision_is_not_called_null(self):
-        # Logos' research adapter_config.json already records the pinned revision.
         text = build.deployment_readme(
             FIELDS, load_profile(LOGOS_RECORD), original_revision=FIELDS["base_revision"]
         )

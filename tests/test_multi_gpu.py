@@ -1,13 +1,4 @@
-"""A model spread over two GPUs (Logos v0.0.2 on Kaggle's 2 x T4).
-
-With ``device_map: auto`` and two visible GPUs, the layers of the quantized
-model are split across both. Two things must then hold. The Trainer must run the
-model in place (model parallel), not replicate it with ``DataParallel``, which
-a 4-bit model cannot survive. And memory must be read on every GPU: the one
-holding lm_head and the logits fills first, so a probe that read only GPU 0
-would pass a run that dies at step 1. A single GPU must see exactly what it saw
-before.
-"""
+"""A model spread over two GPUs (Logos v0.0.2 on Kaggle's 2 x T4)."""
 
 from __future__ import annotations
 

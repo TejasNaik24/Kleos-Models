@@ -1,22 +1,4 @@
-"""Checkpoint discovery, resume and retention (spec section 33).
-
-Written for the reality of free Colab: the runtime can disappear at any moment,
-usually without warning and often overnight. Three consequences shape this module.
-
-1. **Resume must be trivial.** ``--resume-from-checkpoint auto`` finds the newest
-   valid checkpoint without the user needing to remember a step number.
-2. **A checkpoint must never be assumed valid.** A run killed mid-save leaves a
-   partial directory; resuming from it fails confusingly. Checkpoints are
-   validated before being offered.
-3. **Retention never empties the directory.** ``save_total_limit`` is honoured with
-   a hard floor of one, so cleanup cannot leave a user with nothing to resume from.
-4. **Retention never deletes the best checkpoint.** transformers' own rotation
-   exempts ``best_model_checkpoint``; the KLEOS pass runs after it and must not
-   undo that, or ``load_best_model_at_end`` silently ships the final weights
-   instead (finding H-F9).
-
-This module imports no torch.
-"""
+"""Checkpoint discovery, resume and retention (spec section 33)."""
 
 from __future__ import annotations
 
@@ -87,11 +69,7 @@ def _directory_size_mb(path: Path) -> float:
 
 
 def validate_checkpoint(path: Path) -> tuple[bool, str]:
-    """Check a checkpoint directory looks complete.
-
-    Returns:
-        ``(is_valid, reason)``.
-    """
+    """Check a checkpoint directory looks complete."""
     if not path.is_dir():
         return False, "not a directory"
 
@@ -155,18 +133,7 @@ def find_latest_checkpoint(output_dir: Path | str) -> CheckpointInfo | None:
 def resolve_resume_path(
     resume: str | None, output_dir: Path | str
 ) -> tuple[str | None, CheckpointInfo | None]:
-    """Resolve a ``--resume-from-checkpoint`` value into a concrete path.
-
-    Args:
-        resume: ``None``, ``"auto"``, or an explicit path.
-        output_dir: Where to search when ``auto``.
-
-    Returns:
-        ``(path_or_None, checkpoint_info_or_None)``.
-
-    Raises:
-        CheckpointError: when an explicit path is missing or invalid.
-    """
+    """Resolve a ``--resume-from-checkpoint`` value into a concrete path."""
     if resume is None:
         return None, None
 
@@ -224,11 +191,7 @@ def resolve_resume_path(
 
 
 def write_checkpoint_metadata(checkpoint_dir: Path | str, metadata: dict[str, Any]) -> Path:
-    """Write KLEOS metadata alongside a Trainer checkpoint.
-
-    Keeps experiment context with the checkpoint, so a directory recovered from
-    Drive months later still identifies the run that produced it.
-    """
+    """Write KLEOS metadata alongside a Trainer checkpoint."""
     path = Path(checkpoint_dir) / "kleos_checkpoint.json"
     payload = {"written_at": datetime.now(UTC).isoformat(), **metadata}
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
@@ -253,22 +216,7 @@ def prune_checkpoints(
     dry_run: bool = False,
     protect: Iterable[Path | str | None] = (),
 ) -> list[Path]:
-    """Delete old checkpoints, always keeping at least one.
-
-    Args:
-        output_dir: Directory to prune.
-        keep: How many of the newest to retain. Values below 1 are raised to 1.
-        dry_run: Report what would be deleted without deleting.
-        protect: Checkpoints never deleted, on top of the ``keep`` newest. Pass
-            the Trainer's ``best_model_checkpoint``. Matched by directory name,
-            because the Trainer may record the path in a different form (relative,
-            unresolved) than the one found on disk; all checkpoints of a run
-            share one directory, so the name identifies it. ``None`` entries are
-            ignored.
-
-    Returns:
-        Paths removed (or that would be removed).
-    """
+    """Delete old checkpoints, always keeping at least one."""
     floor = max(1, keep)
     if floor != keep:
         logger.warning(
@@ -286,9 +234,7 @@ def prune_checkpoints(
 
     removed: list[Path] = []
 
-    # Incomplete checkpoints are never useful; remove them regardless of the limit.
-    # A protected one is kept even so: this module's idea of "complete" is not
-    # worth deleting the checkpoint the Trainer will load at the end.
+    # Remove incomplete checkpoints regardless of the limit, but never one the Trainer will load.
     for checkpoint in invalid:
         if checkpoint.path.name in protected_names:
             logger.warning(

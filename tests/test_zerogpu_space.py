@@ -1,17 +1,4 @@
-"""What goes to Hugging Face, and what must never go there.
-
-Two artifacts leave this repository for the Hub: the deployment package (to a
-private model repository) and the ZeroGPU Space. These tests pin what each may
-contain, and that the Space runs the exact runtime Hermes was measured under:
-
-* the Space holds four small files — no weights, no datasets, no secrets;
-* its base weights are the pinned revision's shards, preloaded, never
-  ``consolidated.safetensors`` and never the Hub's tokenizer;
-* its model runtime pins equal the Docker image's, which equal the research
-  record's;
-* the package upload refuses anything the manifest does not account for, and
-  proves the remote bytes afterwards.
-"""
+"""What goes to Hugging Face, and what must never go there."""
 
 from __future__ import annotations
 
@@ -47,14 +34,11 @@ DOCKERFILE = REPO_ROOT / "docker" / "hermes.Dockerfile"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 PINNED = "04d8a90549d23fc6bd7f642064003592df51e9b3"
 
-#: torch versions the ZeroGPU documentation lists as supported (checked
-#: 2026-09-23). A version outside this list may not be patched for emulation.
+#: torch versions ZeroGPU documents as supported (2026-09-23); others may not be patched.
 ZEROGPU_TORCH = {"2.8.0", "2.9.1", "2.10.0", "2.11.0", "2.12.1", "2.13.0"}
 
-#: The only pins allowed to differ from the Docker image, each because the
-#: Space platform forces it, and none of them part of the model runtime.
-#: pydantic: the platform installs gradio[oauth,mcp]==6.28.0, whose `mcp` extra
-#: requires pydantic<=2.12.5 (first Space build failed on 2.13.5, 2026-09-23).
+#: The only pins allowed to differ from the Docker image: platform-forced, not model runtime.
+#: pydantic: the platform's gradio[oauth,mcp]==6.28.0 requires pydantic<=2.12.5.
 PLATFORM_CONSTRAINED = {"pydantic": "2.12.5"}
 MODEL_RUNTIME = {
     "transformers",
@@ -217,8 +201,7 @@ class TestSpaceApp:
         assert "demo.queue(max_size=" in source
 
     def test_logging_is_on_before_the_model_loads(self, source):
-        # Without it the startup report (load time, memory, versions) is
-        # dropped: the first deployment's log had no `Hermes ready:` line.
+        # Otherwise the startup report (load time, memory, versions) is dropped.
         assert 0 < source.index("configure_logging()") < source.index("load_space_deployment(Path")
 
     def test_it_reads_no_secret_itself(self, source):

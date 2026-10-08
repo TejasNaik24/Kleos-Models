@@ -1,34 +1,12 @@
-# ---------------------------------------------------------------------------
 # Container entrypoint for the Hermes inference service.
 #
 #     python -m kleos_models.serving.startup                # verify, then serve
 #     python -m kleos_models.serving.startup --check-only   # verify, then exit
 #     python -m kleos_models.serving.startup --healthcheck  # Docker HEALTHCHECK probe
 #
-# Startup sequence. Each step fails closed — exit 1, nothing served — before the
-# next one runs, and every check that can fail cheaply runs before the 24.5 GB
-# base-model download:
-#
-#   1. Secrets. HERMES_API_KEY (or HERMES_API_KEY_FILE) is required; HF_TOKEN
-#      (or HF_TOKEN_FILE) is optional. Values are never printed.
-#   2. Package integrity. Every file in the mounted package is re-hashed against
-#      the package's own manifest, and adapter_config.json must pin the base.
-#   3. Package identity. The package must be *the* frozen artifact: adapter
-#      sha256, base revision, tokenizer files and flag, decoding settings — all
-#      compared against the serving record baked into the image. An intact but
-#      different package is refused here.
-#   4. Model cache. HF_HOME must be writable; a warning if it is not on a mounted
-#      volume, because the base model would then be re-downloaded whenever the
-#      container is replaced.
-#   5. GPU. A CUDA device must be visible (skippable with --no-gpu-check, for
-#      verification on a machine without one).
-#   6. Serve. uvicorn starts the app, which loads the base at the pinned
-#      revision, the frozen tokenizer and the adapter, re-verifying as it goes.
-#      If loading fails the process exits non-zero instead of idling.
-#
-# This module imports torch only inside the GPU check and uvicorn only when
-# serving, so the preflight runs — and is tested — without either.
-# ---------------------------------------------------------------------------
+# Each check fails closed (exit 1, nothing served) before the 24.5 GB base download:
+# secrets, package integrity, package identity, model cache, GPU. Secret values are
+# never printed. torch and uvicorn are imported lazily so preflight runs without them.
 
 from __future__ import annotations
 
@@ -72,13 +50,10 @@ ENV_PORT = "HERMES_PORT"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
 
-#: Below this, a warning. Evaluation and the 9/9 smoke test ran on a 14.6 GiB
-#: T4, so that much is known to be enough; the container is specified for
-#: >= 16 GB hosts.
+#: Below this, a warning; 14.6 GiB (T4) is verified, the container targets >= 16 GB.
 MIN_VRAM_GIB = 14.0
 
-#: Packages whose versions decide whether the served model reproduces the
-#: measured one. Printed at every start so a log shows exactly what ran.
+#: Versions that decide whether serving reproduces the measured model; logged at start.
 REPORTED_PACKAGES = (
     "torch",
     "transformers",
@@ -114,15 +89,7 @@ class Preflight:
 
 
 def resolve_secret(env: Mapping[str, str], name: str) -> tuple[str | None, str | None]:
-    """Read a secret from ``NAME`` or from the file named by ``NAME_FILE``.
-
-    ``_FILE`` is the usual container convention for secrets mounted by an
-    orchestrator (e.g. ``/run/secrets/...``), which keeps the value out of
-    ``docker inspect``. Setting both is refused: which one wins would be a guess.
-
-    Returns:
-        ``(value, source)`` where source is ``"env"``, ``"file"`` or ``None``.
-    """
+    """Read a secret from ``NAME`` or from the file named by ``NAME_FILE``."""
     file_name = f"{name}_FILE"
     direct = (env.get(name) or "").strip()
     path = (env.get(file_name) or "").strip()
@@ -178,11 +145,7 @@ def check_cache(env: Mapping[str, str]) -> tuple[Path, bool]:
 
 
 def base_snapshot_present(env: Mapping[str, str], base_model: str, revision: str) -> bool:
-    """Whether the pinned base revision already has a snapshot in the cache.
-
-    Presence of the directory means a previous start got at least part-way; the
-    loader then skips or resumes the download. It is not a completeness check.
-    """
+    """Whether the pinned base revision already has a snapshot in the cache."""
     hub = Path(
         (env.get("HF_HUB_CACHE") or "").strip()
         or Path((env.get("HF_HOME") or "").strip() or "~/.cache/huggingface").expanduser() / "hub"
@@ -227,7 +190,6 @@ def preflight(env: Mapping[str, str], *, check_gpu_device: bool = True) -> Prefl
     """Run every check that can fail before the model is downloaded or loaded."""
     warnings: list[str] = []
 
-    # 1. Secrets.
     api_key, api_key_source = resolve_secret(env, ENV_API_KEY)
     keys = tuple(part.strip() for part in (api_key or "").split(",") if part.strip())
     allow_unauthenticated = (env.get(ENV_ALLOW_UNAUTHENTICATED) or "").strip().lower() in {
@@ -248,7 +210,6 @@ def preflight(env: Mapping[str, str], *, check_gpu_device: bool = True) -> Prefl
             "anonymous downloads are rate-limited and the first start is slower."
         )
 
-    # 2 & 3. Package integrity, then identity.
     package = Path((env.get(ENV_PACKAGE_DIR) or "").strip() or "/models/hermes-v0.0.6")
     if not package.is_dir():
         raise StartupError(
@@ -268,7 +229,6 @@ def preflight(env: Mapping[str, str], *, check_gpu_device: bool = True) -> Prefl
     except KleosError as exc:
         raise StartupError(_describe(exc)) from exc
 
-    # 4. Model cache.
     cache, persistent = check_cache(env)
     if not persistent:
         warnings.append(
@@ -277,7 +237,6 @@ def preflight(env: Mapping[str, str], *, check_gpu_device: bool = True) -> Prefl
         )
     cached = base_snapshot_present(env, manifest.base_model, manifest.base_revision)
 
-    # 5. GPU.
     gpu = check_gpu() if check_gpu_device else None
     if gpu and gpu.get("warning"):
         warnings.append(gpu["warning"])
@@ -342,11 +301,7 @@ def banner(result: Preflight) -> str:
 
 
 def healthcheck(env: Mapping[str, str], *, timeout: float = 4.0) -> int:
-    """Docker HEALTHCHECK probe: 0 only when the service reports ready.
-
-    Uses the unauthenticated /health endpoint, so the probe never needs the API
-    key. Ready means the model is loaded and verified.
-    """
+    """Docker HEALTHCHECK probe: 0 only when the service reports ready."""
     port = int((env.get(ENV_PORT) or "").strip() or DEFAULT_PORT)
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=timeout) as reply:
@@ -360,8 +315,7 @@ def serve(result: Preflight, env: Mapping[str, str], *, host: str, port: int) ->
     """Hand over to uvicorn. The app loads and re-verifies the model itself."""
     import uvicorn
 
-    # The API key may have come from a file; pass it on without exporting it.
-    # Serve exactly what preflight verified: same package, same identity record.
+    # Pass the key on without exporting it; serve exactly what preflight verified.
     merged = dict(env)
     merged[ENV_API_KEY] = ",".join(result.api_keys)
     merged[ENV_PACKAGE_DIR] = str(result.package_dir)

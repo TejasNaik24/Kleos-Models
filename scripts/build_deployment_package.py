@@ -61,8 +61,7 @@ from kleos_models.serving.manifest import (
 )
 from kleos_models.serving.profile import ServingProfile, load_profile
 
-#: Copied into the package. Anything else in the run directory stays behind:
-#: checkpoints, logs, events and the dataset are not deployment artifacts.
+#: Copied into the package; checkpoints, logs, events and the dataset stay behind.
 ADAPTER_FILES = ("adapter_model.safetensors", "adapter_config.json", "README.md")
 TOKENIZER_FILES = ("tokenizer.json", "tokenizer_config.json", "chat_template.jinja")
 
@@ -119,8 +118,7 @@ evidence in `docs/experiments/kleos-v006-mistralnemo12b-run1-report.md`.
 """
 
 
-#: The Serve section and report link of DEPLOYMENT_README, which are Hermes'
-#: (Docker service, v0.0.6 report). A Space-only model replaces both.
+#: Hermes' Serve section and report link in DEPLOYMENT_README; a Space-only model replaces both.
 _HERMES_SERVE = """\
 ```bash
 export HERMES_PACKAGE_DIR=$(pwd)
@@ -130,8 +128,7 @@ python scripts/serve_hermes.py --host 127.0.0.1 --port 8000
 """
 _HERMES_REPORT = "docs/experiments/kleos-v006-mistralnemo12b-run1-report.md"
 
-#: DEPLOYMENT_README's account of the adapter config, true of Hermes' research
-#: copy, which recorded no revision.
+#: Adapter-config note for Hermes, whose research copy recorded no revision.
 _NULL_REVISION = """\
 This directory is a **deployment artifact**, not the research artifact. It is a
 copy, with one deliberate difference recorded in `manifest.json`:
@@ -159,11 +156,7 @@ def _revision_note(original_revision: str | None, base_revision: str) -> str:
 def deployment_readme(
     fields: dict[str, Any], profile: ServingProfile, original_revision: str | None = None
 ) -> str:
-    """The package's README. Hermes' is rendered exactly as it always was.
-
-    ``original_revision`` is the research copy's adapter revision: ``None`` for
-    Hermes, whose README therefore keeps its words.
-    """
+    """The package's README. Hermes' is rendered exactly as it always was."""
     text = DEPLOYMENT_README.format(**fields)
     if _NULL_REVISION not in text:
         raise KleosError("The package README template changed; update deployment_readme().")
@@ -196,12 +189,7 @@ def _copy(src: Path, dst: Path) -> None:
 
 
 def build_packaged_adapter_config(source: Path, destination: Path, revision: str) -> dict[str, Any]:
-    """Copy adapter_config.json with the base revision pinned.
-
-    Returns the packaged config. Only ``revision`` is changed; every other field
-    is carried across untouched so the LoRA shape cannot drift between the
-    research artifact and the deployed one.
-    """
+    """Copy adapter_config.json with the base revision pinned."""
     config = json.loads(source.read_text(encoding="utf-8"))
     original_revision = config.get("revision")
     config["revision"] = revision
@@ -239,8 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     profile = load_profile(args.deployment_config)
     model_config = load_model_config(args.model_config)
 
-    # The two records must already agree; tests assert this too, but a build is
-    # the last moment it can be caught before an artifact exists.
+    # Tests check this too; the build is the last chance before an artifact exists.
     if model_config.revision != spec["revision"]:
         raise KleosError(
             "The model config and the deployment config disagree about the base revision.",
@@ -263,8 +250,7 @@ def main(argv: list[str] | None = None) -> int:
             suggestions=["Choose another --output, or pass --force."],
         )
 
-    # Fail closed before copying: if these are not the frozen weights, nothing
-    # downstream is the model that was measured.
+    # Fail closed before copying: other weights are not the model that was measured.
     weights = _require(adapter_src / "adapter_model.safetensors", "adapter weights")
     actual_sha = file_sha256(weights)
     expected_sha = spec.get("adapter_sha256")
@@ -315,17 +301,13 @@ def main(argv: list[str] | None = None) -> int:
         _copy(source, package / TOKENIZER_DIRNAME / name)
         print(f"    + {TOKENIZER_DIRNAME}/{name}")
 
-    # The model config travels with the package so a deployment never depends on
-    # this repository being checked out beside it. The tokenizer is resolved to
-    # the package's own directory at load time, so it is left unset here and the
-    # package stays relocatable.
+    # Shipped so a deployment never needs this repository. The tokenizer stays unset:
+    # it resolves to the package's own directory, keeping the package relocatable.
     packaged_model = model_config.model_dump(mode="json")
     packaged_model["tokenizer"] = None
 
-    # The runtime contract decides how the base is instantiated, and it overrides
-    # the training config where they differ: the training config says
-    # `compute_dtype: auto`, which is only safe on the GPU it trained on. The
-    # contract states what that resolved to.
+    # The runtime contract overrides the training config, whose `compute_dtype: auto`
+    # is only safe on the GPU it trained on.
     runtime = RuntimeContract(**(spec.get("runtime") or {}))
     packaged_model["quantization"].update(
         {
@@ -343,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
         yaml.safe_dump({"model": packaged_model}, sort_keys=True, default_flow_style=False),
         encoding="utf-8",
     )
-    # Validate it as a ModelConfig now, not at serving time.
+    # Validate now, not at serving time.
     load_model_config(model_config_path)
     print(
         f"    + {DEPLOYMENT_DIRNAME}/model_config.yaml "
@@ -412,8 +394,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"    + {DEPLOYMENT_DIRNAME}/README.md")
 
-    # Fail closed at build time, not first at serving time: the package must be
-    # intact AND exactly the artifact the serving record describes.
+    # Fail closed at build time: the package must be intact and match the serving record.
     verify_identity(verify_package(package), load_expected_identity(args.deployment_config))
     print(f"\n✓ Package built and verified: {package}")
     print(f"  {manifest.model_name} {manifest.model_version}")

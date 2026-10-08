@@ -1,8 +1,4 @@
-"""Data layer: schemas, loading, validation, formatting, splitting, leakage.
-
-Nothing in this package imports torch. Dataset preparation, validation and
-auditing therefore run on any machine, in CI, and in a notebook without a GPU.
-"""
+"""Data layer: schemas, loading, validation, formatting, splitting, leakage."""
 
 from kleos_models.data.coverage import (
     CoverageReport,

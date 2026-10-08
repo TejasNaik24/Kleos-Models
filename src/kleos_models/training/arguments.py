@@ -1,14 +1,4 @@
-"""Translate KLEOS config into ``transformers.TrainingArguments``.
-
-All the version-dependent naming is handled by :mod:`kleos_models.compat`, so this
-module states intent (``warmup_ratio``, ``eval_strategy``) and the shim emits
-whatever the installed transformers actually accepts.
-
-Precision resolution is the other job here: ``precision: auto`` becomes bf16 on
-compute capability 8.0+ and fp16 below it, and the choice is *returned* so it can
-be recorded rather than silently applied. A Colab T4 is compute capability 7.5 and
-cannot do bf16, so this is a real branch on the canonical training environment.
-"""
+"""Translate KLEOS config into ``transformers.TrainingArguments``."""
 
 from __future__ import annotations
 
@@ -76,12 +66,7 @@ def resolve_precision(
 def resolve_optimizer(
     training: TrainingConfig, *, has_bitsandbytes: bool | None = None
 ) -> tuple[str, str | None]:
-    """Resolve the optimizer, falling back when bitsandbytes is unavailable.
-
-    Returns:
-        ``(optimizer_name, adjustment_reason_or_None)``. A non-None reason means
-        the value changed and must be recorded in the manifest.
-    """
+    """Resolve the optimizer, falling back when bitsandbytes is unavailable."""
     if has_bitsandbytes is None:
         from kleos_models.compat import package_version
 
@@ -108,13 +93,7 @@ def build_training_arguments(
     has_eval_dataset: bool = False,
     extra: dict[str, Any] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
-    """Build ``TrainingArguments`` from the KLEOS training config.
-
-    Returns:
-        ``(training_arguments, metadata)``. Metadata records precision and
-        optimizer resolution plus every compat translation, and lands in the
-        manifest so the effective configuration is always visible.
-    """
+    """Build ``TrainingArguments`` from the KLEOS training config."""
     transformers = require_transformers()
 
     bf16, fp16, precision_note = resolve_precision(training, gpu=gpu)
@@ -124,8 +103,7 @@ def build_training_arguments(
     if optimizer_note:
         logger.warning("Optimizer: %s", optimizer_note)
 
-    # Evaluation cannot be requested without an eval dataset; that would fail deep
-    # inside the Trainer with a confusing message.
+    # Evaluation needs an eval dataset; otherwise the Trainer fails deep inside, confusingly.
     eval_strategy = training.eval_strategy
     eval_note: str | None = None
     if eval_strategy != "no" and not has_eval_dataset:

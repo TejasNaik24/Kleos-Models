@@ -1,8 +1,4 @@
-"""Splitting tests (spec §12, §30).
-
-The properties that matter: splits are deterministic, they never overlap, groups
-stay together, and held-out strategies genuinely hold values out.
-"""
+"""Splitting tests (spec §12, §30)."""
 
 from __future__ import annotations
 
@@ -161,8 +157,7 @@ class TestHoldoutSplits:
         assert test_entities == {"set_d"}
 
     def test_validation_stays_in_distribution(self):
-        # Validation must come from SEEN values: early stopping on OOD data would
-        # leak exactly the signal the test split is meant to measure.
+        # Early stopping on OOD data would leak the signal the test split measures.
         examples = self._mixed_entities()
         result = split_examples(
             examples,
@@ -257,7 +252,6 @@ class TestHoldoutSplits:
 class TestVerification:
     def test_verify_rejects_overlap(self, training_examples):
         result = split_examples(training_examples, SplitConfig(strategy="random", seed=42))
-        # Plant an overlap that a correct split would never produce.
         result.test.append(result.train[0])
         with pytest.raises(DatasetIntegrityError, match=r"[Ss]plit overlap"):
             verify_split(result)

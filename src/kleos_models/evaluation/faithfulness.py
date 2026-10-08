@@ -1,25 +1,4 @@
-"""Faithfulness: is the answer grounded in the supplied evidence? (spec section 21)
-
-KLEOS assembles context from retrieval and memory, so the failure mode that
-matters is not "the model said something false about the world" but "the model
-asserted something the supplied context does not support".
-
-Three measurable properties:
-
-``evidence_coverage``
-    Of the evidence the reference marks as decisive, how much did the answer use?
-``citation_precision``
-    Of the evidence ids the answer cites, how many were actually provided?
-    Citing a non-existent source is a fabrication, and it is checkable.
-``unsupported_claim_rate``
-    Fraction of specific claims (numbers, dates, named entities) appearing in the
-    answer but nowhere in the supplied context.
-
-These are heuristics over text, not entailment checks. They are precise about what
-they measure and are not presented as a general hallucination metric.
-
-This module imports no torch.
-"""
+"""Faithfulness: is the answer grounded in the supplied evidence? (spec section 21)"""
 
 from __future__ import annotations
 
@@ -95,8 +74,7 @@ class FaithfulnessResult:
     fabricated_ids: list[str] = field(default_factory=list)
     unsupported_claims: list[str] = field(default_factory=list)
     supported_claims: list[str] = field(default_factory=list)
-    #: How many decisive evidence ids the reference named. Zero makes coverage
-    #: 1.0 by definition, so the number carries no information.
+    #: Decisive evidence ids the reference named; at zero, coverage is 1.0 and uninformative.
     decisive_evidence_count: int = 0
 
     @property
@@ -121,12 +99,7 @@ class FaithfulnessResult:
 
 
 def extract_claims(text: str) -> list[str]:
-    """Extract specific, checkable claim tokens from a response.
-
-    Deliberately limited to tokens whose presence in the context can be verified
-    directly. Vague assertions are not extracted, because scoring them without
-    entailment would produce a number that looks rigorous and is not.
-    """
+    """Extract specific, checkable claim tokens from a response."""
     claims: set[str] = set()
     claims.update(match.group(0) for match in _NUMBER.finditer(text))
     claims.update(match.group(0) for match in _DATE.finditer(text))
@@ -154,20 +127,9 @@ def assess_faithfulness(
     provided_evidence_ids: Sequence[str] = (),
     decisive_evidence_ids: Sequence[str] = (),
 ) -> FaithfulnessResult:
-    """Score how well a response is grounded in its supplied context.
-
-    Args:
-        response: The model's answer.
-        context_text: All context the model was given, concatenated.
-        provided_evidence_ids: Evidence ids actually supplied.
-        decisive_evidence_ids: Ids the reference marks as necessary for the answer.
-
-    Returns:
-        A :class:`FaithfulnessResult`.
-    """
+    """Score how well a response is grounded in its supplied context."""
     normalized_context = normalize_answer(context_text)
 
-    # --- coverage of decisive evidence -------------------------------------
     if decisive_evidence_ids:
         normalized_response = normalize_answer(response)
         used = [
@@ -179,7 +141,6 @@ def assess_faithfulness(
     else:
         coverage = 1.0
 
-    # --- citation precision -------------------------------------------------
     cited = extract_citations(response)
     provided_normalized = {normalize_answer(str(e)) for e in provided_evidence_ids}
     if cited and provided_normalized:
@@ -189,7 +150,6 @@ def assess_faithfulness(
         fabricated = []
         precision = 1.0
 
-    # --- unsupported claims -------------------------------------------------
     claims = extract_claims(response)
     supported: list[str] = []
     unsupported: list[str] = []

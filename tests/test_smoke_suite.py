@@ -1,9 +1,4 @@
-"""The shared smoke-test judging: one set of rules for every serving path.
-
-`hermes_smoke.py` (in-process) and `zerogpu_smoke.py` (over the network) must
-judge reproducibility identically, or a pass on one says nothing about the
-other. These tests pin the judging and the run summary on synthetic examples.
-"""
+"""The shared smoke-test judging: one set of rules for every serving path."""
 
 from __future__ import annotations
 

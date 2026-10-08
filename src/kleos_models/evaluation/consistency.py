@@ -1,27 +1,4 @@
-"""Consistency testing (spec section 22).
-
-The question: did the model learn a *decision policy*, or a surface pattern?
-
-Method. Group examples that are logically equivalent — same underlying situation,
-differing only in wording, evidence order, context order, irrelevant additions,
-formatting, schema or length. A model that learned a policy reaches the same
-decision across the whole group. A model that learned "answer the first-listed
-item" or "match this phrasing" does not.
-
-This is one of the few tests that can distinguish those two cases, which makes it
-central rather than decorative. It is also cheap: no extra labels are needed,
-only perturbations of scenarios that already exist.
-
-Two numbers are reported, and conflating them would be a mistake:
-
-``agreement_rate``
-    How often the group reaches one decision. Measures stability.
-``correct_agreement_rate``
-    How often the group agrees **on the right answer**. A model that is
-    consistently wrong scores 1.0 on the first and 0.0 on the second.
-
-This module imports no torch.
-"""
+"""Consistency testing (spec section 22)."""
 
 from __future__ import annotations
 
@@ -70,11 +47,7 @@ class ConsistencyGroup:
 
     @property
     def majority_share(self) -> float:
-        """Fraction of answers agreeing with the majority.
-
-        A softer measure than all-or-nothing consistency: 4/5 agreement is
-        meaningfully different from 2/5, and binary consistency hides that.
-        """
+        """Fraction of answers agreeing with the majority."""
         if not self.decisions:
             return 0.0
         counts = Counter(normalize_answer(d) for d in self.decisions)
@@ -88,12 +61,7 @@ class ConsistencyGroup:
         return normalize_answer(self.decisions[0]) == normalize_answer(self.reference_decision)
 
     def flipped_by(self) -> dict[str, int]:
-        """Which perturbation kinds coincided with a minority answer.
-
-        Attribution is approximate — several perturbations may combine — but it
-        points at which axis the model is fragile along, which is the actionable
-        part.
-        """
+        """Which perturbation kinds coincided with a minority answer."""
         majority = self.majority_decision
         flips: dict[str, int] = {}
         for decision, kind in zip(self.decisions, self.perturbation_kinds, strict=False):
@@ -224,21 +192,7 @@ def build_consistency_groups(
     min_group_size: int = 2,
     group_key: str = "scenario_family",
 ) -> ConsistencyReport:
-    """Group per-example decisions and compute consistency.
-
-    Args:
-        example_ids: Example identifiers.
-        group_ids: Equivalence-class id per example.
-        decisions: The decision extracted from each response.
-        scores: Optional grader score per example.
-        perturbation_kinds: Optional perturbation label per example.
-        reference_decisions: Optional ground-truth decision per example.
-        min_group_size: Groups smaller than this are skipped, not scored.
-        group_key: Metadata key used, recorded in the report.
-
-    Returns:
-        A :class:`ConsistencyReport`.
-    """
+    """Group per-example decisions and compute consistency."""
     lengths = {len(example_ids), len(group_ids), len(decisions)}
     if len(lengths) != 1:
         raise ValueError(

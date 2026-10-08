@@ -1,16 +1,4 @@
-"""The QLoRA training pipeline (spec sections 13, 15, 45).
-
-This is a real training pipeline. It loads the model, quantizes it, attaches a
-LoRA adapter, tokenizes conversations with assistant-only loss masking, runs a
-genuine ``transformers.Trainer`` loop, checkpoints, and saves adapter weights.
-Nothing here prints "Training model..." and returns.
-
-The orchestration follows spec section 15 step for step, and each stage updates
-the experiment manifest so an interrupted run still leaves a truthful record.
-
-``transformers``/``torch`` are imported inside functions, keeping the module
-importable in a light environment for inspection and testing.
-"""
+"""The QLoRA training pipeline (spec sections 13, 15, 45)."""
 
 from __future__ import annotations
 
@@ -59,8 +47,7 @@ from kleos_models.training.memory import (
 
 logger = get_logger(__name__)
 
-#: The collator pads each batch to a multiple of this, so the longest padded
-#: sequence, not the longest raw one, sets the activation peak.
+#: Collator pad multiple: the longest padded sequence, not the raw one, sets the peak.
 PAD_TO_MULTIPLE_OF = 8
 
 
@@ -72,13 +59,7 @@ def padded_length(length: int, multiple: int = PAD_TO_MULTIPLE_OF) -> int:
 
 
 class PaddingCollator:
-    """Pad a batch of variable-length examples.
-
-    Written rather than reused because the standard causal-LM collator builds
-    labels by copying ``input_ids``, which would discard the assistant-only
-    masking the formatter computed. Here labels are padded with
-    ``IGNORE_INDEX`` so padded positions contribute nothing to the loss.
-    """
+    """Pad a batch of variable-length examples."""
 
     def __init__(self, pad_token_id: int, *, pad_to_multiple_of: int = PAD_TO_MULTIPLE_OF) -> None:
         self.pad_token_id = pad_token_id
@@ -111,11 +92,7 @@ class PaddingCollator:
 
 
 class ListDataset:
-    """Minimal map-style dataset over formatted examples.
-
-    Avoids a hard dependency on ``datasets`` for the common in-memory case, which
-    keeps Colab setup simpler and start-up faster.
-    """
+    """Minimal map-style dataset over formatted examples."""
 
     def __init__(self, rows: Sequence[dict[str, Any]]) -> None:
         self._rows = list(rows)
@@ -173,14 +150,7 @@ class TrainingResult:
 
 
 def assert_model_parallel(trainer: Any, model: Any) -> None:
-    """Refuse a model spread over several GPUs unless the Trainer runs it in place.
-
-    With ``device_map: auto`` on two GPUs (Logos v0.0.2 on Kaggle) the layers
-    are split across both. transformers then marks the Trainer model parallel
-    and sets ``n_gpu`` to 1; otherwise it would wrap the model in
-    ``DataParallel``, which replicates it and cannot hold a 4-bit model. If that
-    ever changes upstream, this stops the run before step 1 instead.
-    """
+    """Refuse a model spread over several GPUs unless the Trainer runs it in place."""
     devices = model_devices(model)
     if len(devices) < 2:
         return
@@ -226,12 +196,7 @@ def format_split(
 
 
 def _sample_batch(dataset: ListDataset, collator: PaddingCollator, *, size: int) -> dict[str, Any]:
-    """Build a small batch for gradient verification.
-
-    ``size`` is the configured ``per_device_train_batch_size``: a larger check
-    batch than training uses could itself run out of memory on a GPU the run
-    fits.
-    """
+    """Build a small batch for gradient verification."""
     rows = [dataset[i] for i in range(min(max(1, size), len(dataset)))]
     return collator(rows)
 
@@ -242,13 +207,7 @@ def measure_sequence_lengths(
     *,
     tokenizer: Any | None = None,
 ) -> dict[str, Any]:
-    """The longest training sequence, tokenized exactly as the trainer will.
-
-    With batch size 1 and padding to the longest in the batch, the activation
-    peak follows the longest example actually present, not
-    ``model.max_seq_length``. Measuring it lets the pre-flight memory check size
-    itself from the data. Loads only the tokenizer, never weights.
-    """
+    """The longest training sequence, tokenized exactly as the trainer will."""
     from kleos_models.models.adapters import get_adapter
     from kleos_models.models.loading import load_tokenizer
 
@@ -285,29 +244,7 @@ def run_training(
     longest_sequence: int | None = None,
     loaded: LoadedModel | None = None,
 ) -> TrainingResult:
-    """Execute the full training pipeline (spec section 15).
-
-    Args:
-        config: Resolved experiment configuration.
-        bundle: Loaded and validated dataset.
-        manifest: Manifest to update as the run progresses. Saved at every stage
-            so an interrupted run still leaves a record.
-        resume_from_checkpoint: ``None``, ``"auto"``, or an explicit path.
-        verify_gradients: Run a forward/backward check before the real loop, so a
-            silently-untrainable setup fails in seconds rather than hours.
-        probe_memory: Measure a step on the longest micro-batch before the loop
-            (CUDA only; see :func:`probe_training_peak`).
-        longest_sequence: The longest padded training sequence, measured before
-            loading weights; sizes the environment report's memory estimate.
-        loaded: Pre-loaded model, used by tests to inject a tiny model.
-
-    Returns:
-        A :class:`TrainingResult`.
-
-    Raises:
-        KleosError: with actionable diagnostics on any failure. The manifest is
-            marked failed and saved before the exception propagates.
-    """
+    """Execute the full training pipeline (spec section 15)."""
     from transformers import Trainer
 
     from kleos_models.compat import trainer_tokenizer_kwarg
@@ -319,7 +256,6 @@ def run_training(
     stage = "setup"
 
     try:
-        # --- 1-3. environment report -------------------------------------
         events.set_stage("environment")
         report = render_environment_report(
             config.model, config.training, seq_length=longest_sequence
@@ -329,7 +265,6 @@ def run_training(
         manifest.mark_started()
         manifest.save(output_dir)
 
-        # --- 4-6. model, tokenizer, quantization, PEFT --------------------
         stage = "model_loading"
         events.set_stage(stage)
         with log_stage(logger, "Loading base model"):
@@ -359,7 +294,6 @@ def run_training(
             manifest.save(output_dir)
             events.emit("peft_attached", **peft_result.to_dict())
 
-        # --- 7-9. dataset formatting --------------------------------------
         stage = "data_formatting"
         events.set_stage(stage)
         with log_stage(logger, "Formatting dataset"):
@@ -383,7 +317,6 @@ def run_training(
 
         collator = PaddingCollator(pad_token_id=loaded.tokenizer.pad_token_id)
 
-        # --- gradient verification ----------------------------------------
         if verify_gradients:
             stage = "gradient_check"
             events.set_stage(stage)
@@ -406,7 +339,6 @@ def run_training(
                 manifest.metrics["gradient_check"] = diagnostics
                 free_memory()
 
-        # --- memory probe ---------------------------------------------------
         # Before the Trainer exists: it re-seeds on construction, so these passes
         # cannot shift the run's random stream.
         if probe_memory:
@@ -419,7 +351,6 @@ def run_training(
                 events.emit("memory_probe", **probe)
                 manifest.save(output_dir)
 
-        # --- 10. trainer ---------------------------------------------------
         stage = "trainer_init"
         events.set_stage(stage)
         arguments, argument_metadata = build_training_arguments(
@@ -455,8 +386,7 @@ def run_training(
                 experiment_id=manifest.experiment_id,
                 metadata={
                     "model": config.model.base_model,
-                    # The manifest is the run's authoritative record; the bundle
-                    # may be unversioned when data was supplied as loose files.
+                    # The manifest is authoritative; loose-file bundles are unversioned.
                     "dataset_version": manifest.dataset_version or bundle.version,
                     "dataset_hash": manifest.dataset_hash,
                     "config_hash": config.config_hash,
@@ -479,7 +409,6 @@ def run_training(
         )
         assert_model_parallel(trainer, model)
 
-        # --- 11. train ------------------------------------------------------
         stage = "training"
         events.set_stage(stage)
         resume_path, checkpoint_info = resolve_resume_path(
@@ -503,14 +432,12 @@ def run_training(
         if peak_gb is not None:
             metrics["peak_memory_gb"] = round(peak_gb, 2)
 
-        # --- 12. evaluate ---------------------------------------------------
         if eval_dataset is not None:
             stage = "evaluation"
             events.set_stage(stage)
             with log_stage(logger, "Evaluating on the validation split"):
                 metrics.update(trainer.evaluate())
 
-        # --- 13-16. save artifacts -----------------------------------------
         stage = "saving"
         events.set_stage(stage)
         adapter_path = output_dir / ADAPTER_DIRNAME
@@ -540,7 +467,6 @@ def run_training(
         for name, path in artifacts.items():
             manifest.add_artifact(name, path)
 
-        # --- 17. manifest ---------------------------------------------------
         manifest.mark_completed(metrics)
         manifest.save(output_dir)
         events.emit(

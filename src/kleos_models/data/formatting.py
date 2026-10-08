@@ -1,32 +1,4 @@
-"""Conversation formatting and assistant-only loss masking.
-
-Two jobs:
-
-1. Render a conversation through the model's **own** chat template. Qwen and
-   Mistral templates differ in special tokens, role markers and whitespace, so
-   the template always comes from the tokenizer (or the family adapter), never
-   from a hard-coded f-string here.
-
-2. Compute which tokens the loss is applied to. Training on the prompt as well
-   as the answer teaches the model to predict user messages, which is not the
-   behaviour we are trying to learn. Everything except assistant content is set
-   to ``IGNORE_INDEX``.
-
-Masking strategy
-----------------
-Assistant spans are located by **incremental template application**: render the
-conversation up to (but excluding) each assistant turn with a generation prompt,
-render it again including that turn, and take the token range between the two.
-This is family-agnostic — it asks the template where the boundary is rather than
-guessing from a delimiter string.
-
-Prefix stability is verified per span. If a template turns out not to be
-prefix-stable, the longest common prefix is used and a warning is emitted, rather
-than silently mislabelling tokens.
-
-This module imports no torch: it works on plain lists of ints. The tokenizer is
-injected as a protocol so masking can be tested with a fake.
-"""
+"""Conversation formatting and assistant-only loss masking."""
 
 from __future__ import annotations
 
@@ -44,11 +16,7 @@ logger = get_logger(__name__)
 
 @runtime_checkable
 class ChatTokenizer(Protocol):
-    """Minimal tokenizer surface this module depends on.
-
-    Satisfied by a Hugging Face tokenizer and by the test fake, which is the
-    point: masking logic is verifiable without downloading a model.
-    """
+    """Minimal tokenizer surface this module depends on."""
 
     def apply_chat_template(
         self,
@@ -100,8 +68,7 @@ class FormattingStats:
     target_truncated: int = 0
     empty_targets: int = 0
     dropped: int = 0
-    #: Examples whose schema-1.1 ``reasoning`` field was removed because the
-    #: model is not trained to think (``strip_reasoning``).
+    #: Examples whose ``reasoning`` was stripped because the model is not trained to think.
     reasoning_dropped: int = 0
     token_lengths: list[int] = field(default_factory=list)
     target_lengths: list[int] = field(default_factory=list)
@@ -119,8 +86,7 @@ class FormattingStats:
             "mean_tokens": round(sum(lengths) / len(lengths), 1),
             "mean_target_tokens": round(sum(targets) / len(targets), 1),
         }
-        # Only when it happened, so a run on data without reasoning records
-        # exactly what it recorded before schema 1.1.
+        # Only when nonzero, so runs without reasoning record exactly what they did before 1.1.
         if self.reasoning_dropped:
             summary["reasoning_dropped"] = self.reasoning_dropped
         return summary
@@ -136,8 +102,7 @@ def messages_to_dicts(
         if include_names and message.name:
             payload["name"] = message.name
         if message.reasoning is not None:
-            # Reasoning templates (Ministral 3 Reasoning) render this key as the
-            # thinking span ahead of the answer; others ignore it.
+            # Reasoning templates render this as the thinking span; others ignore it.
             payload["reasoning"] = message.reasoning
         result.append(payload)
     return result
@@ -153,25 +118,7 @@ def _common_prefix_length(left: Sequence[int], right: Sequence[int]) -> int:
 
 
 class ConversationFormatter:
-    """Turns :class:`TrainingExample` objects into masked token sequences.
-
-    Args:
-        tokenizer: Object satisfying :class:`ChatTokenizer`.
-        max_seq_length: Truncation limit.
-        train_on_last_turn_only: Supervise only the final assistant message.
-            Useful when earlier turns are context rather than target behaviour.
-        template_kwargs: Extra kwargs forwarded to ``apply_chat_template`` — this
-            is how reasoning-mode controls such as Qwen's ``enable_thinking``
-            reach the template.
-        strip_reasoning: Remove ``<think>`` spans and the schema-1.1
-            ``reasoning`` field from assistant targets before tokenizing. Keep
-            this on for a model that is not trained to think; a reasoning model
-            trained on policy-derived traces (Logos v0.0.2) turns it off.
-        fail_on_target_truncation: Raise from :meth:`format_dataset` if any
-            example loses supervised tokens, in part (truncation) or whole
-            (dropped). A reasoning run sets this: a trace cut short would teach
-            the model to stop thinking mid-thought, or to answer without one.
-    """
+    """Turns :class:`TrainingExample` objects into masked token sequences."""
 
     def __init__(
         self,
@@ -192,22 +139,8 @@ class ConversationFormatter:
         self._warned_unstable_template = False
         self._merge_system: bool | None = None
 
-    # -- template helpers ---------------------------------------------------
-
     def _template_drops_trailing_system(self) -> bool:
-        """Whether the template discards the system turn once an answer follows.
-
-        Mistral's template injects the system message into the *last* message of
-        the conversation. While generating, the last message is the user's, so
-        the system prompt appears. During training the last message is the
-        assistant's, so the system prompt is **silently dropped** — the model
-        would be trained without the very instructions it is being taught to
-        follow, and evaluated with them.
-
-        Probed against the live template rather than switched on the model family:
-        chat templates change between checkpoints and between transformers
-        versions, and a hardcoded family list goes stale without failing loudly.
-        """
+        """Whether the template discards the system turn once an answer follows."""
         if self._merge_system is not None:
             return self._merge_system
 
@@ -259,8 +192,7 @@ class ConversationFormatter:
                     message.model_copy(update={"content": merged}),
                     *rest[index + 1 :],
                 ]
-        # No user turn to merge into; leave the conversation untouched rather
-        # than inventing one.
+        # No user turn to merge into: leave it untouched rather than invent one.
         return result
 
     def _apply_template(
@@ -275,9 +207,7 @@ class ConversationFormatter:
                 **self.template_kwargs,
             )
         except TypeError as exc:
-            # A template that does not accept one of our kwargs (for example a
-            # Thinking-only checkpoint refusing enable_thinking) should say so
-            # clearly rather than fail deep inside jinja.
+            # Report a template rejecting our kwargs here rather than deep inside jinja.
             raise DataValidationError(
                 "The tokenizer's chat template rejected the supplied arguments.",
                 details={
@@ -298,31 +228,19 @@ class ConversationFormatter:
         return rendered
 
     def render(self, messages: Sequence[Message], *, add_generation_prompt: bool = False) -> str:
-        """Render messages to text using the tokenizer's chat template.
-
-        Every training and inference path goes through here, so the system-prompt
-        normalization applied below is guaranteed to be identical on both sides.
-        """
+        """Render messages to text using the tokenizer's chat template."""
         return self._apply_template(
             self._normalize(messages), add_generation_prompt=add_generation_prompt
         )
 
     def _encode(self, text: str) -> list[int]:
-        # The chat template already inserts BOS/special tokens; adding them again
-        # produces a doubled BOS, which shifts every position by one.
+        # The template already inserts BOS; a second one shifts every position by one.
         return list(self.tokenizer.encode(text, add_special_tokens=False))
-
-    # -- masking ------------------------------------------------------------
 
     def _assistant_spans(
         self, messages: Sequence[Message]
     ) -> tuple[list[int], list[tuple[int, int]]]:
-        """Tokenize the conversation and locate assistant token spans.
-
-        Returns:
-            ``(input_ids, spans)`` where each span is ``[start, end)`` over
-            ``input_ids`` covering one assistant turn's content.
-        """
+        """Tokenize the conversation and locate assistant token spans."""
         assistant_indices = [i for i, m in enumerate(messages) if m.role == "assistant"]
         if self.train_on_last_turn_only and assistant_indices:
             assistant_indices = assistant_indices[-1:]
@@ -332,8 +250,7 @@ class ConversationFormatter:
 
         for index in assistant_indices:
             prefix_messages = messages[:index]
-            # Render the conversation as the model would see it just before
-            # producing this turn, including the generation prompt.
+            # The prompt as the model sees it before this turn, generation prompt included.
             prefix_text = self.render(prefix_messages, add_generation_prompt=True)
             prefix_ids = self._encode(prefix_text)
 
@@ -353,18 +270,13 @@ class ConversationFormatter:
 
             start = shared
             end = min(len(through_ids), len(full_ids))
-            # Guard against a degenerate span; an empty target teaches nothing.
             if end > start:
                 spans.append((start, end))
 
         return full_ids, spans
 
     def format_example(self, example: TrainingExample) -> FormattedExample | None:
-        """Format a single example, or return ``None`` if it cannot be supervised.
-
-        Returns ``None`` when the example yields no assistant tokens at all,
-        which would otherwise contribute a NaN loss.
-        """
+        """Format a single example, or return ``None`` if it cannot be supervised."""
         source = example.strip_reasoning_spans() if self.strip_reasoning else example
         input_ids, spans = self._assistant_spans(source.messages)
 
@@ -391,8 +303,6 @@ class ConversationFormatter:
 
         target_count = sum(1 for label in labels if label != IGNORE_INDEX)
         if target_count == 0:
-            # Truncation removed the entire answer. Training on this example would
-            # produce a loss over nothing.
             logger.warning(
                 "Example %s has no supervised tokens after truncation to %d; skipping. "
                 "Increase model.max_seq_length or shorten the example.",
@@ -414,11 +324,7 @@ class ConversationFormatter:
     def format_dataset(
         self, examples: Sequence[TrainingExample]
     ) -> tuple[list[FormattedExample], FormattingStats]:
-        """Format every example, collecting statistics.
-
-        Examples that cannot be supervised are dropped and counted, never
-        silently included with an all-ignored label row.
-        """
+        """Format every example, collecting statistics."""
         stats = FormattingStats()
         formatted: list[FormattedExample] = []
 
@@ -477,11 +383,7 @@ class ConversationFormatter:
         return self.render(messages, add_generation_prompt=True)
 
     def describe_masking(self, example: TrainingExample) -> str:
-        """Human-readable dump of what is supervised, for debugging.
-
-        Prints token counts rather than raw content, so it is safe to run against
-        a private dataset without printing user data.
-        """
+        """Human-readable dump of what is supervised, for debugging."""
         formatted = self.format_example(example)
         if formatted is None:
             return f"{example.id}: no supervised tokens"

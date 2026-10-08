@@ -1,15 +1,4 @@
-"""Re-reporting stored results, and comparing two models.
-
-``rescore.py --mode annotate`` is how Hermes' stored results get the corrected
-measures without being re-run or modified. ``compare.py --cross-model`` is how
-H8b is decided. Pinned here:
-
-* annotation never changes an original field, and refuses results whose scores
-  no longer reproduce or whose benchmark differs;
-* the citation heuristic's gold floor is counted from the gold answers;
-* the primary verdict follows the pre-registered rule, on the cluster interval;
-* compare's exit codes let a driver script branch on the outcome.
-"""
+"""Re-reporting stored results, and comparing two models."""
 
 from __future__ import annotations
 
@@ -112,11 +101,6 @@ def all_correct() -> dict[str, str]:
     return {r["id"]: r["reference"]["label"] for r in benchmark_rows()}
 
 
-# ---------------------------------------------------------------------------
-# rescore.py --mode annotate
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def stored(tmp_path) -> tuple[Path, Path]:
     bench = write_benchmark(tmp_path / "benchmark.jsonl", benchmark_rows())
@@ -150,7 +134,7 @@ class TestAnnotate:
             )
             == 0
         )
-        assert sha(results) == before  # the source is only read
+        assert sha(results) == before
 
         original = json.loads(results.read_text())
         annotated = json.loads(out.read_text())
@@ -196,7 +180,7 @@ class TestAnnotate:
         assert annotated["annotated"]["score_drift"] == [
             {"example_id": "ex-00", "stored": 0.5, "regraded": 1.0}
         ]
-        assert annotated["results"][0]["score"] == 0.5  # the original value stays
+        assert annotated["results"][0]["score"] == 0.5
 
     def test_a_different_benchmark_is_refused(self, stored, tmp_path):
         results, _ = stored
@@ -309,11 +293,6 @@ class TestRegrade:
         assert regraded["consistency"]["agreement_rate"] == 0.0
         assert len(regraded["consistency"]["groups"]) == 3
         assert "details" in regraded["results"][0]
-
-
-# ---------------------------------------------------------------------------
-# compare
-# ---------------------------------------------------------------------------
 
 
 class TestPrimaryVerdict:

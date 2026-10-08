@@ -1,12 +1,4 @@
-"""The Logos v0.0.2 deployment record, and the script that completes it.
-
-The record is the identity the package and the Space must match. Most of it is
-known from the run report; four kinds of value exist only in the training
-output on Kaggle (the adapter hash, the selection value, the pad token and the
-tokenizer file hashes). `scripts/fill_deployment_record.py` reads them from the
-downloaded run, checks the run is the one the record describes, and writes
-them into the record's `null` lines, never over a different value.
-"""
+"""The Logos v0.0.2 deployment record, and the script that completes it."""
 
 from __future__ import annotations
 
@@ -70,11 +62,6 @@ class TestTheRecord:
             pytest.skip("the record has been completed from the run")
         with pytest.raises(ConfigError, match="adapter_sha256"):
             load_expected_identity(RECORD)
-
-
-# ---------------------------------------------------------------------------
-# The fill script, on a fake run directory
-# ---------------------------------------------------------------------------
 
 
 def fake_run(

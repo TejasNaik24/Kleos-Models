@@ -1,13 +1,4 @@
-"""Resumable evaluation.
-
-An arm takes two to three hours on a free T4; a disconnect must cost one example, not the
-arm. The guarantees pinned here:
-
-* a crash followed by a resume produces the result an uninterrupted run would;
-* a resume under any other identity is refused;
-* a torn last line is dropped and regenerated, a damaged file is refused;
-* a finished result is never overwritten silently.
-"""
+"""Resumable evaluation."""
 
 from __future__ import annotations
 
@@ -82,8 +73,7 @@ class TestPartialFile:
         assert not state.dropped_torn_line
 
     def test_no_handle_stays_open_between_appends(self, tmp_path, monkeypatch):
-        # Colab's Drive mount uploads a file only once it is closed. A handle held
-        # open for the whole arm lost every generation of a killed session (L-F3).
+        # Drive uploads a file only once closed; a held handle lost a killed session (L-F3).
         path = tmp_path / "p.jsonl"
         start_partial(path, identity())
         opened: list[Any] = []
@@ -186,11 +176,6 @@ class TestAdapterIdentity:
         assert adapter_identity(None) is None
 
 
-# ---------------------------------------------------------------------------
-# Crash, then resume, through the real runner
-# ---------------------------------------------------------------------------
-
-
 def examples(count: int = 5) -> list[EvaluationExample]:
     rows = []
     for i in range(count):
@@ -261,11 +246,6 @@ class TestCrashThenResume:
         assert resumed.to_dict()["metrics"] == uninterrupted.to_dict()["metrics"]
 
 
-# ---------------------------------------------------------------------------
-# scripts/evaluate.py
-# ---------------------------------------------------------------------------
-
-
 def load_evaluate() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "evaluate_under_test", REPO_ROOT / "scripts" / "evaluate.py"
@@ -317,7 +297,7 @@ class TestEvaluateScript:
         assert len(payload["resume"]["identity_sha256"]) == 64
         assert payload["resume"]["new_generations"] == 4
         assert payload["resource_usage"]["compute_capability"]
-        assert not partial_path(output).exists()  # the partial has done its job
+        assert not partial_path(output).exists()
 
     def test_a_finished_result_is_never_overwritten_silently(self, cli):
         run, output, _ = cli

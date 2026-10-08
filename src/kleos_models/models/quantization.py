@@ -1,23 +1,4 @@
-"""4-bit / 8-bit quantization configuration (spec section 13).
-
-bitsandbytes is CUDA-only in practice. This module therefore separates two
-questions that are easy to conflate:
-
-* *Can this environment quantize at all?* — :func:`quantization_support`
-* *What config implements the requested mode?* — :func:`build_quantization_config`
-
-If quantization is requested and unavailable, the pipeline fails with a
-diagnostic. It never silently loads in full precision, because that turns a
-"QLoRA run" into a run that either OOMs confusingly or trains something other
-than what the manifest claims.
-
-Compute dtype
--------------
-``compute_dtype: auto`` resolves to bfloat16 on compute capability >= 8.0 and
-float16 below it. This matters on the free Colab tier: a T4 is compute capability
-7.5 and **cannot** do bfloat16. The resolved choice is always recorded, never
-silently applied.
-"""
+"""4-bit / 8-bit quantization configuration (spec section 13)."""
 
 from __future__ import annotations
 
@@ -108,12 +89,7 @@ def quantization_support() -> QuantizationSupport:
 def resolve_compute_dtype(
     requested: DType, support: QuantizationSupport | None = None
 ) -> tuple[Any, str]:
-    """Resolve a compute dtype to a real ``torch.dtype``.
-
-    Returns:
-        ``(torch_dtype, explanation)``. The explanation is recorded in the run
-        manifest, so an automatic choice is always visible.
-    """
+    """Resolve a compute dtype to a real ``torch.dtype``."""
     import torch
 
     support = support or quantization_support()
@@ -163,21 +139,7 @@ def build_quantization_config(
     extra_skip_modules: list[str] | None = None,
     support: QuantizationSupport | None = None,
 ) -> tuple[Any | None, dict[str, Any]]:
-    """Build a ``BitsAndBytesConfig`` for the requested mode.
-
-    Args:
-        config: Model configuration.
-        extra_skip_modules: Modules the family adapter requires to stay in full
-            precision (a vision tower, an MoE router).
-        support: Pre-probed environment support, to avoid probing twice.
-
-    Returns:
-        ``(quantization_config_or_None, metadata)``. Metadata is recorded in the
-        manifest so the exact quantization is always reproducible.
-
-    Raises:
-        ModelCompatibilityError: when quantization is requested but impossible.
-    """
+    """Build a ``BitsAndBytesConfig`` for the requested mode."""
     quant = config.quantization
     support = support or quantization_support()
 

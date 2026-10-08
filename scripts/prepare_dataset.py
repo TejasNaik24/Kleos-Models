@@ -48,16 +48,8 @@ from kleos_models.logging_utils import configure_logging, get_logger
 logger = get_logger("prepare_dataset")
 
 
-# ---------------------------------------------------------------------------
-# Synthetic fixture generation
-# ---------------------------------------------------------------------------
-
-#: Fixed creation timestamp for the fixtures.
-#
-# The fixtures must regenerate byte-identically — CI checks that the committed
-# files still match their generator. A live `datetime.now()` would make the
-# manifest differ on every run and turn that check into permanent noise.
-# Bump this only when the fixture content itself changes.
+#: Fixed so the fixtures regenerate byte-identically (CI diffs them against this script).
+#: Bump it only when the fixture content changes.
 FIXTURE_CREATED_AT = "2026-08-14T00:00:00+00:00"
 
 FIXTURE_WARNING = (
@@ -73,12 +65,7 @@ SYSTEM_PROMPT = (
 
 
 def _prioritization_examples() -> list[dict]:
-    """Notification-prioritization fixtures.
-
-    Each teaches the *policy* "prefer the closest deadline with the strongest
-    evidence of impact", never a fact about a particular person or company
-    (spec section 9).
-    """
+    """Notification-prioritization fixtures."""
     scenarios = [
         {
             "family": "deadline-vs-evidence-01",
@@ -161,8 +148,7 @@ def _prioritization_examples() -> list[dict]:
                 ],
                 "variation_axes": {
                     "domain": scenario["domain"],
-                    # Alternate the entity-set label so entity_holdout splitting
-                    # and coverage reporting have something to partition on.
+                    # Alternated so entity_holdout splitting has something to partition.
                     "entities": "set_a" if index % 2 else "set_b",
                     "urgency": "high" if index % 2 else "medium",
                     "deadlines": "mixed",
@@ -265,11 +251,7 @@ def _tool_routing_examples() -> list[dict]:
 
 
 def _conflict_examples() -> list[dict]:
-    """Memory-conflict-resolution fixtures.
-
-    Policy taught: prefer the more recent record when sources are equally
-    reliable, and say which was preferred and why.
-    """
+    """Memory-conflict-resolution fixtures."""
     cases = [
         (
             "career",
@@ -426,19 +408,10 @@ def generate_training_fixtures() -> list[dict]:
 
 
 def generate_evaluation_fixtures() -> list[dict]:
-    """Synthetic evaluation fixtures.
-
-    Deliberately includes:
-
-    * ``split_tag: in_distribution`` and ``ood`` items, so OOD reporting is
-      exercisable rather than silently skipped;
-    * ``scenario_family`` groups whose members differ only in wording, order or
-      format, so consistency testing has something to measure;
-    * ``perturbation_kind`` labels, so a decision flip can be attributed.
-    """
+    """Synthetic evaluation fixtures."""
     examples: list[dict] = []
 
-    # --- consistency group: same decision, three presentations ------------
+    # Consistency group: one decision, three presentations.
     base_items = (
         "- alpha-task: deadline in 1 day; evidence strong (confirmed impact)\n"
         "- beta-task: deadline in 2 weeks; evidence weak (unverified)\n"
@@ -508,7 +481,6 @@ def generate_evaluation_fixtures() -> list[dict]:
             }
         )
 
-    # --- in-distribution routing ------------------------------------------
     routing_cases = [
         ("memory_search", "Find the note I saved about the submission process.", "career"),
         ("web_search", "What conferences have deadlines next quarter?", "research"),
@@ -556,7 +528,6 @@ def generate_evaluation_fixtures() -> list[dict]:
             }
         )
 
-    # --- OOD: unseen domain -------------------------------------------------
     examples.append(
         {
             "id": "eval-ood-0001",
@@ -600,7 +571,6 @@ def generate_evaluation_fixtures() -> list[dict]:
         }
     )
 
-    # --- OOD: conflicting evidence ------------------------------------------
     examples.append(
         {
             "id": "eval-ood-0002",
@@ -635,9 +605,8 @@ def generate_evaluation_fixtures() -> list[dict]:
                 "author": "fixture_generator",
                 "notes": FIXTURE_WARNING,
             },
-            # Note: this inverts the recency policy on purpose. Source
-            # reliability outranks recency, and a model that learned "always
-            # prefer the newer record" as a surface rule will get this wrong.
+            # Inverts the recency policy on purpose: source reliability outranks recency,
+            # so a model that learned "prefer the newer record" gets this wrong.
             "reference": {
                 "label": "record-a",
                 "options": ["record-a", "record-b"],
@@ -649,7 +618,6 @@ def generate_evaluation_fixtures() -> list[dict]:
         }
     )
 
-    # --- rubric-graded briefing ---------------------------------------------
     examples.append(
         {
             "id": "eval-brief-0001",
@@ -705,8 +673,7 @@ def write_fixtures(output_dir: Path) -> dict[str, Path]:
     train_raw = generate_training_fixtures()
     eval_raw = generate_evaluation_fixtures()
 
-    # Validate before writing: a fixture that violates the contract would make
-    # every downstream test meaningless.
+    # Validate before writing: an invalid fixture makes every downstream test meaningless.
     train_examples = [TrainingExample.model_validate(e) for e in train_raw]
     eval_examples = [EvaluationExample.model_validate(e) for e in eval_raw]
 
@@ -758,17 +725,8 @@ def write_fixtures(output_dir: Path) -> dict[str, Path]:
     return {"train": train_path, "eval": eval_path, "manifest": manifest_path}
 
 
-# ---------------------------------------------------------------------------
-# JSON Schema emission
-# ---------------------------------------------------------------------------
-
-
 def emit_schemas(output_dir: Path) -> dict[str, Path]:
-    """Generate JSON Schema files from the pydantic models.
-
-    The pydantic models are the source of truth; these files are the published
-    contract. ``tests/test_data_schema.py`` asserts they never drift apart.
-    """
+    """Generate JSON Schema files from the pydantic models."""
     output_dir.mkdir(parents=True, exist_ok=True)
     targets = {
         "training_example.schema.json": TrainingExample,
@@ -786,11 +744,6 @@ def emit_schemas(output_dir: Path) -> dict[str, Path]:
         written[filename] = path
         logger.info("Wrote %s", path)
     return written
-
-
-# ---------------------------------------------------------------------------
-# Normalization mode
-# ---------------------------------------------------------------------------
 
 
 def prepare(input_path: Path, output_dir: Path, version: str, *, strict: bool) -> int:

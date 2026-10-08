@@ -1,16 +1,4 @@
-"""Versioned data contract for KLEOS training and evaluation (spec section 7).
-
-Every example is a conversation plus the metadata needed to reason about
-*coverage* and *provenance*. The metadata is not decoration: variation axes are
-what let us answer "how many examples cover each underlying situation type?"
-rather than mistaking a large dataset for a diverse one.
-
-These pydantic models are the source of truth. ``data/schema/*.schema.json`` is
-generated from them (``scripts/prepare_dataset.py --emit-schemas``) and a test
-asserts the two never drift apart.
-
-This module imports no torch.
-"""
+"""Versioned data contract for KLEOS training and evaluation (spec section 7)."""
 
 from __future__ import annotations
 
@@ -42,19 +30,13 @@ from kleos_models.constants import (
 
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 
-#: Reasoning spans are stripped before training. We never teach a model to emit
-#: display chain-of-thought (spec section 39).
+#: Stripped before training: never teach display chain-of-thought (spec section 39).
 _THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", flags=re.DOTALL | re.IGNORECASE)
 _DANGLING_CLOSE = re.compile(r"^\s*.*?</think>\s*", flags=re.DOTALL | re.IGNORECASE)
 
 
 def strip_reasoning(text: str) -> str:
-    """Remove reasoning spans from assistant text.
-
-    Handles both a well-formed ``<think>…</think>`` block and the Qwen Thinking
-    case where the template pre-opens ``<think>`` so generated text contains only
-    the closing tag.
-    """
+    """Remove reasoning spans from assistant text."""
     cleaned = _THINK_BLOCK.sub("", text)
     if "</think>" in cleaned:
         cleaned = _DANGLING_CLOSE.sub("", cleaned, count=1)
@@ -121,9 +103,8 @@ class Message(BaseModel):
 
     @model_serializer(mode="wrap")
     def _omit_absent_reasoning(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        # An example without reasoning must serialize byte for byte as it did
-        # before schema 1.1 (write_jsonl keeps None values, so 'name': null stays),
-        # or every earlier release would change its bytes when rewritten.
+        # Without reasoning, serialize byte for byte as before schema 1.1, or rewriting an
+        # earlier release would change its bytes.
         data: dict[str, Any] = handler(self)
         if self.reasoning is None:
             data.pop("reasoning", None)
@@ -245,23 +226,19 @@ class TrainingExample(BaseModel):
     def _conversation_shape(self) -> TrainingExample:
         roles = [m.role for m in self.messages]
 
-        # A supervised example must have something to learn from.
         if "assistant" not in roles:
             raise ValueError("a training example needs at least one assistant message")
         if roles[-1] != "assistant":
             raise ValueError(
                 f"the final message must be from the assistant, got role={roles[-1]!r}"
             )
-        # System messages only lead.
         for index, role in enumerate(roles):
             if role == "system" and index != 0:
                 raise ValueError(f"system message must be first, found one at index {index}")
-        # There must be a user turn before the first assistant turn.
         first_assistant = roles.index("assistant")
         if "user" not in roles[:first_assistant]:
             raise ValueError("the first assistant message must be preceded by a user message")
-        # No two consecutive assistant turns: that is a malformed conversation and
-        # produces ambiguous supervision spans.
+        # Consecutive assistant turns make supervision spans ambiguous.
         for index in range(1, len(roles)):
             if roles[index] == "assistant" and roles[index - 1] == "assistant":
                 raise ValueError(f"consecutive assistant messages at index {index - 1} and {index}")
@@ -275,8 +252,6 @@ class TrainingExample(BaseModel):
                 f"{self.variation_axes.domain!r}"
             )
         return self
-
-    # -- derived views ------------------------------------------------------
 
     @property
     def system_prompt(self) -> str | None:
@@ -292,13 +267,7 @@ class TrainingExample(BaseModel):
     def conversation_text(
         self, *, include_assistant: bool = True, include_reasoning: bool = True
     ) -> str:
-        """Flat text view used for duplicate and leakage detection.
-
-        ``include_reasoning=False`` leaves out schema-1.1 reasoning traces. Leakage
-        detection uses that view: a trace is generated alongside the answer, and
-        only train and validation carry one, so comparing with it would hide a
-        train copy of a test conversation.
-        """
+        """Flat text view used for duplicate and leakage detection."""
         parts = [
             f"{m.role}: {m.content}"
             + (
@@ -317,11 +286,7 @@ class TrainingExample(BaseModel):
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def group_key(self, key: str | None = None) -> str:
-        """Resolve the grouping key used by group-aware splitting.
-
-        Falls back through ``group_id`` → ``scenario_family`` → the example's own
-        id, so every example always belongs to exactly one group.
-        """
+        """Resolve the grouping key used by group-aware splitting."""
         if key:
             value = getattr(self.metadata, key, None)
             if value is None:
@@ -333,13 +298,7 @@ class TrainingExample(BaseModel):
         return self.metadata.group_id or self.metadata.scenario_family or self.id
 
     def strip_reasoning_spans(self) -> TrainingExample:
-        """Return a copy with reasoning removed from every assistant turn.
-
-        Applied before tokenization so hidden chain-of-thought never becomes a
-        training target. Removes both ``<think>`` spans in the content and the
-        schema-1.1 ``reasoning`` field: a model that is not trained to think must
-        not be trained on a trace it would never emit.
-        """
+        """Return a copy with reasoning removed from every assistant turn."""
         messages = [_without_reasoning(m) if m.role == "assistant" else m for m in self.messages]
         return self.model_copy(update={"messages": messages})
 
@@ -494,5 +453,4 @@ class DatasetManifest(BaseModel):
         return self
 
 
-#: Message roles as a set, for fast validation in hot loops.
 VALID_ROLES = frozenset(MESSAGE_ROLES)

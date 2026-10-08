@@ -1,14 +1,4 @@
-"""The container startup sequence, without Docker or a GPU.
-
-`python -m kleos_models.serving.startup` is the image's entrypoint. Everything
-it checks before the 24.5 GB download is exercised here against a synthetic
-package: secrets, package integrity, package *identity*, the model cache, and
-the GPU check (with a stand-in torch). One test runs the entrypoint as a real
-subprocess, the way the container does.
-
-What these tests cannot show is that the model loads and generates on a GPU
-inside the image. That is the first-start step in docs/deployment.md.
-"""
+"""The container startup sequence, without Docker or a GPU."""
 
 from __future__ import annotations
 
@@ -30,8 +20,7 @@ from kleos_models.errors import ConfigError
 from kleos_models.serving import startup
 from kleos_models.serving.manifest import DeploymentManifest, load_expected_identity
 
-# Placeholders, asserted absent from every output. Kept under 16 characters so
-# scripts/check_no_private_data.py cannot mistake them for real credentials.
+# Placeholders asserted absent from output; under 16 chars so the private-data scan skips them.
 SECRET = "unit-bearer"
 HF_SECRET = "unit-hub"
 
@@ -92,11 +81,6 @@ def record_with(tmp_path, package, **overrides) -> str:
     return str(write_record(tmp_path, DeploymentManifest.load(package), **overrides))
 
 
-# ---------------------------------------------------------------------------
-# Secrets
-# ---------------------------------------------------------------------------
-
-
 class TestSecrets:
     def test_a_key_from_the_environment(self, env):
         result = startup.preflight(env, check_gpu_device=False)
@@ -140,8 +124,7 @@ class TestSecrets:
             startup.preflight(env, check_gpu_device=False)
 
     def test_an_empty_api_key_means_no_start(self, env):
-        # docker/hermes.env.example ships the key empty; forgetting to fill it
-        # must stop the container, not start it unauthenticated.
+        # The env template ships the key empty; that must stop the container, not start it open.
         env["HERMES_API_KEY"] = ""
         with pytest.raises(startup.StartupError, match="HERMES_API_KEY"):
             startup.preflight(env, check_gpu_device=False)
@@ -165,11 +148,6 @@ class TestSecrets:
         token.write_text(HF_SECRET, encoding="utf-8")
         env["HF_TOKEN_FILE"] = str(token)
         assert startup.preflight(env, check_gpu_device=False).hf_token_source == "file"
-
-
-# ---------------------------------------------------------------------------
-# Package integrity and identity — the fail-closed core
-# ---------------------------------------------------------------------------
 
 
 class TestPackageMustBeTheFrozenArtifact:
@@ -209,8 +187,7 @@ class TestPackageMustBeTheFrozenArtifact:
     def test_an_intact_but_different_package_is_refused(
         self, env, tmp_path, package, override, value, field
     ):
-        # The package verifies against its own manifest — it is intact. It is
-        # just not the artifact this image was built to serve.
+        # The package is intact; it is just not the artifact this image serves.
         env["HERMES_EXPECTED_DEPLOYMENT_CONFIG"] = record_with(
             tmp_path, package, **{override: value}
         )
@@ -242,11 +219,6 @@ class TestPackageMustBeTheFrozenArtifact:
         )
         with pytest.raises(startup.StartupError, match="fix_mistral_regex"):
             startup.preflight(env, check_gpu_device=False)
-
-
-# ---------------------------------------------------------------------------
-# Model cache
-# ---------------------------------------------------------------------------
 
 
 class TestModelCache:
@@ -304,11 +276,6 @@ class TestModelCache:
         assert startup.preflight(env, check_gpu_device=False).base_cached is False
 
 
-# ---------------------------------------------------------------------------
-# GPU check, with a stand-in torch
-# ---------------------------------------------------------------------------
-
-
 def fake_torch(*, available: bool, total_gib: float = 15.0) -> SimpleNamespace:
     properties = SimpleNamespace(
         name="Tesla T4", total_memory=int(total_gib * 1024**3), major=7, minor=5
@@ -346,11 +313,6 @@ class TestGpuCheck:
     def test_preflight_includes_the_gpu_when_asked(self, env, monkeypatch):
         monkeypatch.setitem(sys.modules, "torch", fake_torch(available=True))
         assert startup.preflight(env, check_gpu_device=True).gpu["device"] == "Tesla T4"
-
-
-# ---------------------------------------------------------------------------
-# The entrypoint
-# ---------------------------------------------------------------------------
 
 
 class TestEntrypoint:
@@ -413,11 +375,6 @@ class TestEntrypoint:
         assert SECRET not in ok.stdout + ok.stderr + refused.stdout + refused.stderr
 
 
-# ---------------------------------------------------------------------------
-# Healthcheck probe
-# ---------------------------------------------------------------------------
-
-
 def serve_health(body: dict) -> tuple[http.server.HTTPServer, int]:
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -465,11 +422,6 @@ class TestHealthcheck:
             server.shutdown()
 
 
-# ---------------------------------------------------------------------------
-# The service itself: exit on load failure, identity inside the app
-# ---------------------------------------------------------------------------
-
-
 class TestServiceStartup:
     @pytest.fixture(autouse=True)
     def _needs_fastapi(self):
@@ -498,8 +450,7 @@ class TestServiceStartup:
         assert "No deployment manifest" in body["error"]
 
     def test_the_app_enforces_identity_even_without_the_entrypoint(self, tmp_path, package):
-        # Someone overriding the container entrypoint to run serve_hermes.py
-        # still gets the identity check, because the image sets the variable.
+        # Bypassing the entrypoint still gets the identity check: the image sets the variable.
         from fastapi.testclient import TestClient
 
         from kleos_models.serving.app import ServingSettings, create_app
@@ -519,11 +470,6 @@ class TestServiceStartup:
             TestClient(create_app(settings)),
         ):
             pass
-
-
-# ---------------------------------------------------------------------------
-# The real serving record
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")

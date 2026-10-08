@@ -1,13 +1,4 @@
-"""Deployment artifact identity and integrity.
-
-These tests guard the failures that are silent in production: an adapter served
-against the wrong base revision, a corrupted weight file, a manifest that
-disagrees with the artifact it describes. None of them raises on its own, so
-each one gets an explicit check here.
-
-Everything runs without torch, transformers or a GPU: verifying an artifact must
-be possible on the host that is about to serve it, before anything is loaded.
-"""
+"""Deployment artifact identity and integrity."""
 
 from __future__ import annotations
 
@@ -80,11 +71,7 @@ def build_package(
     adapter_config=None,
     extra_files: dict[str, bytes] | None = None,
 ) -> Path:
-    """A miniature but structurally real deployment package.
-
-    ``extra_files`` (relative path -> bytes) are written before the manifest
-    is built, so they are recorded in it like any other package file.
-    """
+    """A miniature but structurally real deployment package."""
     package = tmp_path / "hermes-test"
     (package / "adapter").mkdir(parents=True)
     (package / "tokenizer").mkdir(parents=True)
@@ -148,8 +135,6 @@ class TestManifestRecordsIdentity:
     def test_the_manifest_carries_no_filesystem_paths_from_the_build_host(self, tmp_path):
         package = build_package(tmp_path)
         text = (package / "manifest.json").read_text(encoding="utf-8")
-        # Recorded paths are relative to the package; the build directory must
-        # not leak into an artifact that travels.
         assert str(tmp_path) not in text
         assert "MyDrive" not in text
 
@@ -239,7 +224,7 @@ class TestBaseRevisionMustBePinned:
 class TestTokenizerContract:
     def test_the_serving_tokenizer_flag_is_explicit(self, tmp_path):
         manifest = verify_package(build_package(tmp_path))
-        # Not None, not absent: the value v0.0.6 trained under, stated.
+        # False is what v0.0.6 trained under.
         assert manifest.tokenizer.fix_mistral_regex is False
 
     def test_the_tokenizer_must_come_from_the_package(self, tmp_path):
@@ -247,8 +232,7 @@ class TestTokenizerContract:
         assert manifest.tokenizer.source == "frozen_package"
 
     def test_resolving_the_tokenizer_anywhere_else_is_refused(self):
-        # Loading from the Hub would put tokenization back at the mercy of a
-        # library default, which is the drift the pin exists to prevent.
+        # Hub loading would reintroduce the library-default drift the pin prevents.
         with pytest.raises(Exception, match="frozen_package"):
             TokenizerContract(source="hub", fix_mistral_regex=False)
 
@@ -301,12 +285,7 @@ class TestGenerationContract:
 
 
 class TestRuntimeContract:
-    """Schema v2: how the base is instantiated is part of the identity.
-
-    v0.0.6 was evaluated with 4-bit matmuls in float16. `auto` would resolve to
-    bfloat16 on any GPU newer than the T4 it trained on — including the ZeroGPU
-    Blackwell — and nothing would raise.
-    """
+    """Schema v2: how the base is instantiated is part of the identity."""
 
     @pytest.mark.parametrize("dtype", ["auto", "AUTO", "default", ""])
     def test_a_hardware_dependent_dtype_is_not_a_contract(self, dtype):
@@ -342,8 +321,7 @@ class TestRuntimeContract:
             verify_package(package)
 
     def test_a_version_one_package_is_refused(self, tmp_path):
-        # v1 packages never pinned the compute dtype; serving one would reopen
-        # exactly the drift schema v2 closes.
+        # v1 packages never pinned the compute dtype.
         package = build_package(tmp_path)
         payload = json.loads((package / "manifest.json").read_text())
         payload["deployment_artifact_version"] = 1

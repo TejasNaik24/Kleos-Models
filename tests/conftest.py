@@ -1,9 +1,4 @@
-"""Shared fixtures and optional-dependency handling.
-
-Tests that need torch/transformers/peft are marked and skipped cleanly when those
-are absent, so the light suite runs everywhere while the heavy tests still exist
-and run wherever the training extra is installed.
-"""
+"""Shared fixtures and optional-dependency handling."""
 
 from __future__ import annotations
 
@@ -19,8 +14,7 @@ FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures"
 EXAMPLES_DIR = REPO_ROOT / "data" / "examples"
 CONFIGS_DIR = REPO_ROOT / "configs"
 
-#: The sealed kleos-policy-v0.0.7 release, read in place from the sibling
-#: Kleos-Training-Data checkout (never copied into this public repository).
+#: The sealed kleos-policy-v0.0.7 release, read in place; never copied into this repository.
 V007_RELEASE = Path(
     os.environ.get(
         "KLEOS_V007_RELEASE",
@@ -64,11 +58,6 @@ def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
             item.add_marker(skip_cuda)
         if "requires_v007" in item.keywords and not has_v007:
             item.add_marker(skip_v007)
-
-
-# ---------------------------------------------------------------------------
-# Example builders
-# ---------------------------------------------------------------------------
 
 
 def make_example(
@@ -207,24 +196,12 @@ def training_config_path() -> Path:
     return CONFIGS_DIR / "training" / "qlora_small.yaml"
 
 
-# ---------------------------------------------------------------------------
-# Fake tokenizer
-# ---------------------------------------------------------------------------
-
-
 class FakeTokenizer:
-    """A minimal chat tokenizer for testing formatting and masking.
-
-    Deliberately mimics the structure of a real chat template — role markers and
-    an end-of-turn token — so assistant-span masking is exercised for real
-    without downloading a model. Encoding is word-level, which keeps expected
-    token counts easy to reason about in assertions.
-    """
+    """A minimal chat tokenizer for testing formatting and masking."""
 
     def __init__(self, *, supports_thinking: bool = False, renders_reasoning: bool = False) -> None:
         self.supports_thinking = supports_thinking
-        #: Render an assistant message's ``reasoning`` as Ministral 3 Reasoning's
-        #: template does: ``[THINK]reasoning[/THINK]`` ahead of the answer.
+        #: Render ``reasoning`` as Ministral 3 Reasoning does: ``[THINK]...[/THINK]`` first.
         self.renders_reasoning = renders_reasoning
         self.pad_token_id = 0
         self.eos_token_id = 1

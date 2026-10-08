@@ -1,24 +1,4 @@
-"""Graders: turn a model response into a score against a reference (spec section 21).
-
-A grader is a small strategy object with one job — score one response — so that
-new task types are added by registering a grader rather than by editing the
-evaluation runner.
-
-Three families:
-
-* **Deterministic** — exact match, classification, set overlap, ranking. These are
-  reproducible and free, and they cover the tasks where a right answer exists.
-* **Heuristic rubric** — structural checks (does the answer cite evidence, cover
-  the required points, avoid unsupported claims). Offline and reproducible; a
-  coarse approximation of human judgement, and labelled as such.
-* **LLM judge** — an interface only. It is opt-in, never the default, and it
-  records the judge model in the result so a score can never be silently
-  attributed to a different judge.
-
-Every grader returns a :class:`GradeResult` with a score in [0, 1] where higher is
-better, plus the sub-scores that produced it. Aggregate numbers alone hide the
-failure modes that matter.
-"""
+"""Graders: turn a model response into a score against a reference (spec section 21)."""
 
 from __future__ import annotations
 
@@ -78,22 +58,13 @@ class Grader(ABC):
         return f"<{type(self).__name__} name={self.name!r}>"
 
 
-# ---------------------------------------------------------------------------
-# Response parsing
-# ---------------------------------------------------------------------------
-
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", re.DOTALL)
 _BARE_JSON = re.compile(r"(\{.*\}|\[.*\])", re.DOTALL)
 _NUMBERED_LINE = re.compile(r"^\s*(?:\d+[.)]|[-*])\s*(.+?)\s*$", re.MULTILINE)
 
 
 def extract_json(text: str) -> Any | None:
-    """Pull a JSON object or array out of a model response.
-
-    Models wrap JSON in prose or fences far more often than they emit it cleanly,
-    and treating that as a wrong answer would measure formatting compliance rather
-    than judgment.
-    """
+    """Pull a JSON object or array out of a model response."""
     fenced = _JSON_BLOCK.search(text)
     if fenced:
         try:
@@ -115,20 +86,13 @@ def extract_json(text: str) -> Any | None:
 
 
 def _name_in(line: str, candidates: list[str]) -> str | None:
-    """Return the candidate a line refers to, or ``None`` when it names none.
-
-    A list item is almost never the bare name — models write
-    ``"1. Copperline — in the active workspace"``. Comparing that whole string
-    against the reference measures prose style, not ordering, so the item has to
-    be resolved back to the candidate it names.
-    """
+    """Return the candidate a line refers to, or ``None`` when it names none."""
     best: tuple[int, int, str] | None = None
     for candidate in candidates:
         match = re.search(rf"(?<!\w){re.escape(candidate)}(?!\w)", line, re.IGNORECASE)
         if match is None:
             continue
-        # Earliest mention wins. Length breaks ties so that a candidate which is
-        # a prefix of another ("Ash" vs "Ashgrove") cannot shadow the longer one.
+        # Earliest mention wins; ties go to the longer name, so "Ash" cannot shadow "Ashgrove".
         key = (match.start(), -len(candidate), candidate)
         if best is None or key < best:
             best = key
@@ -136,15 +100,7 @@ def _name_in(line: str, candidates: list[str]) -> str | None:
 
 
 def extract_ranking(text: str, *, candidates: list[str] | None = None) -> list[str]:
-    """Extract an ordered list from a response.
-
-    Tries JSON first, then a numbered or bulleted list, then — if candidates are
-    known — the order in which they are first mentioned.
-
-    When candidates are known, list items are resolved back to the candidate they
-    name, so that the same ordering expressed as JSON, as a numbered list, or as
-    prose receives the same score. Formatting is not what this grader measures.
-    """
+    """Extract an ordered list from a response."""
     parsed = extract_json(text)
     if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
         return parsed
@@ -162,16 +118,12 @@ def extract_ranking(text: str, *, candidates: list[str] | None = None) -> list[s
         for line in lines:
             stripped = line.strip()
             named = _name_in(stripped, candidates)
-            # Keep the raw line when it names no candidate. Dropping it would
-            # shorten the predicted ranking and inflate nDCG for an answer that
-            # never mentioned the item at all.
+            # Keep unmatched lines: dropping them would shorten the ranking and inflate nDCG.
             resolved.append(named if named is not None else stripped)
         return resolved
 
     if candidates:
-        # Word-boundary matching, not a raw substring search: looking for the
-        # candidate "a" inside "no ranking here" would otherwise match the "a"
-        # in "ranking" and manufacture a ranking out of prose.
+        # Word boundaries, not substrings: candidate "a" must not match inside "ranking".
         positions: list[tuple[int, str]] = []
         for candidate in candidates:
             match = re.search(rf"(?<!\w){re.escape(candidate)}(?!\w)", text, re.IGNORECASE)
@@ -194,8 +146,7 @@ def extract_label(text: str, *, allowed: list[str] | None = None) -> str:
 
     if allowed:
         normalized_text = normalize_answer(text)
-        # Prefer the label appearing earliest, so a trailing restatement of the
-        # options does not override the actual answer.
+        # Earliest label wins, so a trailing restatement of the options cannot override it.
         hits = [
             (normalized_text.find(normalize_answer(label)), label)
             for label in allowed
@@ -206,11 +157,6 @@ def extract_label(text: str, *, allowed: list[str] | None = None) -> str:
             return hits[0][1]
 
     return text.strip().split("\n")[0].strip()
-
-
-# ---------------------------------------------------------------------------
-# Deterministic graders
-# ---------------------------------------------------------------------------
 
 
 class ExactMatchGrader(Grader):
@@ -277,12 +223,7 @@ class SetMatchGrader(Grader):
 
 
 class RankingGrader(Grader):
-    """Ordering quality. Reference key: ``ranking``.
-
-    The headline score blends nDCG with top-1 accuracy, because for prioritization
-    the first item usually *is* the decision. Sub-scores are reported separately so
-    a good tau with the wrong top item is still visible.
-    """
+    """Ordering quality. Reference key: ``ranking``."""
 
     name = "ranking"
 
@@ -320,10 +261,6 @@ class RankingGrader(Grader):
         )
 
 
-# ---------------------------------------------------------------------------
-# Heuristic rubric grader
-# ---------------------------------------------------------------------------
-
 _HEDGE_PATTERNS = (
     re.compile(r"\bas an ai\b", re.IGNORECASE),
     re.compile(r"\bi (?:cannot|can't|am unable to)\b", re.IGNORECASE),
@@ -344,24 +281,7 @@ _ACTION_PATTERNS = (
 
 
 class HeuristicRubricGrader(Grader):
-    """Structural rubric scoring with no API calls (spec section 21).
-
-    Deliberately *coarse*. It checks properties that can be verified from the text
-    itself — required points covered, cited evidence ids present, forbidden content
-    absent, an actionable recommendation given — and reports each dimension
-    separately.
-
-    It is not a substitute for human judgement or an LLM judge on open-ended
-    quality. It exists so that rubric-graded tasks have a reproducible,
-    zero-cost, deterministic baseline that runs in CI, and so a rubric score can
-    never quietly become "whatever the judge model felt that day".
-
-    Reference keys:
-        ``required_points``  — substrings/phrases that must be covered
-        ``forbidden_points`` — content that must not appear
-        ``evidence_ids``     — evidence identifiers the answer should cite
-        ``expected_decision``— the decision the answer should reach
-    """
+    """Structural rubric scoring with no API calls (spec section 21)."""
 
     name = "heuristic_rubric"
 
@@ -390,7 +310,6 @@ class HeuristicRubricGrader(Grader):
         evidence_ids = [str(e) for e in reference.get("evidence_ids", [])]
         expected_decision = reference.get("expected_decision")
 
-        # correctness — does it reach the expected decision?
         if "correctness" in self.dimensions:
             if expected_decision is None:
                 correctness = 1.0 if not required else self._coverage(normalized, required)[0]
@@ -398,7 +317,6 @@ class HeuristicRubricGrader(Grader):
                 correctness = 1.0 if normalize_answer(str(expected_decision)) in normalized else 0.0
             sub_scores["correctness"] = correctness
 
-        # critical_omission — required points NOT covered (inverted below).
         if "critical_omission" in self.dimensions or "correctness" in self.dimensions:
             coverage, missing = self._coverage(normalized, required)
             details["required_point_coverage"] = round(coverage, 4)
@@ -406,7 +324,6 @@ class HeuristicRubricGrader(Grader):
             if "critical_omission" in self.dimensions:
                 sub_scores["critical_omission"] = 1.0 - coverage
 
-        # evidence_usage — are cited evidence ids present?
         if "evidence_usage" in self.dimensions:
             if evidence_ids:
                 cited = [e for e in evidence_ids if normalize_answer(e) in normalized]
@@ -416,14 +333,11 @@ class HeuristicRubricGrader(Grader):
                 usage = 1.0 if not required else min(1.0, len(normalized.split()) / 40)
             sub_scores["evidence_usage"] = usage
 
-        # actionability — does it actually recommend something?
         if "actionability" in self.dimensions:
             actionable = any(pattern.search(response) for pattern in _ACTION_PATTERNS)
             hedged = any(pattern.search(response) for pattern in _HEDGE_PATTERNS)
             sub_scores["actionability"] = float(actionable and not hedged)
 
-        # unsupported_claims — asserted-without-grounding phrasings, plus anything
-        # the reference explicitly forbids.
         if "unsupported_claims" in self.dimensions:
             hits = [p.pattern for p in _UNSUPPORTED_PATTERNS if p.search(response)]
             forbidden_hits = [f for f in forbidden if normalize_answer(f) in normalized]
@@ -469,23 +383,8 @@ class HeuristicRubricGrader(Grader):
         return sum(adjusted) / len(adjusted)
 
 
-# ---------------------------------------------------------------------------
-# LLM judge (interface only)
-# ---------------------------------------------------------------------------
-
-
 class LLMJudgeGrader(Grader):
-    """Rubric grading by a judge model (spec section 21).
-
-    Deliberately **not implemented against any provider**. Spec section 20 says not
-    to implement proprietary APIs unless requested, while still designing the
-    interface so they can be added later.
-
-    Supply a ``judge_fn(prompt) -> str`` to activate it. The judge model id is
-    recorded in every result, so scores from different judges can never be pooled
-    by accident — that would be exactly the kind of silent change to the
-    measurement instrument that spec section 36 forbids.
-    """
+    """Rubric grading by a judge model (spec section 21)."""
 
     name = "llm_judge"
 
@@ -560,16 +459,10 @@ class LLMJudgeGrader(Grader):
         )
 
 
-# ---------------------------------------------------------------------------
-# KLEOS behavioural policy grader
-# ---------------------------------------------------------------------------
-
 #: "What decided it: scope." — the phrasing the non-JSON KLEOS formats use.
 _DECIDED_BY = re.compile(r"what\s+decided\s+it\s*[:\-—]\s*([A-Za-z_][A-Za-z_ ]*)", re.IGNORECASE)
 
-#: Markers of a deliberate refusal to commit, taken from the KLEOS corpus rather
-#: than invented: "I do not know which one you want", "before I pick, tell me
-#: what you actually need", "is Ashford still right?", "until you say otherwise".
+#: Markers of a deliberate refusal to commit, taken from the KLEOS corpus, not invented.
 _ABSTENTION_MARKERS = (
     re.compile(r"\bi (?:do not|don't) know\b", re.IGNORECASE),
     re.compile(r"\b(?:tell|let) me\b", re.IGNORECASE),
@@ -587,13 +480,7 @@ _ABSTENTION_MARKERS = (
 
 
 def response_is_json_object(text: str) -> bool:
-    """Whether the response is a JSON object, i.e. the requested output format.
-
-    Kept separate from every judgement signal on purpose. KLEOS trains on prose
-    and bullets and tests on JSON, so format compliance and judgement quality are
-    different questions and blending them would make a formatting failure
-    indistinguishable from a reasoning failure.
-    """
+    """Whether the response is a JSON object, i.e. the requested output format."""
     return isinstance(extract_json(text), dict)
 
 
@@ -630,13 +517,7 @@ def extract_deciding_factor(text: str, *, allowed: list[str] | None = None) -> s
 
 
 def extract_confidence(text: str) -> tuple[bool, str]:
-    """Whether the response commits to an answer.
-
-    Returns ``(committed, method)``. ``method`` is ``"explicit"`` when the model
-    stated it in a ``confident`` field and ``"heuristic"`` when it had to be read
-    out of prose — the report separates the two, because the heuristic is an
-    approximation and should never be presented as if it were a measurement.
-    """
+    """Whether the response commits to an answer."""
     parsed = extract_json(text)
     if isinstance(parsed, dict):
         for key in ("confident", "is_confident", "confidence"):
@@ -647,18 +528,7 @@ def extract_confidence(text: str) -> tuple[bool, str]:
 
 
 class KleosPolicyGrader(Grader):
-    """The KLEOS behavioural target: ordering, stated reason, and commitment.
-
-    Reference keys: ``ranking`` (required), ``label`` (the deciding factor) and
-    ``confident``. Each is scored **format-agnostically** and reported as its own
-    sub-score, alongside ``format_valid``, which records whether the response was
-    JSON at all without contributing to the headline score.
-
-    That separation is the point. The KLEOS test split holds out ``format=json``
-    entirely, so a fine-tuned model may well answer correctly in the prose style
-    it was trained on. Folding format compliance into the score would report that
-    as a judgement failure.
-    """
+    """The KLEOS behavioural target: ordering, stated reason, and commitment."""
 
     name = "kleos_policy"
 
@@ -719,10 +589,6 @@ class KleosPolicyGrader(Grader):
         )
 
 
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
-
 GRADER_REGISTRY: dict[str, type[Grader]] = {
     "exact_match": ExactMatchGrader,
     "classification": ClassificationGrader,
@@ -735,11 +601,7 @@ GRADER_REGISTRY: dict[str, type[Grader]] = {
 
 
 def get_grader(name: str, **kwargs: Any) -> Grader:
-    """Instantiate a grader by name.
-
-    Raises:
-        EvaluationError: when the name is not registered.
-    """
+    """Instantiate a grader by name."""
     grader_class = GRADER_REGISTRY.get(name)
     if grader_class is None:
         raise EvaluationError(

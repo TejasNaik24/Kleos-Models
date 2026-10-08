@@ -1,15 +1,4 @@
-"""KLEOS Logos v0.0.2: the text tower of Ministral 3 14B Reasoning, trained to think.
-
-The Reasoning release has the Instruct release's architecture and text-tower
-shape, so it loads through the same text-only view. What differs is behaviour:
-it always thinks, writing ``[THINK]...[/THINK]`` before its answer, and its chat
-template renders an assistant message's ``reasoning`` field as that span. These
-tests pin the config, the adapter, the vendored template and the supervision of
-exactly ``[THINK]trace[/THINK]answer</s>``.
-
-The classes marked ``requires_torch`` need transformers >= 5 and run in the
-project's Docker image (see tests/test_ministral3_text_view.py for the command).
-"""
+"""KLEOS Logos v0.0.2: the text tower of Ministral 3 14B Reasoning, trained to think."""
 
 from __future__ import annotations
 
@@ -69,8 +58,7 @@ class TestReasoningModelConfig:
         assert reasoning.strip_thinking_from_targets is False
 
     def test_measured_settings(self):
-        # Measured on kleos-policy-v0.0.7 with the pinned tokenizer: the longest
-        # example is 736 tokens, and transformers flags the regex when unset.
+        # Measured on kleos-policy-v0.0.7: longest example 736 tokens; regex flagged when unset.
         config = reasoning_model()
         assert config.max_seq_length == 1024
         assert config.fix_mistral_regex is True
@@ -182,10 +170,6 @@ class TestBenchmarkPrompts:
         arm2 = OrchestrationConfig(enabled=False)
         assert all(build_prompt(e, arm2)[0].role == "system" for e in examples)
 
-
-# ---------------------------------------------------------------------------
-# On a real (tiny) checkpoint and tokenizer — Docker
-# ---------------------------------------------------------------------------
 
 TRACE_WORDS = ["score", "first", "wins", "so"]
 

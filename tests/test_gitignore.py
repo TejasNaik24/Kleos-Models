@@ -1,21 +1,4 @@
-"""Verify .gitignore actually keeps private data out of a public repository.
-
-This file exists because a .gitignore is easy to get subtly wrong and impossible
-to notice: the failure mode is a file being committed, which nobody sees until it
-is already public and in the history.
-
-Two mistakes it guards against, both of which were real:
-
-1. **Blocklist thinking.** Listing `data/raw/` and `*.jsonl` only blocks the
-   filenames someone thought of. `data/my_export.jsonl` sails through. The
-   `data/` rules are deny-by-default for this reason.
-2. **Trailing comments.** Git does not support them. `!data/schema/  # note` is a
-   literal pattern that matches nothing, silently un-ignoring nothing.
-
-The tests run git against a throwaway repository containing only the real
-.gitignore, so they check git's actual behaviour rather than re-implementing its
-matching rules.
-"""
+"""Verify .gitignore actually keeps private data out of a public repository."""
 
 from __future__ import annotations
 
@@ -28,26 +11,22 @@ from tests.conftest import REPO_ROOT
 
 #: Paths that must never reach a public commit.
 MUST_BE_IGNORED = [
-    # The private artifact, wherever someone puts it.
     "data/raw/conversations.jsonl",
     "data/raw/nested/deep/export.jsonl",
     "data/processed/train.jsonl",
     "data/private/resume.pdf",
     "data/exports/dump.jsonl",
-    # Loose files with names no blocklist would predict — the real gap.
+    # Loose files with names no blocklist would predict.
     "data/kleos_real_export.jsonl",
     "data/my_private_memories.json",
     "data/supabase_dump.csv",
     "data/manifest_from_private_repo.json",
     "data/notes.txt",
-    # A whole dataset version dropped in from the private repo.
     "data/kleos-policy-v0.1.0/train.jsonl",
     "data/kleos-policy-v0.1.0/manifest.json",
-    # Dataset artifacts elsewhere in the tree.
     "dataset/train.jsonl",
     "dataset/validation.jsonl",
     "dataset/test.jsonl",
-    # Secrets and training outputs.
     ".env",
     ".env.local",
     "outputs/run-1/adapter/adapter_model.safetensors",
@@ -56,7 +35,6 @@ MUST_BE_IGNORED = [
     "wandb/run-abc/logs",
     "credentials.json",
     "key.pem",
-    # Container secrets and deployment packages (the model-serving side).
     "docker/hermes.env",
     "docker/secrets/hermes_api_key",
     "docker/secrets/hf_token",
@@ -64,8 +42,7 @@ MUST_BE_IGNORED = [
     "packages/hermes-v0.0.6/tokenizer/tokenizer.json",
 ]
 
-#: Paths that must stay tracked. These contain no real data: the schema
-#: describes shape, the fixtures are synthetic and generated.
+#: Paths that must stay tracked; none of them contain real data.
 MUST_BE_TRACKED = [
     "data/README.md",
     "data/schema/training_example.schema.json",
@@ -79,7 +56,7 @@ MUST_BE_TRACKED = [
     "data/processed/.gitkeep",
     "outputs/.gitkeep",
     ".env.example",
-    # The committed container templates: placeholders only, no values.
+    # Container templates: placeholders only.
     "docker/hermes.env.example",
     "docker/hermes.Dockerfile",
     "docker/compose.yaml",
@@ -154,12 +131,7 @@ def test_staging_everything_admits_only_the_allowlist(sandbox):
 
 
 def test_gitignore_has_no_trailing_comments_on_patterns():
-    """Trailing comments are not supported and silently break a pattern.
-
-    A line like `!data/schema/  # keep this` is a literal pattern containing
-    spaces and a hash. It matches nothing, so the negation never takes effect and
-    the files stay ignored without any error.
-    """
+    """Trailing comments are not supported and silently break a pattern."""
     offenders = []
     for number, line in enumerate((REPO_ROOT / ".gitignore").read_text().splitlines(), 1):
         stripped = line.strip()

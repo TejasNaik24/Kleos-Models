@@ -1,22 +1,4 @@
-"""Typed configuration for KLEOS experiments (spec section 6).
-
-Design rules
-------------
-1. **No critical hyperparameter lives only in Python.** Everything that changes
-   an experiment's outcome is a YAML field validated by a pydantic model.
-2. **Configs compose.** A training config ``extends`` a base and ``includes``
-   model/dataset/evaluation fragments, so the same pipeline consumes Qwen and
-   Mistral configurations unchanged.
-3. **Configs hash.** ``ExperimentConfig.config_hash`` is a stable digest of the
-   fully resolved configuration and is recorded in every experiment manifest.
-   Two runs with the same hash used the same knobs.
-4. **New fields must not move old hashes.** A field added after runs were
-   recorded is listed in its class's ``HASH_NEUTRAL_FIELDS`` and defaults to
-   ``None``; while unset it is left out of every dump, so each recorded
-   ``config_hash`` still reproduces. Once set, it is hashed like any other knob.
-
-This module imports no torch and no transformers.
-"""
+"""Typed configuration for KLEOS experiments (spec section 6)."""
 
 from __future__ import annotations
 
@@ -53,23 +35,14 @@ from kleos_models.logging_utils import get_logger
 logger = get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Enums
-# ---------------------------------------------------------------------------
-
-
 class ReasoningCapability(str, Enum):
-    """What a checkpoint can actually do with reasoning (spec section 39).
-
-    This is a *model property*, not a prompting trick. It is declared by the
-    model-family adapter and cross-checked against the config.
-    """
+    """What a checkpoint can actually do with reasoning (spec section 39)."""
 
     #: No reasoning mode. e.g. Mistral Small 3.2, Ministral 8B.
     UNSUPPORTED = "unsupported"
-    #: Reasoning can be switched on or off. e.g. Qwen3-8B via `enable_thinking`.
+    #: Reasoning can be switched on or off, e.g. via `enable_thinking`.
     SWITCHABLE = "switchable"
-    #: Always reasons; cannot be disabled. e.g. Qwen3-30B-A3B-Thinking-2507.
+    #: Always reasons; cannot be disabled.
     ALWAYS_ON = "always_on"
 
 
@@ -121,12 +94,7 @@ class DType(str, Enum):
 
 
 class FeasibilityTier(str, Enum):
-    """How far a given (model, config, GPU) combination can go.
-
-    Spec section 3: architectural support is not the same as trainability on a
-    free GPU. These tiers keep that distinction explicit instead of letting a
-    run quietly shrink until it is no longer comparable.
-    """
+    """How far a given (model, config, GPU) combination can go."""
 
     INFEASIBLE = "infeasible"
     INFERENCE_ONLY = "inference_only"
@@ -135,26 +103,18 @@ class FeasibilityTier(str, Enum):
     FULL_RESEARCH = "full_research"
 
 
-# ---------------------------------------------------------------------------
-# Base model with strict behaviour
-# ---------------------------------------------------------------------------
-
-
 class StrictModel(BaseModel):
     """Reject unknown keys so typos in YAML fail loudly rather than silently."""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True, use_enum_values=False)
 
-    #: Fields added after runs were recorded (design rule 4). While ``None`` they
-    #: are omitted from every dump, in python and json mode alike, so the recorded
-    #: ``config_hash`` of every earlier run still reproduces. Only ever add names
-    #: here, and only for fields whose default is ``None``.
+    #: Fields added after runs were recorded (design rule 4): omitted from dumps while ``None``
+    #: so earlier ``config_hash`` values still reproduce. Only add fields defaulting to ``None``.
     HASH_NEUTRAL_FIELDS: ClassVar[frozenset[str]] = frozenset()
 
     @model_serializer(mode="wrap")
     def _omit_unset_hash_neutral_fields(self, handler: SerializerFunctionWrapHandler) -> Any:
-        # A wrap serializer rather than Field(exclude_if=...): it behaves the
-        # same on every pydantic 2.x, including whatever Colab has preinstalled.
+        # A wrap serializer, not Field(exclude_if=...), so it works on every pydantic 2.x.
         data = handler(self)
         names = type(self).HASH_NEUTRAL_FIELDS
         if names and isinstance(data, dict):
@@ -162,11 +122,6 @@ class StrictModel(BaseModel):
                 if name in data and data[name] is None:
                     del data[name]
         return data
-
-
-# ---------------------------------------------------------------------------
-# Model-side configuration
-# ---------------------------------------------------------------------------
 
 
 class ReasoningConfig(StrictModel):
@@ -302,9 +257,7 @@ class ModelConfig(StrictModel):
     )
     trust_remote_code: bool = False
 
-    # Architecture facts. Optional, but recorded when supplied and cross-checked
-    # against the loaded model so a config cannot quietly describe a different
-    # checkpoint than the one being trained.
+    # Optional; when set, cross-checked against the loaded checkpoint.
     model_type: str | None = Field(
         default=None, description="HF config model_type, e.g. 'qwen3', 'mistral3'."
     )
@@ -381,11 +334,6 @@ class ModelConfig(StrictModel):
     def tokenizer_id(self) -> str:
         """Tokenizer checkpoint, defaulting to the base model."""
         return self.tokenizer or self.base_model
-
-
-# ---------------------------------------------------------------------------
-# Dataset configuration
-# ---------------------------------------------------------------------------
 
 
 class DatasetFilters(StrictModel):
@@ -538,11 +486,6 @@ class DatasetConfig(StrictModel):
         return candidate if candidate.exists() else None
 
 
-# ---------------------------------------------------------------------------
-# Training configuration
-# ---------------------------------------------------------------------------
-
-
 class TrainingConfig(StrictModel):
     """Trainer hyperparameters and run policy.
 
@@ -645,11 +588,6 @@ class TrainingConfig(StrictModel):
         return self.per_device_train_batch_size * self.gradient_accumulation_steps
 
 
-# ---------------------------------------------------------------------------
-# Evaluation configuration
-# ---------------------------------------------------------------------------
-
-
 class GenerationConfig(StrictModel):
     """Decoding settings held identical across arms for fair comparison."""
 
@@ -743,11 +681,6 @@ class EvaluationConfig(StrictModel):
         return value
 
 
-# ---------------------------------------------------------------------------
-# Top-level experiment configuration
-# ---------------------------------------------------------------------------
-
-
 class ExperimentConfig(StrictModel):
     """A complete, self-describing experiment definition."""
 
@@ -780,8 +713,7 @@ class ExperimentConfig(StrictModel):
 
     @model_validator(mode="after")
     def _propagate_seed(self) -> ExperimentConfig:
-        # A single top-level seed keeps runs reproducible unless a component
-        # deliberately overrides it in YAML.
+        # The top-level seed applies unless a component overrides it in YAML.
         if "seed" not in self.training.model_fields_set:
             self.training.seed = self.seed
         return self
@@ -792,11 +724,7 @@ class ExperimentConfig(StrictModel):
 
     @property
     def config_hash(self) -> str:
-        """Stable sha256 over the resolved configuration.
-
-        Recorded in every manifest. Identical hashes mean identical knobs, which
-        is what makes "same config, different seed" a checkable claim.
-        """
+        """Stable sha256 over the resolved configuration."""
         payload = json.dumps(self.canonical_dict(), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -815,10 +743,6 @@ class ExperimentConfig(StrictModel):
         target.write_text(self.to_yaml(), encoding="utf-8")
         return target
 
-
-# ---------------------------------------------------------------------------
-# YAML loading, composition and overrides
-# ---------------------------------------------------------------------------
 
 _ENV_PATTERN = re.compile(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
 
@@ -853,12 +777,7 @@ def _expand_env(value: Any) -> Any:
 
 
 def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
-    """Recursively merge ``override`` onto ``base``.
-
-    Dicts merge key-wise; every other type (including lists) is replaced
-    outright. Replacing lists is deliberate — merging ``target_modules`` element
-    by element would silently produce a target set nobody wrote down.
-    """
+    """Recursively merge ``override`` onto ``base``."""
     result: dict[str, Any] = dict(copy.deepcopy(dict(base)))
     for key, value in override.items():
         existing = result.get(key)
@@ -903,20 +822,7 @@ def _resolve_layers(
     include_overrides: Mapping[str, Path] | None = None,
     applied: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Load one YAML file with its ``extends`` and ``includes`` resolved.
-
-    ``extends`` supplies defaults that the current file overrides. ``includes``
-    maps a top-level section (``model``, ``dataset``, ``training``,
-    ``evaluation``) to another YAML file, which is how one training config
-    consumes an unmodified model config.
-
-    ``include_overrides`` swaps the file a section includes (``--set-model``):
-    the replacement is used *instead of* the declared fragment, not merged into
-    it, and the declaring file's own section keys still apply on top. It reaches
-    every file in the ``extends`` chain but never the fragments themselves.
-
-    Relative paths resolve against the file that declares them.
-    """
+    """Load one YAML file with its ``extends`` and ``includes`` resolved."""
     resolved = path.resolve()
     if resolved in seen:
         cycle = " -> ".join(p.name for p in [*seen, resolved])
@@ -955,28 +861,19 @@ def _resolve_layers(
         else:
             include_resolved = (base_dir / str(include_path)).resolve()
         fragment = _resolve_layers(include_resolved, seen)
-        # A fragment may either be the section body directly, or wrap it under
-        # the section name. Support both so configs/models/*.yaml can carry a
-        # readable top-level `model:` key.
+        # Accept the section body or the body wrapped under the section name (e.g. `model:`).
         body = fragment.get(section, fragment) if isinstance(fragment, dict) else fragment
         merged = deep_merge(merged, {section: body})
 
     return deep_merge(merged, raw)
 
 
-#: YAML 1.1 only recognizes scientific notation with an explicit decimal point
-#: and sign (``1.0e-4``), so a natural ``--set lr=1e-4`` would parse as a string.
-#: This pattern catches the forms a user actually types.
+#: YAML 1.1 reads ``1e-4`` as a string (it needs ``1.0e-4``); this matches what users type.
 _SCIENTIFIC_NOTATION = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)[eE][+-]?\d+$")
 
 
 def parse_override(item: str) -> tuple[list[str], Any]:
-    """Parse a ``--set a.b.c=value`` override into a key path and typed value.
-
-    Values are parsed as YAML, so ``true``, ``3`` and ``[a,b]`` arrive with the
-    right type. Scientific notation is handled explicitly because YAML 1.1 would
-    otherwise turn ``1e-4`` into the string ``"1e-4"``.
-    """
+    """Parse a ``--set a.b.c=value`` override into a key path and typed value."""
     if "=" not in item:
         raise ConfigError(
             f"Malformed override {item!r}; expected key.path=value.",
@@ -1021,13 +918,7 @@ def load_raw_config(
     *,
     model_path: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Resolve a config file to a plain dict without validating it.
-
-    Args:
-        model_path: Use this model config instead of the one the file includes
-            (``--set-model``). Refused for a file that includes no model config,
-            because there would be nothing to replace.
-    """
+    """Resolve a config file to a plain dict without validating it."""
     include_overrides = {"model": Path(model_path)} if model_path is not None else None
     applied: set[str] = set()
     resolved = _resolve_layers(Path(path), [], include_overrides, applied)
@@ -1048,21 +939,7 @@ def load_config(
     output_dir: Path | str | None = None,
     model_path: Path | str | None = None,
 ) -> ExperimentConfig:
-    """Load, compose, override and validate an experiment configuration.
-
-    Args:
-        path: Entry-point YAML file.
-        overrides: ``key.path=value`` strings from ``--set``.
-        dataset_path: CLI ``--dataset`` value. This is the supported way to point
-            a run at the externally produced private dataset without this repo
-            depending on the private one (spec section 27).
-        output_dir: CLI ``--output-dir`` value.
-        model_path: A model config to use instead of the included one
-            (``--set-model``). Note that ``--set model.name=...`` only renames.
-
-    Raises:
-        ConfigError: with the offending field path when validation fails.
-    """
+    """Load, compose, override and validate an experiment configuration."""
     raw = load_raw_config(path, overrides, model_path=model_path)
 
     if dataset_path is not None:

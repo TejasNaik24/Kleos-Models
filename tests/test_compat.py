@@ -1,10 +1,4 @@
-"""transformers 4.56 ↔ 5.x compatibility tests.
-
-The shim is tested by *injecting* each API generation's field set, so both paths
-are covered without installing both versions of transformers. That matters: these
-translations are the difference between a run that trains and a `TypeError` deep
-inside TrainingArguments.
-"""
+"""transformers 4.56 ↔ 5.x compatibility tests."""
 
 from __future__ import annotations
 
@@ -17,7 +11,6 @@ from kleos_models.compat import (
     package_version,
 )
 
-# Field sets as they exist in each generation.
 V4_FIELDS = frozenset(
     {
         "output_dir",
@@ -82,10 +75,10 @@ class TestWarmupTranslation:
     def test_v4_keeps_warmup_ratio(self):
         kwargs, notes = build_training_arguments_kwargs({"warmup_ratio": 0.03}, supported=V4_FIELDS)
         assert kwargs["warmup_ratio"] == 0.03
-        assert not notes  # nothing to translate on 4.x
+        assert not notes
 
     def test_v5_maps_warmup_ratio_to_warmup_steps(self):
-        # v5 removed warmup_ratio; warmup_steps is a float where <1 is a ratio.
+        # On v5 a warmup_steps value below 1 is read as a ratio.
         kwargs, notes = build_training_arguments_kwargs({"warmup_ratio": 0.03}, supported=V5_FIELDS)
         assert "warmup_ratio" not in kwargs
         assert kwargs["warmup_steps"] == 0.03
@@ -167,7 +160,6 @@ class TestDtypeKwarg:
 
 class TestVersionChecking:
     def test_no_transformers_installed_is_not_an_error(self):
-        # This suite runs in the light environment, where transformers is absent.
         result = check_transformers_version()
         assert result is None or isinstance(result, str)
 
@@ -176,7 +168,6 @@ class TestVersionChecking:
         assert "torch" in versions
         assert "transformers" in versions
         assert "peft" in versions
-        # pydantic is a core dependency, so it must be present.
         assert versions["pydantic"] is not None
 
     def test_package_version_returns_none_for_absent_packages(self):

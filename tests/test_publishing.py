@@ -1,19 +1,4 @@
-"""The publishing boundary: what may leave the machine, and what the card claims.
-
-This is the last gate before an artifact becomes public, and it had no test
-coverage at all until audit finding F2. These tests pin two separate things:
-
-* **Security** — the forbidden patterns, the allowlist, and the content scanner.
-  Those controls are deliberately unchanged by F2 and are pinned here so a later
-  change cannot quietly widen them.
-* **Packaging** — tokenizer artifacts are excluded on purpose (F2), and the model
-  card must tell a reader where the tokenizer actually comes from.
-
-The scanner tests assemble their fake credentials at runtime rather than
-embedding literals, so this module does not need a ``SELF_EXEMPT`` entry in
-``scripts/check_no_private_data.py``. Exempting a file turns the scanner off for
-it entirely, which is a poor trade for test-fixture convenience.
-"""
+"""The publishing boundary: what may leave the machine, and what the card claims."""
 
 from __future__ import annotations
 
@@ -70,9 +55,7 @@ class TestTokenizerIsNotPublished:
         assert not (_names(run_dir) & TOKENIZER_ARTIFACTS)
 
     def test_no_partial_tokenizer_bundle_is_emitted(self, run_dir):
-        # The bug this replaces: tokenizer_config.json shipped while the ~17MB
-        # vocabulary was refused by the scan cap, producing a repository that
-        # looks like it has a tokenizer but cannot build one.
+        # A tokenizer_config.json without its ~17MB vocabulary looks complete but cannot load.
         uploaded = _names(run_dir)
         assert not (uploaded & TOKENIZER_ARTIFACTS), (
             "A partial tokenizer bundle is worse than none: without a vocabulary "
@@ -80,7 +63,6 @@ class TestTokenizerIsNotPublished:
         )
 
     def test_the_allowlist_itself_names_no_tokenizer_file(self):
-        # Defence in depth: even if one appeared in the adapter directory.
         assert not (ALLOWED_UPLOAD_NAMES & TOKENIZER_ARTIFACTS)
 
     def test_a_tokenizer_file_inside_the_adapter_dir_is_refused_by_name(self, run_dir):
@@ -129,7 +111,6 @@ class TestForbiddenFilesAreRefused:
         assert any(p.name == "notes.txt" and "allowlist" in r for p, r in rejected)
 
     def test_the_allowlist_is_closed_not_open(self, run_dir):
-        # Anything new must be added deliberately; nothing leaks by default.
         (run_dir / "adapter" / "surprise.bin").write_bytes(b"\x00")
         assert "surprise.bin" not in _names(run_dir)
 
@@ -141,9 +122,7 @@ class TestContentScanning:
         "prefix,body", [("sk-", "a" * 32), ("AKIA", "B" * 16), ("hf_", "c" * 36)]
     )
     def test_a_secret_in_an_allowed_file_is_refused(self, run_dir, prefix, body):
-        # Assembled at runtime rather than written as literals, so this file does
-        # not itself trip the repository's private-data scanner and does not need
-        # a SELF_EXEMPT entry. Exempting a file turns the scanner off for it.
+        # Built at runtime so this file needs no exemption from the private-data scanner.
         secret = prefix + body
         (run_dir / "manifest.json").write_text(json.dumps({"note": f"key {secret}"}))
         _, rejected = collect_upload_files(run_dir / "adapter", run_dir)
@@ -154,7 +133,7 @@ class TestContentScanning:
         assert "manifest.json" in _names(run_dir)
 
     def test_the_five_megabyte_cap_still_refuses_large_scanned_text(self, run_dir):
-        # F2 did NOT widen this. A >5MB json is refused rather than skipped.
+        # F2 did not widen this: a >5MB json is refused, not skipped.
         (run_dir / "manifest.json").write_text("{" + '"pad":"' + "x" * (6 * 1024 * 1024) + '"}')
         _, rejected = collect_upload_files(run_dir / "adapter", run_dir)
         reasons = {p.name: r for p, r in rejected}
@@ -206,13 +185,7 @@ class TestModelCardTokenizerGuidance:
 
 
 class TestServingRevisionIsDistinctFromTrainingRevision:
-    """A run made against a moving pointer still needs an actionable base.
-
-    v0.0.6 was trained with ``revision: main`` and the commit it resolved to is
-    not recoverable. Reporting only that leaves a consumer with a warning and no
-    action; reporting only the serving pin would imply the adapter was trained
-    against it. The card states both, and says which is which.
-    """
+    """A run made against a moving pointer still needs an actionable base."""
 
     @staticmethod
     def _card(*, revision: str = "main", serving: str | None = None) -> str:
@@ -239,7 +212,7 @@ class TestServingRevisionIsDistinctFromTrainingRevision:
         assert "not recoverable" in card
 
     def test_the_card_does_not_claim_the_run_used_the_serving_sha(self):
-        # The whole point of F3: we pin going forward without rewriting history.
+        # F3: pin going forward without rewriting history.
         card = self._card(serving=PINNED_SHA)
         assert "not** a claim that the original run used that commit" in card
 
@@ -256,7 +229,6 @@ class TestServingRevisionIsDistinctFromTrainingRevision:
         assert "moving pointer" in card
 
     def test_a_serving_revision_equal_to_the_training_revision_adds_nothing(self):
-        # No spurious second row when there is only one fact to report.
         card = self._card(revision=PINNED_SHA, serving=PINNED_SHA)
         assert "Recommended serving revision" not in card
         assert f"| Revision | `{PINNED_SHA}` |" in card

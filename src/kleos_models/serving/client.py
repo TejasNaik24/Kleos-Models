@@ -1,22 +1,12 @@
-# ---------------------------------------------------------------------------
-# The reference Hermes client for the KLEOS backend.
+# The reference Hermes client for the KLEOS backend (never called from a browser).
 #
-# KLEOS calls Hermes from its backend only, never from a browser. This client
-# turns every outcome — an answer, a sleeping Space, a spent quota, a full
-# queue, a network failure — into the status contract in `status.py`, and it
-# never raises for any of them. Hermes is optional: whatever this returns, KLEOS
-# either shows the answer or quietly uses its default model.
+# Every outcome, from an answer to a sleeping Space or a network failure, maps to the
+# status contract in `status.py`; nothing raises. Hermes is optional: KLEOS shows the
+# answer or falls back to its default model.
 #
-# Two providers behind one interface:
-#   zerogpu  a Gradio Space on free ZeroGPU, through gradio_client
-#   http     the Docker/FastAPI service (`serving/app.py`), through httpx
-#
-# KLEOS can import this module or port it. What matters is the mapping, and
-# the mapping is what tests/test_hermes_client.py pins.
-#
-# gradio_client and httpx are imported lazily: neither is a dependency of this
-# package, and only the provider in use needs its library.
-# ---------------------------------------------------------------------------
+# Providers: zerogpu (a Gradio Space, via gradio_client) and http (the FastAPI service,
+# via httpx), both imported lazily since neither is a package dependency.
+# tests/test_hermes_client.py pins the mapping.
 
 from __future__ import annotations
 
@@ -57,8 +47,7 @@ ENV_API_KEY = "HERMES_API_KEY"
 
 PROVIDERS = ("zerogpu", "http")
 DEFAULT_TIMEOUT_SECONDS = 120.0
-#: How long one call waits for a connection to a waking Space before saying
-#: `starting`. The connection keeps going in the background either way.
+#: How long a call waits on a waking Space before returning `starting`; it keeps connecting.
 DEFAULT_CONNECT_WAIT_SECONDS = 10.0
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
@@ -76,20 +65,18 @@ class HermesClientSettings:
     base_url: str | None = None
     #: Upper bound on one generate call, queueing included.
     timeout: float = DEFAULT_TIMEOUT_SECONDS
-    #: KLEOS-side ceiling on max_new_tokens. The service enforces its own too.
+    #: KLEOS-side ceiling on max_new_tokens; the service enforces its own too.
     max_output_tokens: int | None = None
     #: zerogpu: opens a private Space, and ZeroGPU charges GPU time to this account.
     hf_token: str | None = None
     #: The shared secret the Space (X-Hermes-Key) or service (Bearer) checks.
     api_key: str | None = None
     connect_wait: float = DEFAULT_CONNECT_WAIT_SECONDS
-    #: The header the Space reads the shared secret from: the model's own
-    #: (``x-hermes-key`` for Hermes, ``x-logos-key`` for Logos).
+    #: The header the Space reads the secret from (``x-hermes-key``, ``x-logos-key``).
     key_header: str = KEY_HEADER
     #: The prefix of this model's settings, for naming them in problems().
     env_prefix: str = "HERMES"
-    #: The model's reply contract: 1 for Hermes, 2 for a model that returns its
-    #: trace (Logos). The client's own refusals carry it too.
+    #: Reply contract: 1, or 2 for a model that returns its trace (Logos). Refusals carry it too.
     contract_version: int = CONTRACT_VERSION
 
     @property
@@ -153,18 +140,8 @@ class HermesClientSettings:
         return found
 
 
-# ---------------------------------------------------------------------------
-# Error mapping on the caller's side
-# ---------------------------------------------------------------------------
-
-
 def classify_connect_error(error: BaseException) -> HermesStatus:
-    """Why a connection to the Space could not be made.
-
-    `disabled` only when an operator has to act (the Space is paused, failed
-    to build, crashed, or cannot be found with this token). Anything else is
-    most likely a Space waking from sleep, and is worth retrying.
-    """
+    """Why a connection to the Space could not be made."""
     text = str(error).lower()
     if "invalid state" in text or "could not find space" in text:
         return HermesStatus.DISABLED
@@ -172,8 +149,7 @@ def classify_connect_error(error: BaseException) -> HermesStatus:
 
 
 def _is_transport_error(error: BaseException) -> bool:
-    # httpx.TransportError covers connect/read/write failures and timeouts.
-    # Matched by name so this module does not need httpx to import.
+    # httpx.TransportError, matched by name so importing needs no httpx.
     return any(cls.__name__ == "TransportError" for cls in type(error).__mro__)
 
 
@@ -201,12 +177,7 @@ def validate_contract(
     messages: Mapping[HermesStatus, str] | None = None,
     contract_version: int = CONTRACT_VERSION,
 ) -> dict[str, Any]:
-    """Pass a contract response through; replace anything else with model_error.
-
-    A response KLEOS cannot interpret must not reach it as if it were one.
-    ``answer`` requires a successful response to carry text (generate, not status).
-    ``messages`` and ``contract_version`` are the calling model's, for the refusal.
-    """
+    """Pass a contract response through; replace anything else with model_error."""
     statuses = {status.value for status in HermesStatus}
     if (
         isinstance(result, dict)
@@ -227,18 +198,12 @@ def validate_contract(
     )
 
 
-# ---------------------------------------------------------------------------
-# Default transports
-# ---------------------------------------------------------------------------
-
-
 def _gradio_client(settings: HermesClientSettings) -> Any:
     from gradio_client import Client
 
     return Client(
         settings.space,
-        # False, not None: None would fall back to a token cached on the host
-        # by `hf auth login`, silently charging someone else's quota.
+        # False, not None: None falls back to a host-cached `hf auth login` token and its quota.
         token=settings.hf_token or False,
         headers={settings.key_header: settings.api_key or ""},
         verbose=False,
@@ -269,8 +234,6 @@ class HermesClient:
         self._problems = self.settings.problems() if self.settings.enabled else []
         if self._problems:
             logger.error("Hermes is enabled but misconfigured: %s", "; ".join(self._problems))
-
-    # -- public --------------------------------------------------------------
 
     def generate(
         self,
@@ -306,8 +269,6 @@ class HermesClient:
             return self._call_space("/status", None, request_id)
         return self._get_http_ready(request_id)
 
-    # -- shared --------------------------------------------------------------
-
     def _refuse(self, status: HermesStatus, request_id: str, **kwargs: Any) -> dict[str, Any]:
         """A refusal the client makes itself, in its model's words and contract version."""
         return error_response(
@@ -323,16 +284,8 @@ class HermesClient:
             return self._refuse(HermesStatus.DISABLED, request_id)
         return None
 
-    # -- zerogpu -------------------------------------------------------------
-
     def _connect(self) -> tuple[Any | None, HermesStatus]:
-        """The Space client, connecting in the background if needed.
-
-        Connecting wakes a sleeping Space and can take minutes. It runs on a
-        worker thread; a call waits at most ``connect_wait`` for it and reports
-        `starting` otherwise, so a KLEOS request is never held hostage by a
-        cold boot.
-        """
+        """The Space client, connecting in the background if needed."""
         with self._lock:
             if self._space is not None:
                 return self._space, HermesStatus.READY
@@ -370,7 +323,7 @@ class HermesClient:
             result = job.result(timeout=self.settings.timeout)
         except Exception as exc:
             if job is not None and isinstance(exc, TimeoutError):
-                with contextlib.suppress(Exception):  # best effort
+                with contextlib.suppress(Exception):
                     job.cancel()  # free the Space's queue slot
             status, retry_after = classify_call_error(exc)
             if status is HermesStatus.QUEUE_UNAVAILABLE:
@@ -390,8 +343,6 @@ class HermesClient:
             messages=self._messages,
             contract_version=self.settings.contract_version,
         )
-
-    # -- http ----------------------------------------------------------------
 
     def _http_client(self) -> Any:
         if self._http is None:
@@ -420,9 +371,8 @@ class HermesClient:
             return self._refuse(status_for_http(response.status_code), request_id)
         try:
             body = response.json()
-            # A thinking model's service sends its trace; the reply then says so
-            # (contract version 2). Without one it is the version 1 reply. A body
-            # that is not an object fails below, as a TypeError.
+            # A `reasoning` field is a thinking model's trace (contract version 2). A non-object
+            # body fails below, as a TypeError.
             traced = isinstance(body, dict) and "reasoning" in body
             reasoning = body.get("reasoning") if traced else None
             return ok_response(

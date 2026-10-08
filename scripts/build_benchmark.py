@@ -51,8 +51,7 @@ RELEASE_LOCK_FILENAME = "RELEASE.lock"
 BENCHMARK_FILENAME = "benchmark.jsonl"
 BENCHMARK_MANIFEST_FILENAME = "benchmark_manifest.json"
 
-#: The held-out axis in a ``format_holdout`` release. Declared explicitly so the
-#: OOD report can never silently treat this benchmark as in-distribution.
+#: Explicit so the OOD report never treats this benchmark as in-distribution.
 OOD_SHIFT = "unseen_formats"
 DEFAULT_GRADER = "kleos_policy"
 
@@ -100,13 +99,7 @@ def verify_sealed_release(dataset_dir: Path) -> dict[str, Any]:
 
 
 def build_reference(example: TrainingExample) -> dict[str, Any]:
-    """Read the grader reference out of the sealed target turn.
-
-    Raises:
-        DatasetIntegrityError: when the target is not the JSON object the
-            ``format_holdout`` test split is defined to contain. Guessing a
-            reference from prose would invent ground truth.
-    """
+    """Read the grader reference out of the sealed target turn."""
     target = example.messages[-1].content
     try:
         payload = json.loads(target)
@@ -127,8 +120,7 @@ def build_reference(example: TrainingExample) -> dict[str, Any]:
 
     reference: dict[str, Any] = {"ranking": [str(item) for item in payload["ranking"]]}
 
-    # 'label' is the key every classification-style grader reads. The deciding
-    # factor is the policy KLEOS is being taught, so it is the label here.
+    # Graders read 'label'; the deciding factor is the policy being taught.
     if isinstance(payload.get("deciding_factor"), str):
         reference["label"] = payload["deciding_factor"]
     if isinstance(payload.get("confident"), bool):
@@ -143,12 +135,7 @@ def build_reference(example: TrainingExample) -> dict[str, Any]:
 def to_evaluation_example(
     example: TrainingExample, *, options: list[str], grader: str
 ) -> EvaluationExample:
-    """Convert one sealed training row into a benchmark row.
-
-    The prompt is carried across verbatim, minus the target turn. Nothing about
-    the conversation is rewritten, so the model sees exactly what the release
-    specifies.
-    """
+    """Convert one sealed training row into a benchmark row."""
     reference = build_reference(example)
     if "label" in reference:
         reference["options"] = options
@@ -214,8 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"  loaded       : {len(examples)} example(s)")
 
-    # A stable, sorted option list keeps the classification reference identical
-    # across rebuilds regardless of row order.
+    # Sorted so the classification reference is identical across rebuilds.
     options = sorted(
         {
             reference["label"]
@@ -253,8 +239,7 @@ def main(argv: list[str] | None = None) -> int:
 
     write_jsonl(benchmark, benchmark_path)
 
-    # Round-trip through the loader the harness itself uses. Writing a file the
-    # evaluator cannot read is the exact failure this script exists to remove.
+    # Round-trip through the harness's own loader so the evaluator can read it.
     reloaded, reload_report = load_examples(benchmark_path, model=EvaluationExample, strict=True)
     if reload_report.errors or len(reloaded) != len(examples):
         print(

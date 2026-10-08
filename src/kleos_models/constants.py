@@ -1,42 +1,21 @@
-"""Shared vocabulary for the KLEOS research pipeline.
-
-Anything that must stay stable across dataset versions, experiment manifests and
-evaluation reports lives here. Changing a value in this module is a *research*
-change, not a refactor: it can invalidate comparisons between existing runs.
-"""
+"""Shared vocabulary for the KLEOS research pipeline."""
 
 from __future__ import annotations
 
 from typing import Final
 
-# ---------------------------------------------------------------------------
-# Schema versioning
-# ---------------------------------------------------------------------------
-
-#: Version of the training/evaluation example schema. Bump on any breaking
-#: change to required fields. Datasets record the schema version they were
-#: written against so old artifacts remain interpretable.
+#: Example schema version. Bump on any breaking change to required fields.
 DATASET_SCHEMA_VERSION: Final[str] = "1.0"
 
-#: Schema versions this package reads. 1.1 adds one optional field, an assistant
-#: message's ``reasoning`` (kleos-policy-v0.0.7 onward); a 1.0 example is a valid
-#: 1.1 example without it. This package still writes 1.0.
+#: Schema versions read. 1.1 adds an optional assistant ``reasoning``; writes stay 1.0.
 SUPPORTED_SCHEMA_VERSIONS: Final[tuple[str, ...]] = ("1.0", "1.1")
 
-#: Version of the preprocessing/formatting logic. Bump when formatting changes
-#: in a way that would alter tokenized output for identical source examples.
+#: Bump when formatting would change tokenized output for identical examples.
 PREPROCESSING_VERSION: Final[str] = "1.0"
 
 
-# ---------------------------------------------------------------------------
-# Task registry (spec section 8)
-# ---------------------------------------------------------------------------
-
-#: Tasks the pipeline knows how to train and evaluate.
-#:
-#: Registering a task here does NOT mean it should be trained. The research plan
-#: explicitly rejects the assumption that a single monolithic "KLEOS personality"
-#: fine-tune is the right approach, so each task must be trainable in isolation.
+#: Tasks the pipeline can train and evaluate. Registered is not "should be trained":
+#: each task must be trainable in isolation.
 SUPPORTED_TASKS: Final[tuple[str, ...]] = (
     "notification_prioritization",
     "tool_routing",
@@ -71,15 +50,7 @@ TASK_DESCRIPTIONS: Final[dict[str, str]] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Variation axes (spec section 10)
-# ---------------------------------------------------------------------------
-
-#: Axes along which a dataset must demonstrate coverage.
-#:
-#: A dataset is not "diverse" because it is large. It is diverse when each
-#: underlying situation type is represented. ``kleos_models.data.coverage``
-#: reports counts per axis and per axis combination.
+#: Axes along which a dataset must demonstrate coverage (see ``data.coverage``).
 VARIATION_AXES: Final[tuple[str, ...]] = (
     "domain",
     "entities",
@@ -97,17 +68,11 @@ VARIATION_AXES: Final[tuple[str, ...]] = (
     "ambiguity",
 )
 
-#: Axes that must be present on every example. The remainder are optional but
-#: are reported as "missing" in coverage output so gaps stay visible.
+#: Required on every example; other axes are reported as "missing" when absent.
 REQUIRED_VARIATION_AXES: Final[tuple[str, ...]] = ("domain",)
 
 
-# ---------------------------------------------------------------------------
-# Provenance and quality
-# ---------------------------------------------------------------------------
-
-#: Where an example came from. ``real_sanitized`` means it originated from real
-#: usage and passed sanitization in the PRIVATE repository; raw real data must
+#: ``real_sanitized`` was sanitized in the PRIVATE repository; raw real data must
 #: never appear in this public repository.
 SOURCE_TYPES: Final[tuple[str, ...]] = (
     "synthetic",
@@ -129,12 +94,7 @@ QUALITY_STATUSES: Final[tuple[str, ...]] = (
 MESSAGE_ROLES: Final[tuple[str, ...]] = ("system", "user", "assistant", "tool")
 
 
-# ---------------------------------------------------------------------------
-# Splitting and evaluation
-# ---------------------------------------------------------------------------
-
-#: Split strategies (spec section 12). ``random`` is for development only;
-#: generalization claims require a held-out strategy.
+#: Split strategies (spec section 12). ``random`` is development-only; claims need a holdout.
 SPLIT_STRATEGIES: Final[tuple[str, ...]] = (
     "random",
     "group",
@@ -147,8 +107,7 @@ SPLIT_STRATEGIES: Final[tuple[str, ...]] = (
 #: Named split partitions.
 SPLIT_NAMES: Final[tuple[str, ...]] = ("train", "validation", "test")
 
-#: Research arms (spec section 20). Each arm is a distinct experimental
-#: condition; results must never be pooled across arms.
+#: Research arms (spec section 20). Never pool results across arms.
 RESEARCH_ARMS: Final[tuple[str, ...]] = (
     "arm0_base",
     "arm1_base_orchestrated",
@@ -179,8 +138,7 @@ RUBRIC_DIMENSIONS: Final[tuple[str, ...]] = (
     "consistency",
 )
 
-#: Rubric dimensions where a HIGHER raw score is WORSE. These are inverted
-#: before aggregation so that every reported score is "higher is better".
+#: Dimensions where a higher raw score is worse; inverted before aggregation.
 NEGATIVE_RUBRIC_DIMENSIONS: Final[frozenset[str]] = frozenset(
     {"critical_omission", "unsupported_claims"}
 )
@@ -207,10 +165,6 @@ OOD_SHIFT_KINDS: Final[tuple[str, ...]] = (
     "conflicting_evidence",
 )
 
-
-# ---------------------------------------------------------------------------
-# Filesystem conventions
-# ---------------------------------------------------------------------------
 
 MANIFEST_FILENAME: Final[str] = "manifest.json"
 DATASET_MANIFEST_FILENAME: Final[str] = "manifest.json"

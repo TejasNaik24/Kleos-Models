@@ -1,15 +1,4 @@
-"""Structured logging (spec section 31).
-
-Two sinks:
-
-* a human-readable console/file stream, and
-* a machine-readable JSONL event stream used by report generation.
-
-**Privacy rule:** this module never logs raw example content. Helpers that
-accept free text redact it to a length and a short digest. If you need to debug
-actual example text, do it in a notebook against the local fixtures, not through
-the logger.
-"""
+"""Structured logging (spec section 31)."""
 
 from __future__ import annotations
 
@@ -32,12 +21,7 @@ _ROOT_LOGGER_NAME = "kleos_models"
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
-    """Return a package logger.
-
-    Args:
-        name: Dotted suffix, typically ``__name__``. ``None`` returns the root
-            package logger.
-    """
+    """Return a package logger."""
     if name is None or name == _ROOT_LOGGER_NAME:
         return logging.getLogger(_ROOT_LOGGER_NAME)
     if name.startswith(_ROOT_LOGGER_NAME + "."):
@@ -51,22 +35,12 @@ def configure_logging(
     log_file: Path | str | None = None,
     quiet_libraries: bool = True,
 ) -> logging.Logger:
-    """Configure the package logger. Safe to call more than once.
-
-    Args:
-        level: Threshold for the console handler.
-        log_file: Optional path receiving the same records at DEBUG level.
-        quiet_libraries: Suppress noisy third-party INFO logs.
-
-    Returns:
-        The configured root package logger.
-    """
+    """Configure the package logger. Safe to call more than once."""
     logger = logging.getLogger(_ROOT_LOGGER_NAME)
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
 
-    # Remove handlers we installed previously so re-configuration does not
-    # duplicate every line.
+    # Drop earlier handlers so reconfiguring does not duplicate every line.
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
         handler.close()
@@ -107,22 +81,8 @@ def resolve_level(verbose: bool = False, quiet: bool = False) -> int:
     return logging.INFO
 
 
-# ---------------------------------------------------------------------------
-# Privacy-preserving helpers
-# ---------------------------------------------------------------------------
-
-
 def redact(text: str, *, keep: int = 0) -> str:
-    """Render text as a length + digest instead of its content.
-
-    Args:
-        text: Content that may be private. Never logged verbatim.
-        keep: Number of leading characters to retain. Keep this at 0 for
-            anything sourced from real user data.
-
-    Returns:
-        A string such as ``<redacted len=412 sha256=1a2b3c4d>``.
-    """
+    """Render text as a length + digest instead of its content."""
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
     prefix = ""
     if keep > 0:
@@ -131,19 +91,8 @@ def redact(text: str, *, keep: int = 0) -> str:
     return f"{prefix}<redacted len={len(text)} sha256={digest}>"
 
 
-# ---------------------------------------------------------------------------
-# Structured JSONL event stream
-# ---------------------------------------------------------------------------
-
-
 class EventLogger:
-    """Append-only JSONL event writer for machine-readable run history.
-
-    Each record carries ``ts``, ``experiment_id``, ``stage`` and ``event`` plus
-    whatever structured fields the caller supplies. Values are passed through
-    ``json.dumps`` with ``default=str`` so unusual types degrade to their repr
-    rather than raising mid-training.
-    """
+    """Append-only JSONL event writer for machine-readable run history."""
 
     def __init__(
         self,
@@ -163,10 +112,7 @@ class EventLogger:
         self.stage = stage
 
     def emit(self, event: str, **fields: Any) -> dict[str, Any]:
-        """Write one event record.
-
-        Never raises: logging failures must not abort a training run.
-        """
+        """Write one event record."""
         record: dict[str, Any] = {
             "ts": time.time(),
             "iso_time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -216,12 +162,7 @@ def log_stage(logger: logging.Logger, stage: str) -> Iterator[None]:
 
 
 def format_table(rows: list[dict[str, Any]], columns: list[str] | None = None) -> str:
-    """Render rows as a fixed-width text table for console reports.
-
-    Args:
-        rows: Records to display.
-        columns: Column order. Defaults to the keys of the first row.
-    """
+    """Render rows as a fixed-width text table for console reports."""
     if not rows:
         return "(no rows)"
     cols = columns or list(rows[0].keys())

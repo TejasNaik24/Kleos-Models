@@ -53,8 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     print("\nExperiment configs")
     for directory in ("training", "evaluation", "datasets"):
         for path in sorted((REPO_ROOT / "configs" / directory).glob("*.yaml")):
-            # Only training configs are complete experiments; the others are
-            # fragments consumed via `includes:`.
+            # Only training configs are complete; the rest are `includes:` fragments.
             if directory != "training":
                 continue
             try:

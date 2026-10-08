@@ -1,12 +1,4 @@
-"""A thinking model's trace is split off before grading (Logos v0.0.2).
-
-Ministral 3 Reasoning writes ``[THINK]trace[/THINK]answer``. Both markers are
-special tokens, so decoding with ``skip_special_tokens=True`` would erase them
-and hand the grader one run of text in which the trace precedes the answer.
-The graders' fallbacks read words such as "let me" as an abstention, and a
-ranking written while thinking could be scored as the answer. So the split
-happens on token ids, before decoding, and only the answer is graded.
-"""
+"""A thinking model's trace is split off before grading (Logos v0.0.2)."""
 
 from __future__ import annotations
 
@@ -172,8 +164,7 @@ class TestGenerationStats:
         assert "reasoning_responses" not in stats
 
     def test_traces_are_summarized_over_the_answers_that_have_one(self):
-        # H9 reports the trace length distribution: one answer without a trace
-        # must not make it disappear.
+        # One answer without a trace must not hide H9's trace length distribution.
         rows = [record(finish_reason="stop", reasoning="abcd"), record(finish_reason="stop")]
         stats = generation_stats(rows, max_new_tokens=1024)
         assert stats["thinking_truncated"] == 0

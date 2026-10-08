@@ -1,13 +1,4 @@
-"""Dataset validation and quality reporting (spec sections 25 and 30).
-
-Schema validation lives in :mod:`kleos_models.data.schemas`. This module adds the
-checks that need the *whole dataset* in view: duplicate ids, coverage gaps,
-missing metadata, suspicious content, and the aggregate quality report.
-
-This module imports no torch. Token statistics degrade to a whitespace-word
-approximation when no tokenizer is supplied, so dataset work never requires a GPU
-environment.
-"""
+"""Dataset validation and quality reporting (spec sections 25 and 30)."""
 
 from __future__ import annotations
 
@@ -128,12 +119,7 @@ class ValidationReport:
         return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Content heuristics
-# ---------------------------------------------------------------------------
-
-#: Patterns suggesting private data reached a supposedly public dataset.
-#: Deliberately conservative — false positives are cheap, a leaked secret is not.
+#: Signs of private data in a public dataset. Conservative: false positives are cheap.
 _SENSITIVE_PATTERNS: dict[str, re.Pattern[str]] = {
     "email_address": re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]{2,}\b"),
     "us_phone": re.compile(r"\b(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b"),
@@ -161,18 +147,9 @@ def scan_sensitive_content(text: str) -> list[str]:
 
 
 def approximate_token_count(text: str) -> int:
-    """Rough token estimate without a tokenizer.
-
-    Uses ~1.3 tokens per whitespace word, which is close enough for dataset
-    triage. Real token statistics come from ``--tokenizer`` when available.
-    """
+    """Rough token estimate without a tokenizer."""
     words = len(text.split())
     return int(words * 1.3) + 1
-
-
-# ---------------------------------------------------------------------------
-# Dataset-level validation
-# ---------------------------------------------------------------------------
 
 
 def validate_examples(
@@ -184,16 +161,7 @@ def validate_examples(
     require_reviewed: bool = False,
     scan_content: bool = True,
 ) -> ValidationReport:
-    """Run whole-dataset checks over already schema-valid examples.
-
-    Args:
-        examples: Parsed examples.
-        split_name: Label used in messages.
-        max_tokens: Flag examples longer than this.
-        token_counter: Real tokenizer callable; defaults to the approximation.
-        require_reviewed: Treat non-reviewed examples as errors.
-        scan_content: Run the sensitive-content heuristics.
-    """
+    """Run whole-dataset checks over already schema-valid examples."""
     report = ValidationReport(examples_checked=len(examples))
     count_tokens = token_counter or approximate_token_count
 
@@ -201,7 +169,6 @@ def validate_examples(
         report.add(Severity.ERROR, "empty_dataset", f"{split_name} contains no examples")
         return report
 
-    # --- duplicate ids -----------------------------------------------------
     id_counts = Counter(e.id for e in examples)
     duplicates = [example_id for example_id, count in id_counts.items() if count > 1]
     if duplicates:
@@ -212,7 +179,6 @@ def validate_examples(
             example_ids=duplicates,
         )
 
-    # --- schema version drift ----------------------------------------------
     versions = Counter(e.version for e in examples)
     if len(versions) > 1:
         report.add(
@@ -230,7 +196,6 @@ def validate_examples(
             f"supported are {list(SUPPORTED_SCHEMA_VERSIONS)}",
         )
 
-    # --- required variation axes -------------------------------------------
     for axis in REQUIRED_VARIATION_AXES:
         missing = [e.id for e in examples if not e.variation_axes.as_dict().get(axis)]
         if missing:
@@ -241,7 +206,6 @@ def validate_examples(
                 example_ids=missing,
             )
 
-    # --- unregistered axes --------------------------------------------------
     unknown_axes: Counter[str] = Counter()
     for example in examples:
         unknown_axes.update(example.variation_axes.unknown_axes().keys())
@@ -254,9 +218,7 @@ def validate_examples(
             hint="Promote them in kleos_models/constants.py once they are stable.",
         )
 
-    # --- axis sparsity ------------------------------------------------------
-    # A dataset is not diverse because it is large. Warn when an axis is
-    # effectively constant, because it cannot support a generalization claim.
+    # Warn when an axis is effectively constant: it cannot support a generalization claim.
     for axis in VARIATION_AXES:
         values = [
             str(e.variation_axes.as_dict().get(axis))
@@ -273,7 +235,6 @@ def validate_examples(
                 value=values[0],
             )
 
-    # --- quality status -----------------------------------------------------
     status_counts = Counter(e.metadata.quality_status for e in examples)
     unreviewed = [e.id for e in examples if e.metadata.quality_status != "reviewed"]
     if unreviewed:
@@ -293,7 +254,6 @@ def validate_examples(
             example_ids=rejected,
         )
 
-    # --- length -------------------------------------------------------------
     if max_tokens is not None:
         too_long = [e.id for e in examples if count_tokens(e.conversation_text()) > max_tokens]
         if too_long:
@@ -306,7 +266,6 @@ def validate_examples(
                 max_tokens=max_tokens,
             )
 
-    # --- empty or placeholder targets ---------------------------------------
     placeholder_ids: list[str] = []
     for example in examples:
         for target in example.assistant_targets:
@@ -321,7 +280,6 @@ def validate_examples(
             example_ids=placeholder_ids,
         )
 
-    # --- sensitive content --------------------------------------------------
     if scan_content:
         hits: dict[str, list[str]] = {}
         for example in examples:
@@ -338,14 +296,12 @@ def validate_examples(
                 pattern=pattern_name,
             )
 
-    # --- policy-vs-fact heuristic -------------------------------------------
     report.findings.extend(_check_memorization_risk(examples).findings)
 
     return report
 
 
-#: Phrasings that suggest an example teaches a private fact rather than a policy
-#: (spec section 9). Heuristic and advisory: it flags for human review.
+#: Phrasings that suggest a private fact rather than a policy (spec section 9). Advisory.
 _FACT_TEACHING_HINTS = (
     re.compile(r"\bbecause (?:he|she|they|I) (?:work|works|worked) at\b", re.IGNORECASE),
     re.compile(r"\byour (?:resume|CV) (?:says|states|lists)\b", re.IGNORECASE),
@@ -354,12 +310,7 @@ _FACT_TEACHING_HINTS = (
 
 
 def _check_memorization_risk(examples: Sequence[TrainingExample]) -> ValidationReport:
-    """Flag examples that look like they teach a fact rather than a policy.
-
-    Spec section 9: the model should learn *prioritize the closest deadline with
-    the strongest evidence*, not *this person works at company X*. Private facts
-    belong in retrieval and memory, not in weights.
-    """
+    """Flag examples that look like they teach a fact rather than a policy."""
     report = ValidationReport()
     flagged: list[str] = []
     for example in examples:
@@ -380,11 +331,6 @@ def _check_memorization_risk(examples: Sequence[TrainingExample]) -> ValidationR
             ),
         )
     return report
-
-
-# ---------------------------------------------------------------------------
-# Quality report (spec section 25)
-# ---------------------------------------------------------------------------
 
 
 @dataclass

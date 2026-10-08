@@ -1,22 +1,4 @@
-"""Capability preservation (spec section 24).
-
-Fine-tuning on a narrow behavioural dataset can damage general ability —
-catastrophic forgetting. A KLEOS adapter that improves notification
-prioritization while making the model worse at ordinary reasoning is not a win,
-and without this check it would look like one.
-
-Method: a small **fixed** regression suite, run identically before and after
-fine-tuning, reporting
-
-``base_score``  ``fine_tuned_score``  ``delta``  ``relative_delta``
-
-The suite does not need to reproduce a public benchmark. What it must be is
-*constant across experiments* — spec section 24 is explicit that consistency
-matters more than coverage here. Changing the suite invalidates comparison with
-every earlier run, so the suite carries a version and the report records it.
-
-This module imports no torch.
-"""
+"""Capability preservation (spec section 24)."""
 
 from __future__ import annotations
 
@@ -29,8 +11,7 @@ from kleos_models.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-#: Version of the capability suite. Bump ONLY when the suite content changes, and
-#: understand that doing so breaks comparability with prior runs.
+#: Bump ONLY when the suite content changes; doing so breaks comparability with prior runs.
 CAPABILITY_SUITE_VERSION = "kleos-capability-v0.1.0"
 
 
@@ -66,10 +47,7 @@ class CapabilityDelta:
 
     @property
     def regressed(self) -> bool:
-        """Whether general capability measurably dropped.
-
-        A 1% threshold keeps decoding noise from being reported as damage.
-        """
+        """Whether general capability measurably dropped."""
         return self.relative_delta < -0.01
 
     def to_dict(self) -> dict[str, Any]:
@@ -140,19 +118,7 @@ def build_capability_delta(
     suite_version: str = CAPABILITY_SUITE_VERSION,
     compute_significance: bool = True,
 ) -> CapabilityDelta:
-    """Compare base and fine-tuned scores on the capability suite.
-
-    Args:
-        base_scores: Per-item scores from the base model.
-        fine_tuned_scores: Per-item scores from the fine-tuned model, in the same
-            item order.
-        categories: Optional per-item category label for a breakdown.
-        suite_version: Version identifier of the suite used.
-        compute_significance: Run a paired bootstrap on the difference.
-
-    Raises:
-        ValueError: when the two score vectors are not paired item-for-item.
-    """
+    """Compare base and fine-tuned scores on the capability suite."""
     if len(base_scores) != len(fine_tuned_scores):
         raise ValueError(
             "Capability comparison requires paired scores over the same items: "

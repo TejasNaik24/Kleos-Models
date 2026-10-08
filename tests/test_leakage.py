@@ -1,9 +1,4 @@
-"""Leakage-detection tests (spec §11, §30).
-
-Each detector is tested against a planted case, because a leakage checker that
-silently detects nothing is worse than none at all — it produces false confidence
-in an evaluation number.
-"""
+"""Leakage-detection tests (spec §11, §30)."""
 
 from __future__ import annotations
 
@@ -251,7 +246,6 @@ class TestPolicyEnforcement:
             enforce_leakage_policy(report, fail_on="any")
 
     def test_fatal_policy_tolerates_a_scenario_repeat_alone(self):
-        # A scenario repeat warrants review; it is not automatically fatal.
         train = [example("train-001", user="Variant A", scenario_family="family-1")]
         test = [
             example(
@@ -262,8 +256,7 @@ class TestPolicyEnforcement:
         enforce_leakage_policy(report, fail_on="fatal")
 
     def test_clean_report_passes_every_policy(self):
-        # Disjoint entity groups as well as disjoint text: sharing an entity
-        # group across splits is itself a (correctly detected) leak.
+        # Distinct entity groups too: sharing one across splits is itself a leak.
         report = check_leakage(
             {
                 "train": [example("ex-a", user="Unique content one.", entities="set_a")],
@@ -285,12 +278,7 @@ class TestCommittedFixtures:
 
 
 class TestReasoningTraces:
-    """Schema 1.1: train answers carry a reasoning trace, test answers do not.
-
-    The trace is generated text, not part of the conversation another split
-    could leak. Comparing with it would make a train copy of a test
-    conversation invisible, because only the train copy has a trace.
-    """
+    """Schema 1.1: train answers carry a reasoning trace, test answers do not."""
 
     @staticmethod
     def with_trace(example_id: str, trace: str = "score alpha first, then beta") -> TrainingExample:

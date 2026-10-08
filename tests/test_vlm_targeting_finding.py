@@ -1,19 +1,4 @@
-"""Finding L-F1: ``Mistral3VLMAdapter``'s LoRA targeting does not fit transformers 5.
-
-Recorded in docs/logos.md, not fixed: the adapter serves only
-``configs/models/mistral_small_3_2.yaml``, which no KLEOS run uses, and Logos
-loads its checkpoint through ``Ministral3TextAdapter`` instead. Both tests are
-strict xfails, so the day the adapter is fixed they fail and force the finding
-to be closed rather than forgotten.
-
-1. **Prefix.** Target validation keeps only modules whose names *start with*
-   ``language_model``. transformers 5 names them ``model.language_model.*``, so
-   nothing matches and attaching LoRA raises.
-2. **Exclusion.** The vision tower is excluded by passing ``"vision_tower"`` in
-   PEFT's ``exclude_modules`` list. PEFT treats list entries as exact names or
-   ``.suffix`` matches, which no projection inside the tower has, so the tower's
-   ``q_proj`` … ``down_proj`` would be adapted too.
-"""
+"""Finding L-F1: ``Mistral3VLMAdapter``'s LoRA targeting does not fit transformers 5."""
 
 from __future__ import annotations
 

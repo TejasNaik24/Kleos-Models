@@ -1,27 +1,4 @@
-"""Comparison and report generation (spec sections 53, 54, 36).
-
-Two jobs: compare arms honestly, and write the experiment report.
-
-Design constraints taken directly from the specification:
-
-* **No single misleading aggregate** unless explicitly requested (section 54). The
-  default output is per-task, with OOD, consistency and capability reported as
-  their own columns.
-* **Report where it failed**, not only where it won (section 53).
-* **Do not claim superiority from a small or noisy difference** (sections 35, 36).
-  Deltas come with a paired bootstrap confidence interval, and the verdict wording
-  is driven by that interval rather than by the sign of the mean.
-
-Beside the original example-level bootstrap, every delta also gets a *cluster*
-interval that resamples whole groups (``group_id``), because perturbations of one
-case are not independent (finding H-F14), and the answerable and should-decline
-subsets are compared separately. Benchmark identity is checked by content, never
-by path (finding H-F5). ``cross_model=True`` compares two models on one arm (for
-example Hermes arm2 against Logos arm2), where differing base models are the point
-rather than a warning.
-
-This module imports no torch.
-"""
+"""Comparison and report generation (spec sections 53, 54, 36)."""
 
 from __future__ import annotations
 
@@ -117,11 +94,7 @@ class TaskComparison:
 
 @dataclass
 class ComparisonReport:
-    """A full base-vs-fine-tuned comparison.
-
-    In cross-model mode "base" and "fine-tuned" read as "left" and "right": the
-    two models being compared, on the same arm.
-    """
+    """A full base-vs-fine-tuned comparison."""
 
     base_arm: str
     finetuned_arm: str
@@ -147,11 +120,7 @@ class ComparisonReport:
 
     @property
     def regressed_tasks(self) -> list[TaskComparison]:
-        """Tasks where the fine-tuned model got worse.
-
-        Surfaced prominently: a mixed result across tasks may be the most
-        informative outcome the experiment can produce (spec section 58).
-        """
+        """Tasks where the fine-tuned model got worse."""
         return [t for t in self.per_task if t.absolute_delta < -NEGLIGIBLE_DELTA]
 
     @property
@@ -420,12 +389,7 @@ def _render_primary(primary: dict[str, Any], left: str, right: str) -> list[str]
 
 
 def primary_verdict(significance: dict[str, Any], margin: float) -> tuple[str, str]:
-    """Classify a difference against an equivalence margin by its cluster interval.
-
-    better: the whole interval is above zero. worse: the whole interval is below
-    zero. equivalent: the whole interval lies within ±margin. Otherwise
-    inconclusive: the data cannot tell these apart.
-    """
+    """Classify a difference against an equivalence margin by its cluster interval."""
     if not significance.get("estimable"):
         return "inconclusive", f"interval not estimable: {significance.get('reason', 'unknown')}"
     low, high = significance["ci95_low"], significance["ci95_high"]
@@ -443,12 +407,7 @@ def primary_verdict(significance: dict[str, Any], margin: float) -> tuple[str, s
 def check_benchmark_identity(
     left: dict[str, Any], right: dict[str, Any]
 ) -> tuple[bool, dict[str, Any], list[str]]:
-    """Whether two results were graded against the same benchmark.
-
-    By content: the benchmark file's sha256 when both recorded it, otherwise the
-    targets of the examples both evaluated (id, task, reference decision). A path
-    identifies nothing (H-F5). Returns ``(comparable, identity, warnings)``.
-    """
+    """Whether two results were graded against the same benchmark."""
     warnings: list[str] = []
     left_rows = {r["example_id"]: r for r in left.get("results", [])}
     right_rows = {r["example_id"]: r for r in right.get("results", [])}
@@ -551,18 +510,7 @@ def compare_results(
     primary_subset: str | None = None,
     equivalence_margin: float | None = None,
 ) -> ComparisonReport:
-    """Compare two saved evaluation-result payloads (spec section 54).
-
-    Scores are paired by ``example_id`` so the bootstrap is a genuine paired test
-    rather than a comparison of two unrelated samples.
-
-    Args:
-        cross_model: ``base`` and ``finetuned`` are two models on the same arm,
-            not one model before and after fine-tuning.
-        primary_subset: Subset (``answerable`` or ``should_decline``) whose
-            cluster interval decides the primary verdict, with
-            ``equivalence_margin``.
-    """
+    """Compare two saved evaluation-result payloads (spec section 54)."""
     report = ComparisonReport(
         base_arm=base.get("arm", "base"),
         finetuned_arm=finetuned.get("arm", "finetuned"),
@@ -574,7 +522,6 @@ def compare_results(
     base_results = base.get("results", [])
     finetuned_results = finetuned.get("results", [])
 
-    # --- comparability checks ----------------------------------------------
     comparable, identity, identity_warnings = check_benchmark_identity(base, finetuned)
     report.benchmark_identity = identity
     report.comparability_warnings.extend(identity_warnings)
@@ -625,7 +572,6 @@ def compare_results(
             logger.warning("Comparability: %s", warning)
         return report
 
-    # --- per task -----------------------------------------------------------
     tasks = sorted(
         {r.get("task", "unknown") for r in base_results}
         | {r.get("task", "unknown") for r in finetuned_results}
@@ -641,7 +587,6 @@ def compare_results(
         if comparison is not None:
             report.per_task.append(comparison)
 
-    # --- overall -------------------------------------------------------------
     report.overall = _paired(
         base_results,
         finetuned_results,
@@ -650,7 +595,6 @@ def compare_results(
         compute_significance=compute_significance,
     )
 
-    # --- subsets (answerable / should-decline) -------------------------------
     for subset in SUBSETS:
         comparison = _paired(
             base_results,
@@ -685,7 +629,6 @@ def compare_results(
                 "explanation": explanation,
             }
 
-    # --- consistency by group_id, from the corrected blocks ------------------
     base_corrected = (base.get("corrected") or {}).get("consistency") or {}
     ft_corrected = (finetuned.get("corrected") or {}).get("consistency") or {}
     for name in ("group_id", "group_id_answerable"):
@@ -703,7 +646,6 @@ def compare_results(
                 "groups": left_block["evaluated_groups"],
             }
 
-    # --- OOD -----------------------------------------------------------------
     base_ood, ft_ood = base.get("ood"), finetuned.get("ood")
     if base_ood and ft_ood and base_ood.get("measurable") and ft_ood.get("measurable"):
         in_delta = ft_ood["in_distribution_score"] - base_ood["in_distribution_score"]
@@ -727,7 +669,6 @@ def compare_results(
             "verdict": verdict,
         }
 
-    # --- consistency ---------------------------------------------------------
     base_consistency, ft_consistency = base.get("consistency"), finetuned.get("consistency")
     if base_consistency and ft_consistency:
         report.consistency_delta = {
@@ -747,7 +688,6 @@ def compare_results(
             ),
         }
 
-    # --- faithfulness --------------------------------------------------------
     base_faith, ft_faith = base.get("faithfulness"), finetuned.get("faithfulness")
     if base_faith and ft_faith and base_faith.get("count") and ft_faith.get("count"):
         report.faithfulness_delta = {
@@ -761,7 +701,6 @@ def compare_results(
             ),
         }
 
-    # --- capability ----------------------------------------------------------
     capability = finetuned.get("capability")
     if capability:
         report.capability_delta = capability
@@ -778,12 +717,7 @@ def render_markdown_report(
     dataset_version: str = "unknown",
     config_summary: dict[str, Any] | None = None,
 ) -> str:
-    """Render the experiment report (spec section 53).
-
-    Answers the questions the specification requires: what changed, what dataset,
-    what model, what configuration, what metrics, did it improve, where did it
-    fail, what changed OOD, what changed in general capability.
-    """
+    """Render the experiment report (spec section 53)."""
     left, right = comparison.labels
     lines = [
         f"# Experiment report — {experiment_id}",

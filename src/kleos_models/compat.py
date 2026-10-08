@@ -1,29 +1,4 @@
-"""Compatibility shim across transformers 4.56 → 5.x.
-
-Why this module exists
-----------------------
-transformers v5 renamed or removed several APIs this pipeline depends on:
-
-===========================  ==============================  =======================
-Concern                      transformers 4.x                transformers 5.x
-===========================  ==============================  =======================
-dtype at load time           ``torch_dtype=``                ``dtype=``
-LR warmup                    ``warmup_ratio=0.03``           ``warmup_steps=0.03``
-Trainer tokenizer argument   ``tokenizer=``                  ``processing_class=``
-Eval cadence                 ``eval_strategy=``              ``eval_strategy=``
-Output dir clobbering        ``overwrite_output_dir=``       removed
-Serialization                ``safe_serialization=``         removed (always safetensors)
-4-bit shorthand              ``load_in_4bit=True``           removed (use quantization_config)
-===========================  ==============================  =======================
-
-Rather than branching on a version number alone — which breaks on backports and
-release candidates — the helpers below **introspect the installed classes** and
-adapt to whatever is actually present. Version numbers are used only for
-reporting and for guarding known-bad ranges.
-
-Everything here degrades gracefully when transformers is not installed, so the
-module stays importable in the light (no-torch) environment.
-"""
+"""Compatibility shim across transformers 4.56 → 5.x."""
 
 from __future__ import annotations
 
@@ -46,17 +21,8 @@ MIN_TRANSFORMERS = (4, 56, 0)
 MAX_TRANSFORMERS_EXCLUSIVE = (6, 0, 0)
 
 
-# ---------------------------------------------------------------------------
-# Version discovery
-# ---------------------------------------------------------------------------
-
-
 def _parse_version(raw: str) -> tuple[int, ...]:
-    """Parse a version string into a comparable integer tuple.
-
-    Non-numeric suffixes (``rc1``, ``dev0``, ``+cu121``) are dropped so that
-    ``"5.1.0.dev0"`` compares as ``(5, 1, 0)``.
-    """
+    """Parse a version string into a comparable integer tuple."""
     parts: list[int] = []
     for chunk in raw.split("+")[0].split("."):
         digits = ""
@@ -109,14 +75,7 @@ def require_transformers() -> Any:
 
 
 def check_transformers_version(*, strict: bool = False) -> str | None:
-    """Validate the installed transformers version against the tested range.
-
-    Args:
-        strict: Raise instead of warning when the version is out of range.
-
-    Returns:
-        A warning message when out of range, else ``None``.
-    """
+    """Validate the installed transformers version against the tested range."""
     version = transformers_version()
     if version is None:
         return None
@@ -146,11 +105,6 @@ def check_transformers_version(*, strict: bool = False) -> str | None:
         )
     logger.warning("%s Proceeding, but behaviour is unverified.", problem)
     return problem
-
-
-# ---------------------------------------------------------------------------
-# Field introspection
-# ---------------------------------------------------------------------------
 
 
 def _dataclass_field_names(cls: type) -> frozenset[str]:
@@ -184,42 +138,19 @@ def trainer_parameter_names() -> frozenset[str]:
         return frozenset()
 
 
-# ---------------------------------------------------------------------------
-# Argument translation
-# ---------------------------------------------------------------------------
-
-
 def build_training_arguments_kwargs(
     requested: dict[str, Any],
     *,
     supported: frozenset[str] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Translate KLEOS training settings into installed-version kwargs.
-
-    KLEOS configs keep the names the specification uses (notably
-    ``warmup_ratio``). This function maps them onto whatever the installed
-    ``TrainingArguments`` actually accepts.
-
-    Args:
-        requested: Desired settings using KLEOS/4.x names.
-        supported: Field names the target class accepts. Defaults to
-            introspecting the installed transformers. Injectable so the
-            translation can be unit-tested against both API generations without
-            installing either.
-
-    Returns:
-        ``(kwargs, notes)`` where ``notes`` describes every translation and every
-        dropped key, so the effective configuration can be recorded honestly.
-    """
+    """Translate KLEOS training settings into installed-version kwargs."""
     if supported is None:
         supported = training_argument_names()
 
     kwargs = dict(requested)
     notes: list[str] = []
 
-    # --- warmup ------------------------------------------------------------
-    # v5 removed `warmup_ratio`; `warmup_steps` is a float where values < 1 are
-    # interpreted as a fraction of total training steps.
+    # v5 removed `warmup_ratio`; a `warmup_steps` value < 1 is a fraction of total steps.
     if "warmup_ratio" in kwargs and "warmup_ratio" not in supported:
         ratio = kwargs.pop("warmup_ratio")
         if "warmup_steps" in supported:
@@ -238,22 +169,18 @@ def build_training_arguments_kwargs(
         else:  # pragma: no cover - no known version lacks both
             notes.append(f"warmup_ratio={ratio} dropped: no warmup field available")
 
-    # --- eval cadence ------------------------------------------------------
-    # `evaluation_strategy` was renamed to `eval_strategy` in 4.41 and the old
-    # alias was removed in v5. Emit whichever the installed version accepts.
+    # `evaluation_strategy` became `eval_strategy` in 4.41; v5 removed the old alias.
     if "eval_strategy" in kwargs and "eval_strategy" not in supported:
         value = kwargs.pop("eval_strategy")
         if "evaluation_strategy" in supported:
             kwargs["evaluation_strategy"] = value
             notes.append("eval_strategy mapped to legacy evaluation_strategy")
 
-    # --- removed knobs -----------------------------------------------------
     for removed in ("overwrite_output_dir", "safe_serialization", "logging_dir", "jit_mode_eval"):
         if removed in kwargs and removed not in supported:
             kwargs.pop(removed)
             notes.append(f"{removed} dropped: removed in the installed transformers")
 
-    # --- anything else the installed version does not know about -----------
     for key in list(kwargs):
         if key not in supported:
             value = kwargs.pop(key)
@@ -265,12 +192,7 @@ def build_training_arguments_kwargs(
 
 
 def dtype_kwarg(dtype: Any, *, supported: frozenset[str] | None = None) -> dict[str, Any]:
-    """Return the correct ``from_pretrained`` dtype keyword for this version.
-
-    transformers v5 renamed ``torch_dtype`` to ``dtype``. Passing the wrong one
-    is either a hard ``TypeError`` or, worse, a silently ignored argument that
-    loads the model in the wrong precision.
-    """
+    """Return the correct ``from_pretrained`` dtype keyword for this version."""
     if dtype is None:
         return {}
     if supported is None:
@@ -281,13 +203,11 @@ def dtype_kwarg(dtype: Any, *, supported: frozenset[str] | None = None) -> dict[
             )
         except (AttributeError, TypeError, ValueError):  # pragma: no cover
             supported = frozenset()
-    # Prefer the modern name when the signature exposes it explicitly.
     if "dtype" in supported:
         return {"dtype": dtype}
     if "torch_dtype" in supported:
         return {"torch_dtype": dtype}
-    # Most from_pretrained signatures end in **kwargs, so neither name appears.
-    # Fall back on the version number.
+    # from_pretrained usually ends in **kwargs, exposing neither name; use the version.
     version = transformers_version()
     if version is not None and version >= (5, 0, 0):
         return {"dtype": dtype}
@@ -295,11 +215,7 @@ def dtype_kwarg(dtype: Any, *, supported: frozenset[str] | None = None) -> dict[
 
 
 def trainer_tokenizer_kwarg(tokenizer: Any) -> dict[str, Any]:
-    """Return the Trainer keyword carrying the tokenizer for this version.
-
-    ``tokenizer=`` was deprecated in 4.46 in favour of ``processing_class=`` and
-    removed in v5.
-    """
+    """Return the Trainer keyword carrying the tokenizer for this version."""
     params = trainer_parameter_names()
     if "processing_class" in params:
         return {"processing_class": tokenizer}
@@ -311,40 +227,18 @@ def supports_field(name: str) -> bool:
     return name in training_argument_names()
 
 
-#: First transformers version that can patch the Mistral pre-tokenizer regex.
-#: Before this, no patch exists, so the behaviour is unconditionally the
-#: unpatched one — equivalent to ``fix_mistral_regex=False``.
+#: First transformers able to patch the Mistral pre-tokenizer regex; older is always unpatched.
 _MISTRAL_REGEX_FLAG_SINCE = (5, 0, 0)
 
 
 def supports_mistral_regex_flag() -> bool:
-    """Whether ``from_pretrained`` understands ``fix_mistral_regex``.
-
-    The flag is consumed from ``**kwargs``, so it cannot be discovered by
-    inspecting a signature; the version is the only reliable signal.
-    """
+    """Whether ``from_pretrained`` understands ``fix_mistral_regex``."""
     version = transformers_version()
     return version is not None and version >= _MISTRAL_REGEX_FLAG_SINCE
 
 
 def mistral_regex_kwarg(fix_mistral_regex: bool) -> dict[str, Any]:
-    """Return the tokenizer keyword that pins Mistral regex behaviour.
-
-    transformers>=5 can replace the Mistral pre-tokenizer ``Split`` pattern with
-    the one ``mistral-common`` uses. The flag defaults to ``False``, and the
-    difference is small but real (it changes how roughly 1% of tokens split,
-    e.g. ``'The'`` becoming ``["'", "T", "he", "'"]`` rather than
-    ``["'", "The", "'"]``).
-
-    Small is not the same as safe: a served model that tokenizes differently
-    from the model that was trained is train/serve skew, and it fails silently.
-    So serving states the value rather than inheriting a default.
-
-    On versions predating the flag there is nothing to pass — the behaviour is
-    already the unpatched one. Asking for ``True`` there is refused rather than
-    silently downgraded, because the caller would get behaviour it did not ask
-    for.
-    """
+    """Return the tokenizer keyword that pins Mistral regex behaviour."""
     if supports_mistral_regex_flag():
         return {"fix_mistral_regex": fix_mistral_regex}
 
@@ -365,10 +259,6 @@ def mistral_regex_kwarg(fix_mistral_regex: bool) -> dict[str, Any]:
     return {}
 
 
-# ---------------------------------------------------------------------------
-# Environment summary
-# ---------------------------------------------------------------------------
-
 #: Packages whose versions are recorded in every experiment manifest.
 TRACKED_PACKAGES: tuple[str, ...] = (
     "torch",
@@ -382,8 +272,7 @@ TRACKED_PACKAGES: tuple[str, ...] = (
     "trl",
     "numpy",
     "pydantic",
-    # Both change model inputs without changing any weight: tokenizers does the
-    # tokenization, Jinja2 renders the chat template.
+    # Both change model inputs without touching weights (tokenization, chat-template rendering).
     "tokenizers",
     "jinja2",
 )

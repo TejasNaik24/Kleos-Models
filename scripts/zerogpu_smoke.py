@@ -67,11 +67,7 @@ DEFAULT_RECORD = REPO_ROOT / "configs" / "deployment" / "kleos_hermes_v006.yaml"
 
 
 def _hf_token() -> str | None:
-    """The owner's token for a private Space: HF_TOKEN, else the stored login.
-
-    GPU time is charged to this account; for the owner's own smoke test that
-    is intended.
-    """
+    """The owner's token for a private Space: HF_TOKEN, else the stored login."""
     token = os.environ.get("HF_TOKEN")
     if token:
         return token
@@ -87,12 +83,7 @@ def check_identity(
     expected: dict[str, Any],
     profile: ServingProfile = HERMES_PROFILE,
 ) -> list[str]:
-    """Differences between what the Space reports and the serving record.
-
-    Beyond the weights and runtime: the token budget the Space serves must be
-    the one the model was evaluated with, and a thinking model's Space must
-    send its trace (contract version 2).
-    """
+    """Differences between what the Space reports and the serving record."""
     model = status.get("model") or {}
     problems = []
     for key in ("adapter_sha256", "base_model", "base_revision"):
@@ -115,13 +106,7 @@ def check_identity(
 def check_reference(
     payload: Any, expected: dict[str, Any], profile: ServingProfile = HERMES_PROFILE
 ) -> list[str]:
-    """Reasons the reference is not the evaluation the record describes.
-
-    Checked before any GPU call: comparing against another evaluation's outputs
-    (Logos v0.0.1's results share the file name) spends a day's quota on a
-    false STOP. The token budget is compared when the reference states it, and
-    a thinking model's reference must carry a trace for every answer.
-    """
+    """Reasons the reference is not the evaluation the record describes."""
     records = load_reference(payload) if isinstance(payload, dict) else {}
     if not records:
         return ["the reference holds no per-example results"]
@@ -145,11 +130,7 @@ def check_reference(
 def smoke_outcome(
     summary: dict[str, Any], suite_size: int, stopped: str | None, profile: ServingProfile
 ) -> str:
-    """The run's verdict: pass, incomplete, untraced or differs.
-
-    "untraced" is a thinking model's run in which not every answer's trace was
-    compared: it verifies nothing, whatever the answers did.
-    """
+    """The run's verdict: pass, incomplete, untraced or differs."""
     if summary["compared"] != suite_size or stopped is not None:
         return "incomplete"
     if profile.reasoning and summary["reasoning_compared"] != summary["compared"]:
@@ -223,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print_header(f"{profile.short_name} on ZeroGPU — frozen-output smoke test")
 
-    # 1. Identity, before spending any GPU time.
+    # Identity first, before spending any GPU time.
     started = time.perf_counter()
     status = client.status()
     status_wall = time.perf_counter() - started
@@ -246,7 +227,6 @@ def main(argv: list[str] | None = None) -> int:
         print()
         return 1
 
-    # 2. The suite.
     examples = load_evaluation_examples(args.benchmark, strict=True)
     suite = select_suite(examples, per_task=args.per_task, abstention=args.abstention)
     if args.only:
@@ -363,8 +343,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n✗ Some responses were empty. The Space is not serving correctly.\n")
         return 1
     if summary["empty"]:
-        # A thinking model's answer is empty when its thinking never closed:
-        # model behaviour, judged against the evaluation like any other answer.
+        # Unclosed thinking leaves the answer empty: model behaviour, graded as usual.
         print(f"\n  ! {summary['empty']} answer(s) empty: the thinking never closed.")
     outcome = smoke_outcome(summary, len(suite), stopped, profile)
     if outcome == "pass":

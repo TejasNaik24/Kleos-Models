@@ -29,9 +29,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# ---------------------------------------------------------------------------
-# Patterns
-# ---------------------------------------------------------------------------
 
 #: (name, pattern, severity) — "error" blocks a commit, "warn" reports only.
 PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
@@ -110,19 +107,10 @@ SKIP_DIRECTORIES = frozenset(
 
 
 def _virtualenv_roots(root: Path) -> set[Path]:
-    """Find virtualenvs under ``root``, whatever they are named.
-
-    Matching on the names ``.venv``/``venv``/``env`` alone is not enough: someone
-    with ``.civenv``, ``env311`` or ``myproject-env`` would have the scanner walk
-    thousands of dependency files and report their bundled CA certificates as
-    "key material". The scan becomes noise, and noise gets ignored.
-
-    ``pyvenv.cfg`` sits at the root of every PEP 405 virtualenv, so detect that
-    instead of guessing names.
-    """
+    """Find virtualenvs under ``root``, whatever they are named."""
     roots: set[Path] = set()
     for marker in root.rglob("pyvenv.cfg"):
-        # Skip anything already inside a discovered venv to bound the walk.
+        # Skip nested venvs to bound the walk.
         if any(parent in roots for parent in marker.parents):
             continue
         roots.add(marker.parent)
@@ -167,12 +155,8 @@ FORBIDDEN_PATHS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^outputs/(?!\.gitkeep)"), "training outputs must not be committed"),
 )
 
-#: Files that must contain the patterns this scanner looks for, because they
-#: define or test the detection itself. Everything listed here is reviewed on
-#: the understanding that its "secrets" are documentation examples or test
-#: fixtures — never real credentials.
-#:
-#: Keep this list short. Exempting a file turns the scanner off for it.
+#: Files that define or test the detection; their "secrets" are examples or fixtures.
+#: Keep this list short: exempting a file turns the scanner off for it.
 SELF_EXEMPT = frozenset(
     {
         "scripts/check_no_private_data.py",  # the patterns themselves
@@ -224,19 +208,14 @@ def _iter_files(root: Path, paths: list[Path] | None = None):
             continue
         if path.suffix.lower() in SKIP_SUFFIXES:
             continue
-        # Installed dependencies are not this repository's content, and their
-        # bundled certificates and test fixtures produce nothing but noise.
+        # Installed dependencies are not repo content; their certs and fixtures are noise.
         if any(venv in path.parents for venv in venvs):
             continue
         yield path
 
 
 def _redact(line: str, match: re.Match[str]) -> str:
-    """Show enough context to locate the hit without reprinting the secret.
-
-    The match is masked inside the context too: on a short line such as
-    ``HF_TOKEN=hf_...`` the context would otherwise be the secret itself.
-    """
+    """Show enough context to locate the hit without reprinting the secret."""
     text = match.group(0)
     shown = text[:6] + "…" if len(text) > 8 else "…"
     snippet = line.strip().replace(text, shown)

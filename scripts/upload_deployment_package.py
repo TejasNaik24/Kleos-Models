@@ -46,10 +46,7 @@ DEFAULT_RECORD = REPO_ROOT / "configs" / "deployment" / "kleos_hermes_v006.yaml"
 
 
 def resolve_token() -> str:
-    """A write token: HF_TOKEN if set, else the one ``hf auth login`` stored.
-
-    Never read from a file in this repository or a command-line argument.
-    """
+    """A write token: HF_TOKEN if set, else the one ``hf auth login`` stored."""
     from huggingface_hub import get_token
 
     token = os.environ.get("HF_TOKEN") or get_token()

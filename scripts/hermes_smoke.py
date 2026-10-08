@@ -163,7 +163,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if compared and matched < compared:
-        # Not a failure of the artifact, and explicitly not a reason to retrain.
         print(
             f"\n! {compared - matched} of {compared} responses differ from the frozen "
             "evaluation.\n"

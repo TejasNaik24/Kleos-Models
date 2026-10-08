@@ -1,14 +1,4 @@
-"""Environment capture for reproducibility (spec sections 16, 34).
-
-Every artifact must be traceable to model + dataset version + config + seed +
-code commit + environment. This module captures the last two.
-
-Git information degrades gracefully: this repository may legitimately not be a git
-repository yet, and a missing commit must be recorded as "unavailable" rather than
-crashing a training run or, worse, being silently omitted.
-
-This module imports no torch at module level.
-"""
+"""Environment capture for reproducibility (spec sections 16, 34)."""
 
 from __future__ import annotations
 
@@ -65,12 +55,7 @@ class GitInfo:
 
 
 def capture_git_info(root: Path | str | None = None) -> GitInfo:
-    """Capture git state, tolerating a repository that has not been initialized.
-
-    A run made from uncommitted code is recorded as ``dirty=True``. That is not a
-    failure, but it does mean the run cannot be reproduced from a commit hash
-    alone, and the manifest should say so.
-    """
+    """Capture git state, tolerating a repository that has not been initialized."""
     cwd = Path(root) if root else Path.cwd()
 
     inside = _run_git(["rev-parse", "--is-inside-work-tree"], cwd)
@@ -170,11 +155,7 @@ class EnvironmentSnapshot:
 
 
 def _hash_hostname() -> str:
-    """Hash the hostname.
-
-    The hostname can identify a person's machine, so the manifest records a digest:
-    enough to tell two machines apart, not enough to name one.
-    """
+    """Hash the hostname."""
     import hashlib
 
     return hashlib.sha256(platform.node().encode("utf-8")).hexdigest()[:12]
@@ -187,8 +168,7 @@ def detect_colab() -> bool:
     return "google.colab" in sys.modules
 
 
-#: Environment variables worth recording. Deliberately excludes anything that
-#: could hold a credential.
+#: Environment variables worth recording; never one that could hold a credential.
 _TRACKED_ENV_VARS = (
     "CUDA_VISIBLE_DEVICES",
     "PYTORCH_CUDA_ALLOC_CONF",
@@ -220,12 +200,7 @@ def capture_environment(root: Path | str | None = None) -> EnvironmentSnapshot:
 
 
 def set_global_seed(seed: int, *, deterministic: bool = True) -> dict[str, Any]:
-    """Seed every RNG this pipeline touches.
-
-    Returns a record of what was seeded, so the manifest can state whether the run
-    was fully deterministic. Full determinism on GPU also costs speed, so it is
-    reported rather than assumed.
-    """
+    """Seed every RNG this pipeline touches."""
     import random
 
     random.seed(seed)
@@ -248,8 +223,7 @@ def set_global_seed(seed: int, *, deterministic: bool = True) -> dict[str, Any]:
             torch.cuda.manual_seed_all(seed)
             record["torch_cuda"] = True
         if deterministic:
-            # cuDNN autotuning picks different algorithms per run; disabling it
-            # costs throughput but makes a run repeatable.
+            # Disabling cuDNN autotuning costs throughput but makes runs repeatable.
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
             record["deterministic"] = True

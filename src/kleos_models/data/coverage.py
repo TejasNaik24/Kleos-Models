@@ -1,23 +1,4 @@
-"""Variation-axis coverage reporting (spec section 10).
-
-The question this module answers is deliberately narrow:
-
-    How many examples cover each underlying situation type?
-
-Not "how many examples are there". A dataset of 10,000 examples that all describe
-one urgency level under one evidence-quality condition supports no claim about
-generalization across urgency or evidence.
-
-Coverage is reported at three levels:
-
-1. **Marginal** — counts per value of each axis, independently.
-2. **Joint** — counts per combination of a chosen set of axes (the "situation
-   type"). This is where thin coverage actually shows up.
-3. **Gaps** — combinations expected by the config that have zero or too few
-   examples.
-
-This module imports no torch.
-"""
+"""Variation-axis coverage reporting (spec section 10)."""
 
 from __future__ import annotations
 
@@ -33,12 +14,10 @@ from kleos_models.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-#: Axes that define a "situation type" by default. Chosen because these are the
-#: dimensions the KLEOS decision policies are supposed to be sensitive to.
+#: Axes defining a "situation type": what KLEOS decision policies should be sensitive to.
 DEFAULT_JOINT_AXES: tuple[str, ...] = ("domain", "urgency", "evidence_quality")
 
-#: Below this many examples, a cell is reported as thin: present, but too sparse
-#: to support a per-cell claim.
+#: Below this many examples a cell is thin: present, but too sparse for a per-cell claim.
 DEFAULT_MIN_CELL_COUNT = 3
 
 
@@ -148,14 +127,7 @@ def build_coverage_report(
     min_cell_count: int = DEFAULT_MIN_CELL_COUNT,
     axes: Sequence[str] = VARIATION_AXES,
 ) -> CoverageReport:
-    """Compute marginal and joint variation-axis coverage.
-
-    Args:
-        examples: Dataset to analyse.
-        joint_axes: Axes whose combination defines a situation type.
-        min_cell_count: Cells below this count are reported as thin.
-        axes: Axes to compute marginal coverage for.
-    """
+    """Compute marginal and joint variation-axis coverage."""
     report = CoverageReport(
         total_examples=len(examples),
         joint_axes=list(joint_axes),
@@ -178,7 +150,6 @@ def build_coverage_report(
                 missing_count=missing,
             )
 
-    # Joint coverage over the situation-defining axes.
     joint_counter: Counter[str] = Counter()
     for example in examples:
         parts = []

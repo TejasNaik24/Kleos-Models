@@ -1,7 +1,4 @@
-"""Experiment infrastructure: manifests, registry, environment capture.
-
-Imports no torch, so run history can be inspected anywhere.
-"""
+"""Experiment infrastructure: manifests, registry, environment capture."""
 
 from kleos_models.experiments.environment import (
     EnvironmentSnapshot,

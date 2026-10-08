@@ -1,9 +1,4 @@
-"""Evaluation layer: metrics, graders, consistency, OOD, faithfulness, reporting.
-
-The scoring layer imports no torch. Metrics, graders, consistency, OOD analysis and
-report generation can all be tested and re-run offline against saved results, which
-is what keeps re-analysis cheap and CI meaningful.
-"""
+"""Evaluation layer: metrics, graders, consistency, OOD, faithfulness, reporting."""
 
 from kleos_models.evaluation.capability import (
     CAPABILITY_SUITE_VERSION,

@@ -1,8 +1,4 @@
-"""The private-data scanner must never reprint what it finds.
-
-Its report is read in terminals and CI logs; echoing a credential there leaks
-the very thing the scan exists to catch.
-"""
+"""The private-data scanner must never reprint what it finds."""
 
 from __future__ import annotations
 

@@ -1,11 +1,4 @@
-"""Feasibility and memory-estimation tests (spec §3, §13, §14).
-
-These encode the rule that architectural support is not the same as trainability,
-and that a configuration is never silently shrunk until the experiment stops being
-comparable.
-
-GPUs are simulated, so the whole matrix is testable without hardware.
-"""
+"""Feasibility and memory-estimation tests (spec §3, §13, §14)."""
 
 from __future__ import annotations
 
@@ -46,7 +39,6 @@ def gpu(name: str, vram: float, capability: tuple[int, int]) -> GPUInfo:
     )
 
 
-# Real runtimes this project targets.
 T4 = gpu("Tesla T4", 15.8, (7, 5))  # Colab free tier
 L4 = gpu("NVIDIA L4", 22.5, (8, 9))  # Colab Pro
 A100_40 = gpu("NVIDIA A100-SXM4-40GB", 40.0, (8, 0))
@@ -70,8 +62,7 @@ def assess(name: str, hardware: GPUInfo, training: TrainingConfig | None = None)
 
 class TestGPUInfo:
     def test_bf16_requires_compute_capability_8(self):
-        # A Colab T4 is 7.5 and cannot do bfloat16. This is the single most
-        # consequential hardware fact for the canonical training environment.
+        # A Colab T4 is 7.5 and cannot do bfloat16.
         assert not T4.bf16_supported
         assert L4.bf16_supported
         assert A100_40.bf16_supported
@@ -338,10 +329,6 @@ class TestPreFlightReport:
         )
 
 
-# ---------------------------------------------------------------------------
-# The rebuilt estimator (finding H-F10) and KLEOS Logos
-# ---------------------------------------------------------------------------
-
 from kleos_models.models.feasibility import (  # noqa: E402
     EMPIRICAL_ANCHORS,
     GPU_PRESETS,
@@ -383,8 +370,7 @@ class TestExactLoRACounts:
 class TestEmpiricalAnchors:
     @pytest.mark.parametrize("anchor", EMPIRICAL_ANCHORS, ids=lambda a: a.run)
     def test_the_estimate_reproduces_a_measured_peak(self, anchor):
-        # Both measured on this project's T4 runs; a change that breaks either
-        # is a change to the physics, and must be justified against them.
+        # Measured on this project's T4 runs; breaking either must be justified against them.
         assert abs(anchor.deviation()) < 0.02, (anchor.estimate_gb(), anchor.measured_peak_gb)
 
 
@@ -473,8 +459,7 @@ class TestBudgets:
             simulated_gpu(spec)
 
     def test_the_smoke_tier_assumes_gradient_checkpointing(self):
-        # A config without checkpointing that fits once it is switched on is
-        # SMOKE (adjustable), not INFERENCE_ONLY.
+        # Fits once checkpointing is switched on: SMOKE (adjustable), not INFERENCE_ONLY.
         config = model("ministral_8b")
         report = assess_feasibility(
             config,
@@ -555,12 +540,7 @@ class TestPlanRunScript:
 
 
 class TestTwoGPUs:
-    """Logos v0.0.2 on Kaggle's 2 x T4: the layers split across both GPUs.
-
-    The longest kleos-policy-v0.0.7 example is 736 tokens with the Reasoning
-    tokenizer (measured). On one T4 that is past the margin Logos v0.0.1 ran
-    with: v0.0.1 measured 13.60 GB and 0.35 GB spare at 448 tokens.
-    """
+    """Logos v0.0.2 on Kaggle's 2 x T4: the layers split across both GPUs."""
 
     KAGGLE = "T4:14.56:7.5:2"
     LONGEST = 736

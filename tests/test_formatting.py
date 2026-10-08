@@ -1,13 +1,4 @@
-"""Formatting and assistant-loss-masking tests (spec §30).
-
-Masking correctness is the highest-consequence detail in the training pipeline.
-If the mask is wrong the model trains on the wrong tokens, the loss still looks
-plausible, and nothing downstream notices. These tests pin the exact spans.
-
-They run against a fake tokenizer, so masking is verified without downloading a
-model. The same logic is exercised against real Qwen and Mistral templates in
-``test_training_tiny_model.py`` when transformers is installed.
-"""
+"""Formatting and assistant-loss-masking tests (spec §30)."""
 
 from __future__ import annotations
 
@@ -57,8 +48,7 @@ class TestRendering:
         assert prompt.rstrip().endswith("<|assistant|>")
 
     def test_unsupported_template_kwarg_raises_an_actionable_error(self, fake_tokenizer):
-        # A Thinking-only checkpoint rejects enable_thinking; that must surface
-        # as a clear message rather than a jinja traceback.
+        # A Thinking-only checkpoint rejects enable_thinking: a clear error, not a jinja trace.
         formatter = ConversationFormatter(fake_tokenizer, template_kwargs={"enable_thinking": True})
         with pytest.raises(DataValidationError, match="chat template rejected"):
             formatter.render(build().messages)
@@ -83,9 +73,7 @@ class TestMasking:
         ]
         decoded = fake_tokenizer.decode(supervised)
 
-        # The answer is supervised.
         assert "1." in decoded
-        # The prompt is not.
         assert "Rank" not in decoded
         assert "<|user|>" not in decoded
 
@@ -288,8 +276,7 @@ class TestTruncation:
             assert result.truncated
 
     def test_example_whose_answer_is_truncated_away_is_dropped(self, fake_tokenizer):
-        # Training on an example with zero supervised tokens produces a loss over
-        # nothing, so it is dropped rather than silently included.
+        # Zero supervised tokens would mean a loss over nothing.
         payload = make_example(user="word " * 500, assistant="answer")
         formatter = ConversationFormatter(fake_tokenizer, max_seq_length=20)
         assert formatter.format_example(TrainingExample.model_validate(payload)) is None
@@ -333,7 +320,6 @@ class TestDatasetFormatting:
         description = formatter.describe_masking(build("described-001"))
         assert "described-001" in description
         assert "supervised" in description
-        # Must not leak example content into a debugging string.
         assert "Rank these" not in description
 
 
@@ -405,12 +391,7 @@ class MistralStyleTokenizer:
 
 
 class TestSystemPromptSurvivesTemplate:
-    """A template that drops the system turn must not silently train without it.
-
-    Found on Colab against the real Ministral checkpoint: the policy instructions
-    that KLEOS exists to teach were being deleted from every training example,
-    while evaluation kept them.
-    """
+    """A template that drops the system turn must not silently train without it."""
 
     @staticmethod
     def _formatter() -> ConversationFormatter:
@@ -441,8 +422,7 @@ class TestSystemPromptSurvivesTemplate:
         assert "POLICY" in rendered, "system prompt was dropped from the training text"
 
     def test_training_and_inference_prompts_are_identical(self):
-        # The whole point. If these diverge the model is trained on one prompt
-        # and evaluated on another.
+        # Otherwise the model is trained on one prompt and evaluated on another.
         formatter = self._formatter()
         system = Message(role="system", content="POLICY")
         user = Message(role="user", content="Q")

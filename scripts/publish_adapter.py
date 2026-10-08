@@ -102,7 +102,6 @@ def main(argv: list[str] | None = None) -> int:
         json.loads(args.comparison.read_text(encoding="utf-8")) if args.comparison else None
     )
 
-    # --- safety: decide exactly what may be uploaded -----------------------
     print("\n── upload safety check " + "─" * 40)
     files, rejected = collect_upload_files(adapter_dir, run_dir)
 
@@ -116,7 +115,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n  Allowed names: {sorted(ALLOWED_UPLOAD_NAMES)}")
     print("  Raw training data, .env and checkpoints are never uploaded.")
 
-    # --- model card ---------------------------------------------------------
     card = build_model_card(
         repo_id=args.repo_id,
         manifest=manifest,
@@ -137,7 +135,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  Review {card_path}, then re-run without --dry-run.\n")
         return 0
 
-    # --- upload -------------------------------------------------------------
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     if not token:
         raise PublishingError(

@@ -1,10 +1,4 @@
-"""The data contract reads kleos-policy-v0.0.7's assistant ``reasoning`` field.
-
-Schema 1.1 adds one optional field to assistant messages: a policy-derived
-reasoning trace, which a reasoning model is trained to emit inside its thinking
-span. Examples without it must serialize and hash exactly as before, so every
-earlier release keeps its identity.
-"""
+"""The data contract reads kleos-policy-v0.0.7's assistant ``reasoning`` field."""
 
 from __future__ import annotations
 
@@ -118,8 +112,7 @@ class TestSealedV007Release:
             assert example.version == "1.1"
 
     def test_every_example_starts_with_a_system_message(self, bundle: Any) -> None:
-        # Review Focus 3: the Reasoning template adds its own default "how you
-        # should think" system prompt to any conversation without one.
+        # Review Focus 3: the Reasoning template adds a default system prompt when none exists.
         for example in [*bundle.train, *bundle.validation, *bundle.test]:
             assert example.messages[0].role == "system", example.id
 

@@ -1,30 +1,17 @@
-# ---------------------------------------------------------------------------
-# Serving Hermes from a free Hugging Face ZeroGPU Space.
+# Serves Hermes from a Hugging Face ZeroGPU Space: the same `load_deployment` and
+# `HuggingFaceBackend` as the Docker service, split so the GPU is held only for
+# `generate_ids` (prepare and finish run on the CPU).
 #
-# An infrastructure adapter, not a second model implementation. It loads the
-# same frozen package through the same `load_deployment`, and generates through
-# the same `HuggingFaceBackend` as the Docker service — only split so that the
-# GPU is held for the one step that needs it.
-#
-#   request ──► auth ─► validate ─► prepare (render + tokenize) ─┐   CPU
-#                                                                 ▼
-#                                          @spaces.GPU  generate_ids   GPU (quota)
-#                                                                 │
-#   response ◄── contract JSON ◄── finish (decode) ◄─────────────┘   CPU
-#
-# ZeroGPU facts this relies on (verified against the HF docs and `spaces`
-# 0.51.3, 2026-09-23):
-#   * the model is loaded at import time under "CUDA emulation"; weights move to
-#     a real GPU when a decorated call runs;
-#   * quota and queue decisions happen in the caller's process *before* any GPU
-#     work, and surface as gradio errors this module classifies;
-#   * a worker process that stays assigned and idle is reused, with the weights
-#     still on the GPU (warm); otherwise a new worker is forked (cold);
+# ZeroGPU behaviour relied on (`spaces` 0.51.3):
+#   * the model loads at import under CUDA emulation; weights reach a real GPU
+#     only inside a decorated call;
+#   * quota and queue checks run in the caller's process before any GPU work and
+#     surface as gradio errors, classified here;
+#   * an idle assigned worker is reused with weights on the GPU (warm); otherwise
+#     a new worker is forked (cold);
 #   * GPU time is charged to the calling Hugging Face account.
 #
-# This module imports neither gradio nor spaces, so all of it is testable
-# without either. `deploy/zerogpu-space/app.py` is the thin wiring.
-# ---------------------------------------------------------------------------
+# Imports neither gradio nor spaces; `deploy/zerogpu-space/app.py` is the wiring.
 
 from __future__ import annotations
 
@@ -61,8 +48,7 @@ from kleos_models.serving.status import (
 
 logger = get_logger("kleos_models.serving.zerogpu")
 
-#: The header carrying the shared secret. A custom header rather than
-#: `Authorization`, which Hugging Face's proxy uses for its own token.
+#: Shared-secret header; not `Authorization`, which the HF proxy uses for its own token.
 KEY_HEADER = "x-hermes-key"
 
 ENV_API_KEY = "HERMES_API_KEY"
@@ -76,8 +62,7 @@ ENV_GPU_TOKENS_PER_SECOND = "HERMES_GPU_TOKENS_PER_SECOND"
 ENV_GPU_MIN_SECONDS = "HERMES_GPU_MIN_SECONDS"
 ENV_GPU_MAX_SECONDS = "HERMES_GPU_MAX_SECONDS"
 
-#: The v0.0.6 dataset's longest prompt is ~440 tokens. 2048 is generous for
-#: real KLEOS prompts and still bounds what one request can cost.
+#: The longest v0.0.6 dataset prompt is ~440 tokens; 2048 leaves headroom yet bounds cost.
 DEFAULT_MAX_INPUT_TOKENS = 2048
 
 _PINNED = re.compile(r"^[0-9a-f]{40}$")
@@ -86,11 +71,6 @@ _TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 def _flag(raw: str | None) -> bool:
     return raw is not None and raw.strip().lower() in _TRUTHY
-
-
-# ---------------------------------------------------------------------------
-# Settings
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -136,21 +116,12 @@ class ZeroGPUSettings:
         )
 
 
-# ---------------------------------------------------------------------------
-# GPU side
-# ---------------------------------------------------------------------------
-
-#: Per-process call counter. A forked ZeroGPU worker inherits the parent's
-#: values, sees a different pid, and restarts from zero: call 1 is cold.
+#: Per-process call counter; a forked worker sees a new pid and restarts at 0 (call 1 is cold).
 _WORKER: dict[str, int | None] = {"pid": None, "calls": 0}
 
 
 def run_gpu_step(deployment: Any, prepared: Any, config: GenerationConfig) -> dict[str, Any]:
-    """The only work done while a GPU is held: generate token ids, and measure.
-
-    Returns plain values, because ZeroGPU pickles the result back to the
-    calling process.
-    """
+    """The only work done while a GPU is held: generate token ids, and measure."""
     import torch
 
     pid = os.getpid()
@@ -184,16 +155,7 @@ def _float_env(name: str, default: float) -> float:
 
 
 def gpu_duration_for(profile: ServingProfile) -> Callable[[Any, GenerationConfig], int]:
-    """The GPU-duration rule for one model, read from its ``<PREFIX>_GPU_*`` secrets.
-
-    ZeroGPU admits a call only if the account has at least the *requested*
-    duration left (x1.5 on the default GPU size), and charges the time actually
-    used. An over-generous request therefore makes the daily quota appear
-    exhausted while most of it is unused — so this stays tight, scaled by the
-    token budget, clamped to a ceiling, and calibrated from measured
-    throughput. A generation that outruns its duration is aborted by ZeroGPU
-    and reported as ``model_error``.
-    """
+    """The GPU-duration rule for one model, read from its ``<PREFIX>_GPU_*`` secrets."""
     defaults = profile.gpu
 
     def duration(prepared: Any, config: GenerationConfig) -> int:
@@ -209,13 +171,8 @@ def gpu_duration_for(profile: ServingProfile) -> Callable[[Any, GenerationConfig
     return duration
 
 
-#: Hermes' rule: the HERMES_GPU_* secrets and today's defaults.
+#: Hermes' rule: the HERMES_GPU_* secrets, else the defaults.
 gpu_duration = gpu_duration_for(HERMES_PROFILE)
-
-
-# ---------------------------------------------------------------------------
-# The request path
-# ---------------------------------------------------------------------------
 
 
 class ZeroGPUService:
@@ -242,8 +199,6 @@ class ZeroGPUService:
             "base_model": manifest.base_model,
             "base_revision": manifest.base_revision,
         }
-
-    # -- helpers -------------------------------------------------------------
 
     def _authorized(self, headers: Mapping[str, str]) -> bool:
         if not self.settings.api_keys:
@@ -275,12 +230,9 @@ class ZeroGPUService:
         return uuid.uuid4().hex
 
     def _log(self, request_id: str, status: HermesStatus, **fields: Any) -> None:
-        # Identifiers, counts and timings only. Never prompt or response text,
-        # never headers, never keys.
+        # Identifiers, counts and timings only: never prompt/response text, headers or keys.
         details = " ".join(f"{key}={value}" for key, value in fields.items())
         logger.info("generate request_id=%s status=%s %s", request_id, status.value, details)
-
-    # -- endpoints -----------------------------------------------------------
 
     def status(self, headers: Mapping[str, str]) -> dict[str, Any]:
         """Readiness and identity. The model is loaded before the app serves, so
@@ -315,8 +267,7 @@ class ZeroGPUService:
             self._log(request_id, HermesStatus.UNAUTHORIZED)
             return self._error(HermesStatus.UNAUTHORIZED, request_id=request_id)
 
-        # Validate: schema first (unknown fields such as workspace ids or tool
-        # definitions are refused), then size bounds — all before any GPU work.
+        # Schema (refuses unknown fields), then size bounds, all before any GPU work.
         try:
             request = GenerateRequest.model_validate(payload)
         except ValidationError as exc:
@@ -336,9 +287,8 @@ class ZeroGPUService:
             )
 
         if self.profile.require_system_message and request.messages[0].role != "system":
-            # Every training and benchmark prompt began with a system message.
-            # Without one, a thinking model's template may add its own default
-            # instructions, which is not the model that was evaluated.
+            # Every evaluated prompt had a system message; without one a thinking model's
+            # template may inject default instructions the model was never evaluated with.
             self._log(request_id, HermesStatus.INVALID_REQUEST, reason="system")
             return self._error(
                 HermesStatus.INVALID_REQUEST,
@@ -377,8 +327,7 @@ class ZeroGPUService:
             status, retry_after = classify_exception(exc)
             title = getattr(exc, "title", None)
             infra = isinstance(title, str) and title.startswith("ZeroGPU")
-            # A ZeroGPU message describes quota or queue state and is safe to
-            # log; any other exception text could echo input, so only its type is.
+            # ZeroGPU messages are quota/queue state, safe to log; other text may echo input.
             self._log(
                 request_id,
                 status,
@@ -444,10 +393,6 @@ class ZeroGPUService:
         )
 
 
-# ---------------------------------------------------------------------------
-# Startup
-# ---------------------------------------------------------------------------
-
 _VERSION_PACKAGES = (
     "torch",
     "transformers",
@@ -491,12 +436,7 @@ def load_space_deployment(
     env: Mapping[str, str] | None = None,
     local_dir: Path | str | None = None,
 ) -> Any:
-    """Fetch the private package at a pinned revision, verify it, and load it.
-
-    Runs once, at import time in the Space, on the CPU under ZeroGPU's CUDA
-    emulation: nothing here consumes GPU quota. Fails closed — an exception
-    here stops the Space from starting at all.
-    """
+    """Fetch the private package at a pinned revision, verify it, and load it."""
     source = os.environ if env is None else env
     profile = load_profile(record)
     repo_name, revision_name = profile.env("PACKAGE_REPO"), profile.env("PACKAGE_REVISION")
@@ -516,7 +456,7 @@ def load_space_deployment(
             ],
         )
 
-    # Read the identity first: a bad record should fail before any download.
+    # Fail on a bad record before any download.
     expected = load_expected_identity(record)
 
     from huggingface_hub import snapshot_download
@@ -537,14 +477,10 @@ def load_space_deployment(
             path,
             verify=True,
             expected_identity=expected,
-            # One device, explicitly. Under emulation 'auto' has nothing to
-            # balance, and a fixed placement is easier to reason about.
+            # Under emulation 'auto' has nothing to balance; pin one device.
             device_map="cuda:0",
-            # Read the adapter file on the CPU. Left to itself PEFT sees the
-            # emulated CUDA and reads straight onto it, which needs a real GPU
-            # and failed the first ZeroGPU start ("No CUDA GPUs are
-            # available"). The weights are then copied into the emulated model
-            # like the rest of it; their values are the same either way.
+            # Otherwise PEFT reads the adapter onto the emulated CUDA, which needs a real GPU
+            # ("No CUDA GPUs are available"). The values are the same either way.
             adapter_device="cpu",
         )
     except KleosError:

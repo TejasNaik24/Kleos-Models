@@ -1,20 +1,4 @@
-"""Generation backends (spec sections 19, 20).
-
-The evaluation harness talks to a :class:`Backend`, never to a model directly.
-That indirection is what makes the research arms possible:
-
-* ``arm0_base`` and ``arm2_finetuned`` differ only by whether a LoRA adapter is
-  attached — same base weights, same decoding settings, same prompts.
-* ``arm1`` / ``arm3`` add the orchestration scaffolding on top of either.
-* A frontier reference can be added later by implementing this protocol, with no
-  change to task definitions, graders or the runner.
-
-Spec section 20 says not to implement proprietary APIs unless asked, so
-:class:`FrontierAPIBackend` is a documented stub that raises rather than a
-half-working client.
-
-An ``EchoBackend`` is included for testing the harness itself without a GPU.
-"""
+"""Generation backends (spec sections 19, 20)."""
 
 from __future__ import annotations
 
@@ -58,21 +42,7 @@ class GenerationOutput:
 def split_thinking(
     ids: Sequence[int], begin: int, end: int
 ) -> tuple[list[int] | None, list[int], bool]:
-    """Split a completion's token ids into its thinking span and its answer.
-
-    Returns ``(reasoning_ids, answer_ids, closed)``:
-
-    * ``[begin] trace [end] answer`` gives ``(trace, answer, True)``; only the
-      first ``end`` splits, so a marker inside the answer stays in it;
-    * a span opened by ``begin`` and never closed (the budget ran out while
-      thinking) gives ``(trace, [], False)``: there is no answer to grade;
-    * an ``end`` without a leading ``begin`` still splits;
-    * no marker at all gives ``(None, ids, True)``: the whole completion is the
-      answer.
-
-    Done on ids, before decoding, because both markers are special tokens and
-    decoding with ``skip_special_tokens=True`` would erase the boundary.
-    """
+    """Split a completion's token ids into its thinking span and its answer."""
     tokens = list(ids)
     if tokens[:1] == [begin]:
         body = tokens[1:]
@@ -88,11 +58,7 @@ def split_thinking(
 
 @dataclass
 class PreparedPrompt:
-    """A rendered, tokenized prompt, ready for the model.
-
-    Plain CPU tensors and an int, so it pickles — ZeroGPU runs the model in a
-    forked worker and ships arguments to it.
-    """
+    """A rendered, tokenized prompt, ready for the model."""
 
     inputs: dict[str, Any]
     prompt_length: int
@@ -141,13 +107,7 @@ class BaseBackend(ABC):
 
 
 class HuggingFaceBackend(BaseBackend):
-    """Local generation through transformers, with or without a LoRA adapter.
-
-    This single class serves both the base and fine-tuned arms. Whether an adapter
-    is attached is the *only* difference between them, which is precisely the
-    control the experiment needs — anything else that differed would confound the
-    comparison.
-    """
+    """Local generation through transformers, with or without a LoRA adapter."""
 
     def __init__(
         self,
@@ -196,10 +156,8 @@ class HuggingFaceBackend(BaseBackend):
         prepared = self.prepare(messages)
         return self.finish(prepared, self.generate_ids(prepared, config))
 
-    # Generation is split in three so a host that bills GPU time (ZeroGPU) can
-    # run only the middle step on the GPU. generate() composes them in the same
-    # order with the same arguments, so every existing caller — evaluation, the
-    # Docker service — behaves exactly as before.
+    # Split in three so a GPU-billed host (ZeroGPU) runs only the middle step on the GPU;
+    # generate() composes them unchanged for every other caller.
 
     def prepare(self, messages: Sequence[Message]) -> PreparedPrompt:
         """Render the chat template and tokenize. CPU only; tensors stay on the CPU."""
@@ -223,8 +181,7 @@ class HuggingFaceBackend(BaseBackend):
             "pad_token_id": self.loaded.tokenizer.pad_token_id,
             "repetition_penalty": config.repetition_penalty,
         }
-        # Passing temperature/top_p with do_sample=False triggers warnings and has
-        # no effect; greedy decoding is the deterministic default for evaluation.
+        # Sampling params only with do_sample: otherwise they warn and do nothing.
         if config.do_sample:
             generate_kwargs.update({"temperature": config.temperature, "top_p": config.top_p})
             if config.top_k:
@@ -252,14 +209,10 @@ class HuggingFaceBackend(BaseBackend):
         tokenizer = self.loaded.tokenizer
         metadata = {"backend": self.name, "reasoning_mode": self.loaded.reasoning_mode.value}
 
-        # Reasoning models emit a thinking span. Separate it from the answer:
-        # graders score the decision and its justification, not hidden
-        # chain-of-thought (spec section 39).
+        # Graders score the answer, not the thinking span (spec section 39).
         markers = self._thinking_markers()
         if markers is not None:
-            # [THINK]/[/THINK] are special tokens (Ministral 3 Reasoning), so
-            # split on ids: decoding first would erase the boundary and grade the
-            # trace as part of the answer.
+            # [THINK]/[/THINK] are special tokens; split on ids, as decoding erases the boundary.
             reasoning_ids, answer_ids, closed = split_thinking(completion_ids, *markers)
             return GenerationOutput(
                 text=tokenizer.decode(answer_ids, skip_special_tokens=True).strip(),
@@ -299,12 +252,7 @@ class HuggingFaceBackend(BaseBackend):
 
 
 class EchoBackend(BaseBackend):
-    """Deterministic stub backend for testing the harness itself.
-
-    Returns a canned response, so metrics, graders, consistency, OOD and report
-    generation can all be exercised in CI with no model and no GPU. It is never a
-    substitute for a real evaluation, and its ``describe()`` says so.
-    """
+    """Deterministic stub backend for testing the harness itself."""
 
     name = "echo"
 
@@ -341,13 +289,7 @@ class EchoBackend(BaseBackend):
 
 
 class FrontierAPIBackend(BaseBackend):
-    """Interface for a hosted frontier reference model (spec section 20).
-
-    Intentionally not implemented. The arms exist in the design
-    (``frontier_zero_shot``, ``frontier_orchestrated``) so that adding a provider
-    later requires implementing :meth:`generate` here and nothing else — no change
-    to tasks, graders, or the runner.
-    """
+    """Interface for a hosted frontier reference model (spec section 20)."""
 
     name = "frontier"
 
@@ -381,12 +323,7 @@ def build_backend(
     adapter_path: Path | str | None = None,
     reasoning_mode: ReasoningMode | None = None,
 ) -> BaseBackend:
-    """Construct the backend for a research arm.
-
-    Raises:
-        EvaluationError: when a fine-tuned arm is requested without an adapter, or
-            the arm is unknown.
-    """
+    """Construct the backend for a research arm."""
     if arm in ("arm0_base", "arm1_base_orchestrated"):
         return HuggingFaceBackend(model_config, reasoning_mode=reasoning_mode, name=arm)
 

@@ -1,18 +1,4 @@
-"""Hugging Face publishing helpers and model-card generation (spec §18, §35).
-
-Two responsibilities, both about restraint:
-
-1. **Decide what may leave the machine.** Uploading is an allowlist, not a
-   blocklist. Only named artifacts are eligible, and each one is still scanned
-   for private-looking content before it is offered. Raw training data, `.env`
-   and checkpoints are never eligible.
-
-2. **Write a model card that does not overclaim.** The card states what the model
-   is better than *only when an evaluation result shows it*. With no evaluation
-   attached, it says so plainly rather than implying a benefit.
-
-This module imports no torch.
-"""
+"""Hugging Face publishing helpers and model-card generation (spec §18, §35)."""
 
 from __future__ import annotations
 
@@ -27,8 +13,7 @@ from kleos_models.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-#: Filenames eligible for upload. An allowlist: anything not named here is
-#: refused, so a new artifact type cannot leak by default.
+#: Upload allowlist: anything not named is refused, so a new artifact type cannot leak.
 ALLOWED_UPLOAD_NAMES: frozenset[str] = frozenset(
     {
         "adapter_config.json",
@@ -41,22 +26,9 @@ ALLOWED_UPLOAD_NAMES: frozenset[str] = frozenset(
     }
 )
 
-#: Tokenizer artifacts are deliberately NOT published with an adapter.
-#:
-#: A PEFT adapter is not self-contained — inference loads the base model, so the
-#: base repository is always a dependency and its tokenizer is always available.
-#: KLEOS never adds tokens or resizes embeddings (LoRA excludes ``embed_tokens``
-#: and ``lm_head``), so the tokenizer is byte-identical to the base model's and
-#: duplicating it buys nothing.
-#:
-#: The rule is all-or-nothing on purpose. Publishing ``tokenizer_config.json``
-#: without ``tokenizer.json`` yields a repository that looks like it carries a
-#: tokenizer but cannot build one — no vocabulary source — which is worse than
-#: shipping none. That partial bundle is exactly what the 5MB scan cap used to
-#: produce, since the vocabulary file is ~17MB and the config files are tiny.
-#:
-#: This is a packaging decision, not a security refusal, which is why these names
-#: live here rather than in FORBIDDEN_PATTERNS.
+#: Never published: the adapter needs the base repo anyway, whose tokenizer is identical
+#: (LoRA excludes embed_tokens/lm_head). A partial set looks loadable and is not.
+#: A packaging rule, not a security refusal, hence not in FORBIDDEN_PATTERNS.
 TOKENIZER_ARTIFACTS: frozenset[str] = frozenset(
     {
         "tokenizer.json",
@@ -84,8 +56,7 @@ FORBIDDEN_PATTERNS: tuple[re.Pattern[str], ...] = (
 #: Files scanned for sensitive content before upload.
 _SCANNED_SUFFIXES = frozenset({".json", ".yaml", ".yml", ".md", ".txt"})
 
-#: Maximum size scanned inline. Larger text files are unusual here and are
-#: refused rather than skipped.
+#: Larger text files are refused, not skipped.
 _MAX_SCAN_BYTES = 5 * 1024 * 1024
 
 
@@ -120,15 +91,7 @@ def _scan_file(path: Path) -> str | None:
 def collect_upload_files(
     adapter_dir: Path, run_dir: Path | None = None
 ) -> tuple[list[Path], list[tuple[Path, str]]]:
-    """Decide which files may be uploaded.
-
-    Args:
-        adapter_dir: Directory holding the adapter weights.
-        run_dir: The run directory, whose config/manifest/metrics are also eligible.
-
-    Returns:
-        ``(allowed, rejected)`` where each rejection carries a reason.
-    """
+    """Decide which files may be uploaded."""
     allowed: list[Path] = []
     rejected: list[tuple[Path, str]] = []
 
@@ -138,9 +101,7 @@ def collect_upload_files(
             path = run_dir / name
             if path.exists():
                 candidates.append(path)
-        # The run's tokenizer/ directory is deliberately not enumerated. See
-        # TOKENIZER_ARTIFACTS: the tokenizer comes from the pinned base model,
-        # and a partial copy here would be worse than none.
+        # tokenizer/ is deliberately not enumerated; see TOKENIZER_ARTIFACTS.
 
     for path in candidates:
         forbidden = _is_forbidden(path.name)
@@ -148,8 +109,7 @@ def collect_upload_files(
             rejected.append((path, forbidden))
             continue
         if path.name in TOKENIZER_ARTIFACTS:
-            # Rejected with its own reason rather than a bare allowlist miss, so
-            # the log says "by design" instead of looking like a failure.
+            # Its own reason, so the log reads as by design rather than as a failure.
             rejected.append(
                 (
                     path,
@@ -171,8 +131,7 @@ def collect_upload_files(
     return allowed, rejected
 
 
-#: A 40-character hex string is a resolved git/Hub commit. Anything else
-#: (``main``, a tag, a branch) is a moving pointer.
+#: A resolved commit; ``main``, a tag or a branch is a moving pointer.
 _PINNED_REVISION = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -182,19 +141,7 @@ def is_pinned_revision(revision: str | None) -> bool:
 
 
 def _revision_note(revision: str, serving_revision: str | None = None) -> str:
-    """Say plainly whether the base weights this adapter needs are pinned.
-
-    A LoRA adapter is deltas against specific base weights. If the recorded
-    revision is a moving pointer, a reader cannot know which weights it was
-    trained against, and the card must not imply otherwise.
-
-    ``serving_revision`` covers the case where those are two different facts: the
-    run happened against an unpinned pointer whose commit is no longer
-    recoverable, but a specific revision is nonetheless recommended for serving.
-    Reporting only the training revision leaves a consumer with a warning and no
-    action; reporting only the serving revision would imply the adapter was
-    trained against it. Both are stated.
-    """
+    """Say plainly whether the base weights this adapter needs are pinned."""
     if serving_revision and serving_revision != revision:
         trained = (
             f"trained against `{revision}`, a moving pointer whose exact commit "
@@ -332,30 +279,13 @@ def build_model_card(
     comparison: dict[str, Any] | None = None,
     serving_revision: str | None = None,
 ) -> str:
-    """Generate a model card (spec §35).
-
-    Includes model name, base model, method, dataset description and privacy
-    statement, tasks, hyperparameters, hardware, evaluation methodology, results,
-    limitations, intended and prohibited uses, licence and reproducibility info.
-
-    Args:
-        serving_revision: Base revision consumers should load, when that differs
-            from the revision the run recorded. A run made against an unpinned
-            pointer cannot say which commit it used, but a specific revision can
-            still be recommended for serving. Both are then reported, and the
-            card states explicitly that the serving pin is a recommendation
-            rather than a claim about the original run. Omit it and the card
-            behaves exactly as before, reporting only the recorded revision.
-
-    Deliberately does not claim superiority unless ``comparison`` demonstrates it.
-    """
+    """Generate a model card (spec §35)."""
     model = manifest.model if manifest else {}
     lora = manifest.lora.get("lora_config", manifest.lora) if manifest else {}
     training = (manifest.effective_config.get("training", {}) if manifest else {}) or {}
     base_model = model.get("base_model", "unknown")
     revision = str(model.get("revision") or "main")
-    # What a consumer should actually load. Falls back to the recorded revision,
-    # so omitting serving_revision reproduces the previous card exactly.
+    # Falls back to the recorded revision, so omitting serving_revision keeps the old card.
     load_revision = serving_revision or revision
 
     front_matter = [

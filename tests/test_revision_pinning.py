@@ -1,14 +1,4 @@
-"""Base-model revision pinning (audit finding F3).
-
-A LoRA adapter is deltas against *specific* base weights. If the base revision
-is a moving pointer, an upstream re-upload silently pairs the adapter with
-weights it never saw — no error is raised, the judgment just degrades. These
-tests exist so that cannot happen by accident, and so the training and serving
-pins cannot drift apart.
-
-They also pin the honesty requirement: a model card generated from an unpinned
-run must say so rather than imply reproducibility it cannot offer.
-"""
+"""Base-model revision pinning (audit finding F3)."""
 
 from __future__ import annotations
 
@@ -55,8 +45,7 @@ class TestIsPinnedRevision:
         assert not is_pinned_revision(PINNED_SHA[:12])
 
     def test_uppercase_is_not_accepted(self):
-        # The Hub emits lowercase; accepting both would let two spellings of the
-        # same commit compare unequal in the drift check below.
+        # The Hub emits lowercase; two spellings of one commit would compare unequal.
         assert not is_pinned_revision(PINNED_SHA.upper())
 
 
@@ -107,13 +96,7 @@ class TestDeploymentMatchesTraining:
 
 
 class TestHermesDeploymentMatchesTraining:
-    """KLEOS Hermes v0.0.6, the first KLEOS model prepared for serving.
-
-    Its research artifact records ``revision: null`` in adapter_config.json
-    (finding H-F1) and is frozen that way as historical evidence. The deployment
-    path must therefore carry the pin itself, and it must be the same pin the
-    model was trained against.
-    """
+    """KLEOS Hermes v0.0.6, the first KLEOS model prepared for serving."""
 
     def test_hermes_deployment_config_exists(self):
         assert HERMES_DEPLOYMENT_CONFIG.exists()
@@ -154,15 +137,12 @@ class TestHermesDeploymentMatchesTraining:
 
     def test_hermes_states_the_tokenizer_contract_explicitly(self):
         tokenizer = _hermes()["tokenizer"]
-        # Not absent, not inherited from a library default: stated. v0.0.6
-        # trained and evaluated with the Mistral regex unpatched.
+        # Stated, not inherited: v0.0.6 trained with the Mistral regex unpatched.
         assert tokenizer["fix_mistral_regex"] is False
         assert tokenizer["source"] == "frozen_package"
 
     def test_hermes_pins_the_compute_dtype_it_was_evaluated_in(self):
-        # v0.0.6 trained and evaluated on a T4, where `auto` meant float16. On any
-        # newer GPU (ZeroGPU's Blackwell included) `auto` means bfloat16, so the
-        # serving record must say float16 outright.
+        # `auto` was float16 on v0.0.6's T4 but is bfloat16 on newer GPUs such as ZeroGPU's.
         runtime = _hermes()["runtime"]
         assert runtime["compute_dtype"] == "float16"
         assert runtime["quantization_mode"] == "nf4"
@@ -228,8 +208,7 @@ class TestModelCardStatesRevisionHonestly:
         assert "moving pointer" not in card
 
     def test_an_unpinned_card_warns_that_weights_are_unidentifiable(self):
-        # This is the case the v0.0.6 run falls into: it was trained with 'main'
-        # and the resolved commit is not recoverable from the artifacts.
+        # v0.0.6 trained against 'main'; its resolved commit is not recoverable.
         card = self._card("main")
         assert "moving pointer" in card
         assert "not recoverable" in card
@@ -242,8 +221,7 @@ class TestModelCardStatesRevisionHonestly:
 #: The base revision KLEOS Logos v0.0.1 trains against, audited 2026-09-24.
 LOGOS_PINNED_SHA = "3cea74c1ebaf5ce5f5a2553de470e2ceab825142"
 #: sha256 of Logos' tokenizer files at that revision. Only the chat template is
-#: small enough to vendor (tests/fixtures); the other two are recorded here and in
-#: the header of configs/models/ministral3_14b.yaml for the audit trail.
+#: vendored (tests/fixtures); the others are also recorded in ministral3_14b.yaml.
 LOGOS_TOKENIZER_SHA256 = {
     "tokenizer.json": "d5f6046775b112f0e2d456ee9dba450684ab964fe5c4e231599bdc6773028135",
     "tokenizer_config.json": "f59f7294e4f26383d0ea93840fe21cf197784be0842a8301a0343e8c34ed0d6d",

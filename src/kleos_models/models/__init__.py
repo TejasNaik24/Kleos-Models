@@ -1,11 +1,4 @@
-"""Model layer: family adapters, loading, quantization, PEFT, feasibility.
-
-This package needs the ``[train]`` extra for anything that touches weights.
-Module import itself is cheap: torch and transformers are imported inside
-functions, so ``ModelFamilyAdapter`` metadata, memory estimation and feasibility
-planning all work in a light environment. That is what lets a Colab notebook print
-a feasibility table before installing or downloading anything heavy.
-"""
+"""Model layer: family adapters, loading, quantization, PEFT, feasibility."""
 
 from kleos_models.models.adapters import (
     ADAPTER_REGISTRY,

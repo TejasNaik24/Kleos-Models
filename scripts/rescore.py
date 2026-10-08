@@ -109,12 +109,7 @@ def _reference_decision(reference: dict[str, Any]) -> str | None:
 def _grade_rows(
     rows: list[dict[str, Any]], references: dict[str, dict[str, Any]], *, default_grader: str
 ) -> list[tuple[dict[str, Any], Any]]:
-    """Grade every stored response against its reference.
-
-    Raises:
-        EvaluationError: when a row has no stored response, or no reference. Both
-            mean the re-score would be inventing data rather than recomputing it.
-    """
+    """Grade every stored response against its reference."""
     graders: dict[str, Any] = {}
     graded: list[tuple[dict[str, Any], Any]] = []
     for row in rows:
@@ -165,15 +160,14 @@ def rescore(
         # The decision follows the grade; a stale one would skew consistency.
         updated["decision"] = _decision(graded.details, row["response"])
         rescored_rows.append(updated)
-        # Compare at stored precision: the saved score is already rounded, so an
-        # exact comparison would report every row as changed by ~1e-5.
+        # Compare at stored (rounded) precision, or every row reports a ~1e-5 change.
         if before != after:
             changes.append((row["example_id"], before, after))
 
     result = dict(payload)
     result["results"] = rescored_rows
 
-    # Recomputed with the same helper run_evaluation uses, so the shape matches.
+    # Same helper as run_evaluation, so the shape matches.
     scores = [r["score"] for r in rescored_rows]
     metrics: dict[str, Any] = {"overall": summarize("overall", scores).to_dict()}
     sub_names = {k for r in rescored_rows for k in r.get("sub_scores", {})}
@@ -219,12 +213,7 @@ def rescore(
 
 
 def gold_floor(payload: dict[str, Any], benchmark: Path, gold_files: list[Path]) -> dict[str, Any]:
-    """Run the fabricated-citation heuristic over the gold answers: counts only.
-
-    The gold answer is the final assistant message of the same item in the
-    sealed split files. The context and provided evidence come from the
-    benchmark item, exactly as for the model's responses.
-    """
+    """Run the fabricated-citation heuristic over the gold answers: counts only."""
     from kleos_models.data.loaders import load_evaluation_examples
     from kleos_models.evaluation.faithfulness import assess_faithfulness
     from kleos_models.inference.generate import collect_evidence_ids, extract_context_text
@@ -274,13 +263,7 @@ def annotate(
     default_grader: str,
     allow_score_drift: bool,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return an annotated copy of ``payload`` and a summary of what was checked.
-
-    Raises:
-        EvaluationError: when the benchmark is not the one the results were
-            graded against, or the stored scores do not reproduce (unless
-            ``allow_score_drift``).
-    """
+    """Return an annotated copy of ``payload`` and a summary of what was checked."""
     rows = payload.get("results") or []
     if not rows:
         raise EvaluationError("Results payload contains no examples to annotate.")
@@ -288,8 +271,7 @@ def annotate(
     references = {row["id"]: row.get("reference", {}) for row in benchmark_rows}
     index = benchmark_index(benchmark_rows)
 
-    # The benchmark must be the one these results were graded against: every
-    # stored target must match it (finding H-F5: a path proves nothing).
+    # Every stored target must match this benchmark (H-F5: a path proves nothing).
     mismatched = [
         r["example_id"]
         for r in rows
@@ -327,7 +309,6 @@ def annotate(
 
     annotated_rows = annotate_records(rows, index)
     for row, details in zip(annotated_rows, details_by_row, strict=True):
-        # Only added where absent: a stored value is never replaced.
         row.setdefault("details", details)
 
     max_new_tokens = (payload.get("generation") or {}).get("max_new_tokens")
@@ -500,7 +481,6 @@ def main(argv: list[str] | None = None) -> int:
             render_summary(payload, output_payload, args.results.name), encoding="utf-8"
         )
 
-    # The source must be byte-identical to how we found it.
     if file_sha256(args.results) != source_hash:
         print("\n✗ Source artifact changed during re-scoring. This is a bug.\n", file=sys.stderr)
         return 1

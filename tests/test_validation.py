@@ -1,10 +1,4 @@
-"""Dataset validation and coverage tests (spec §25, §30).
-
-Validation exists to catch problems that make an experiment meaningless:
-duplicates, coverage gaps, unreviewed data, placeholder text, private content
-that must never reach a public repository, and examples that teach a private fact
-rather than a policy.
-"""
+"""Dataset validation and coverage tests (spec §25, §30)."""
 
 from __future__ import annotations
 

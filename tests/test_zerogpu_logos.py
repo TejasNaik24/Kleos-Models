@@ -1,12 +1,4 @@
-"""Logos v0.0.2 on ZeroGPU: the same request path, under its own profile.
-
-The service is the one Hermes runs on. What its `serving` profile changes is
-tested here: the reply carries the thinking trace (contract version 2), a reply
-whose thinking never closed or whose budget filled is marked cut, a request must
-start with a system message, and the secrets, header and GPU duration are the
-model's own. Hermes' behaviour is pinned by tests/test_zerogpu_service.py, which
-is not modified, and by the last class here.
-"""
+"""Logos v0.0.2 on ZeroGPU: the same request path, under its own profile."""
 
 from __future__ import annotations
 

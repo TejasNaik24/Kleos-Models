@@ -1,23 +1,11 @@
-# ---------------------------------------------------------------------------
-# The deployment manifest: what is actually running, provable at startup.
+# The deployment manifest: what a server must load, with the hashes to prove it loaded
+# exactly that (experiments.manifest, by contrast, records what happened in a run).
 #
-# A research manifest (kleos_models.experiments.manifest) records what happened
-# during a run. This records what a *server* must load, and carries the hashes
-# needed to prove it loaded exactly that.
+# It travels with the artifact and may be read by anyone who can reach the service, so
+# it holds identity only: no outside paths, Drive URLs, credentials or hostnames.
 #
-# The question it exists to answer, six months from now, without guessing:
-#
-#     "Which base revision, tokenizer, adapter, dataset release and generation
-#      settings produced this deployed Hermes instance?"
-#
-# Deliberately NOT in here: filesystem paths outside the package, Drive URLs,
-# credentials, endpoint hostnames. A manifest travels with the artifact and may
-# be read by anyone who can reach the service, so it carries identity, not
-# secrets. `scripts/check_no_private_data.py` scans it like any other file.
-#
-# This module imports no torch and no transformers: verifying an artifact must
-# work on a laptop, in CI, and at container start before any GPU is touched.
-# ---------------------------------------------------------------------------
+# No torch or transformers: verification must run on a laptop, in CI, and at
+# container start before any GPU is touched.
 
 from __future__ import annotations
 
@@ -36,29 +24,22 @@ from kleos_models.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-#: Bumped when the manifest *schema* changes in a way a loader must notice.
-#: Distinct from the model version: the same frozen adapter can be repackaged.
-#:
-#: 2 — adds the runtime contract (quantization, compute dtype, attention) and
-#: hashes the packaged model config. Version-1 packages did not pin the compute
-#: dtype, so a loader must not accept them.
+#: Bumped when the manifest schema changes in a way a loader must notice (not the model).
+#: 2 adds the runtime contract and hashes the model config; v1 left dtype unpinned, so is refused.
 DEPLOYMENT_ARTIFACT_VERSION = 2
 
 #: The packaged model config, relative to the package root.
 PACKAGED_MODEL_CONFIG = "deployment/model_config.yaml"
 
-#: Layout every deployment package must use. The loader resolves nothing outside
-#: the package except the base model, which comes from the registry by revision.
+#: Package layout. Nothing outside it is resolved except the base model, by revision.
 MANIFEST_FILENAME = "manifest.json"
 ADAPTER_DIRNAME = "adapter"
 TOKENIZER_DIRNAME = "tokenizer"
 DEPLOYMENT_DIRNAME = "deployment"
 
-#: Files the adapter directory must contain for the package to be loadable.
 REQUIRED_ADAPTER_FILES = ("adapter_model.safetensors", "adapter_config.json")
 
-#: Files the tokenizer directory must contain. All-or-nothing on purpose: a
-#: tokenizer_config.json without tokenizer.json looks loadable and is not.
+#: All-or-nothing: tokenizer_config.json without tokenizer.json looks loadable and is not.
 REQUIRED_TOKENIZER_FILES = ("tokenizer.json", "tokenizer_config.json")
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -82,8 +63,7 @@ class FileRecord(StrictModel):
     @field_validator("path")
     @classmethod
     def _path_stays_inside_the_package(cls, value: str) -> str:
-        # A manifest is data, and data that names ".." or "/etc/passwd" must not
-        # be able to steer a verifier outside the package it describes.
+        # A manifest naming ".." or an absolute path must not steer the verifier outside it.
         candidate = Path(value)
         if candidate.is_absolute() or ".." in candidate.parts:
             raise ValueError(f"path must be relative and stay inside the package: {value!r}")
@@ -137,15 +117,15 @@ class TokenizerContract(StrictModel):
 class AdapterRecord(StrictModel):
     """Which trained weights these are, and where they came from."""
 
-    #: The run that produced them. Not a path — an identity.
+    #: The run that produced them: an identity, not a path.
     experiment_id: str
     #: The checkpoint best-model selection chose, e.g. "checkpoint-200".
     source_checkpoint: str
-    #: sha256 of adapter_model.safetensors. The single most important field here.
+    #: sha256 of adapter_model.safetensors.
     weights_sha256: str
     trainable_parameters: int = Field(gt=0)
     files: list[FileRecord] = Field(default_factory=list)
-    #: Validation loss of the selected checkpoint, for the record.
+    #: Validation loss of the selected checkpoint.
     selection_metric: str = "eval_loss"
     selection_value: float | None = None
 
@@ -260,11 +240,10 @@ class DeploymentManifest(StrictModel):
     dataset: DatasetRecord
     generation: GenerationDefaults = Field(default_factory=GenerationDefaults)
     limits: ServingLimits = Field(default_factory=ServingLimits)
-    #: The packaged model config the loader instantiates the base from. Hashed,
-    #: because an edited quantization or dtype setting changes the model.
+    #: The packaged base-model config; hashed, as a quantization or dtype edit changes the model.
     deployment_files: list[FileRecord] = Field(default_factory=list)
 
-    #: config_hash of the training run. Ties this package to a reproducible run.
+    #: config_hash of the training run that produced this package.
     training_config_hash: str
     #: Where the evidence lives in the repository, as a relative path.
     research_report: str | None = None
@@ -274,8 +253,7 @@ class DeploymentManifest(StrictModel):
     @field_validator("base_revision")
     @classmethod
     def _revision_must_be_pinned(cls, value: str) -> str:
-        # Fail closed. A moving pointer ("main", a tag) silently pairs the
-        # adapter with weights it never saw, and nothing raises.
+        # Fail closed: a moving ref ("main", a tag) silently pairs the adapter with other weights.
         if not _PINNED_REVISION.match(value):
             raise ValueError(
                 f"base_revision must be a 40-character commit sha, got {value!r}. "
@@ -293,8 +271,6 @@ class DeploymentManifest(StrictModel):
                 "this loader cannot guarantee it understands the package"
             )
         return value
-
-    # -- io ------------------------------------------------------------------
 
     def to_json(self) -> str:
         return json.dumps(self.model_dump(mode="json"), indent=2, sort_keys=False)
@@ -332,8 +308,6 @@ class DeploymentManifest(StrictModel):
                 details={"error": str(exc)[:600]},
                 suggestions=["Rebuild the package with scripts/build_deployment_package.py."],
             ) from exc
-
-    # -- verification --------------------------------------------------------
 
     def all_files(self) -> list[FileRecord]:
         return [*self.adapter.files, *self.tokenizer.files, *self.deployment_files]
@@ -380,14 +354,7 @@ class DeploymentManifest(StrictModel):
         return problems
 
     def check_adapter_config(self, package_dir: Path | str) -> list[str]:
-        """Verify adapter_config.json agrees with the manifest.
-
-        This is the H-F1 check. PEFT writes ``base_model_name_or_path`` and a
-        ``revision`` field into the adapter config; the research artifact left
-        the revision null. A deployment package must carry the pin, and it must
-        be the *same* pin the manifest names, or the two records disagree about
-        which weights these deltas belong to.
-        """
+        """Verify adapter_config.json agrees with the manifest."""
         path = Path(package_dir) / ADAPTER_DIRNAME / "adapter_config.json"
         if not path.exists():
             return [f"missing {ADAPTER_DIRNAME}/adapter_config.json"]
@@ -464,16 +431,7 @@ class DeploymentManifest(StrictModel):
         ]
 
     def check_expected_identity(self, expected: dict[str, Any]) -> list[str]:
-        """Compare this package against the identity a deployment was built to serve.
-
-        :meth:`problems` proves a package matches *its own* manifest, which only
-        proves it is internally consistent. A different adapter, packaged just
-        as carefully, passes that check too. This one compares against an
-        identity recorded independently — in the container image, from
-        ``configs/deployment/*.yaml`` — so only the frozen artifact is accepted.
-
-        Keys absent from ``expected`` are not checked; every key present is.
-        """
+        """Compare this package against the identity a deployment was built to serve."""
         actual: dict[str, Any] = {
             "model_name": self.model_name,
             "model_version": self.model_version,
@@ -522,16 +480,7 @@ class DeploymentManifest(StrictModel):
 
 
 def load_expected_identity(path: Path | str) -> dict[str, Any]:
-    """Read the identity a deployment must match from a serving record.
-
-    The record is the declarative ``configs/deployment/<model>.yaml`` — the same
-    file ``build_deployment_package.py`` builds from, so the builder and the
-    server agree by construction about what the frozen artifact is.
-
-    Raises:
-        ConfigError: the file is missing, malformed, or pins too little to mean
-            anything. An identity check that pins nothing would pass everything.
-    """
+    """Read the identity a deployment must match from a serving record."""
     import yaml
 
     source = Path(path)
@@ -613,18 +562,7 @@ def verify_identity(manifest: DeploymentManifest, expected: dict[str, Any]) -> N
 
 
 def verify_package(package_dir: Path | str, *, strict: bool = True) -> DeploymentManifest:
-    """Load and fully verify a deployment package.
-
-    Args:
-        package_dir: Directory holding ``manifest.json``, ``adapter/`` and ``tokenizer/``.
-        strict: Raise on any problem. ``False`` logs instead, for inspection tools.
-
-    Returns:
-        The validated manifest.
-
-    Raises:
-        ConfigError: when the package does not match its manifest.
-    """
+    """Load and fully verify a deployment package."""
     manifest = DeploymentManifest.load(package_dir)
     problems = manifest.problems(package_dir)
     if problems:
@@ -693,12 +631,7 @@ def build_deployment_manifest(
     known_limitations: list[str] | None = None,
     notes: list[str] | None = None,
 ) -> DeploymentManifest:
-    """Hash a prepared package directory and describe it.
-
-    The package must already contain ``adapter/`` and ``tokenizer/``; this
-    function records what is there rather than copying anything, so the hashes
-    describe the bytes that will actually be served.
-    """
+    """Hash a prepared package directory and describe it."""
     root = Path(package_dir)
 
     adapter_files = [

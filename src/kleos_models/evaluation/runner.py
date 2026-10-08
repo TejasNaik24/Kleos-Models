@@ -1,27 +1,4 @@
-"""The evaluation runner (spec sections 19, 20, 21).
-
-Runs one research arm over a benchmark under fixed conditions and produces a
-result object carrying per-example records, aggregate metrics, consistency, OOD
-and faithfulness.
-
-Two invariants make the results comparable:
-
-1. **Conditions are held identical across arms.** Same benchmark, same decoding
-   settings, same seeds, same graders. The runner takes the arm as a parameter and
-   changes nothing else, so the only difference between ``arm0_base`` and
-   ``arm2_finetuned`` is the adapter.
-2. **Per-example records are always kept.** Aggregates alone would make it
-   possible to report a favourable subset without deciding to. The raw records let
-   any aggregate be recomputed and checked. They carry the grader's details
-   (finding H-F7), the item's ``group_id`` and its subset, so every corrected
-   measure (``corrections.py``) can be recomputed from the file alone.
-
-Results use schema version 2: the version-1 fields keep their definitions and
-values, and version 2 adds ``benchmark_sha256``, ``benchmark_fingerprint``,
-``generation_stats`` and ``corrected`` beside them.
-
-This module imports no torch; the backend supplies generation.
-"""
+"""The evaluation runner (spec sections 19, 20, 21)."""
 
 from __future__ import annotations
 
@@ -66,9 +43,7 @@ from kleos_models.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-#: Layout version of saved results. Version 2 adds fields; it changes none.
-#: Version 3 adds each record's finish_reason and, when the model thought, its
-#: reasoning; again it changes none.
+#: Layout version of saved results; 2 and 3 (finish_reason, reasoning) only add fields.
 RESULTS_SCHEMA_VERSION = 3
 
 
@@ -127,8 +102,7 @@ class ExampleResult:
             "group_id": self.group_id,
             "subset": self.subset,
             "finish_reason": self.finish_reason,
-            # What the grader extracted from the response (finding H-F7): the
-            # predicted ranking, label and confidence behind the score.
+            # The grader's extraction behind the score: ranking, label, confidence (H-F7).
             "details": json.loads(json.dumps(self.details, default=str)),
         }
         if self.faithfulness:
@@ -217,13 +191,7 @@ class EvaluationResult:
         }
 
     def save(self, path: Path | str, *, include_responses: bool = True) -> Path:
-        """Write results to JSON.
-
-        Args:
-            include_responses: Keep raw model text. Turn this off when the
-                benchmark contains sanitized-but-sensitive context and the results
-                file will be shared.
-        """
+        """Write results to JSON."""
         target = Path(path)
         write_json_atomic(target, self.to_dict(include_responses=include_responses))
         logger.info("Wrote evaluation results to %s", target)
@@ -272,12 +240,7 @@ class EvaluationResult:
 
 
 def write_json_atomic(path: Path, payload: Any) -> None:
-    """Write JSON so a crash leaves either the old file or the new one, never half.
-
-    The text goes to a temporary file in the same directory, is flushed to disk,
-    and replaces the target in one ``os.replace``. An evaluation takes hours on a
-    free GPU; a runtime that dies mid-write must not leave a truncated result.
-    """
+    """Write JSON so a crash leaves either the old file or the new one, never half."""
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
@@ -337,22 +300,7 @@ def run_evaluation(
     default_grader: str | None = None,
     include_faithfulness: bool = True,
 ) -> EvaluationResult:
-    """Evaluate one arm over a benchmark.
-
-    Args:
-        backend: Generation backend for this arm.
-        examples: Benchmark items.
-        config: Evaluation settings — decoding, seeds, consistency, OOD.
-        arm: Research arm label, recorded on every example result.
-        orchestration: Scaffolding config. Defaults to the arm's own.
-        benchmark_path: Recorded for provenance.
-        benchmark_sha256: sha256 of the benchmark file, recorded as its identity.
-        default_grader: Grader for examples that do not name one.
-        include_faithfulness: Run faithfulness assessment.
-
-    Returns:
-        An :class:`EvaluationResult`.
-    """
+    """Evaluate one arm over a benchmark."""
     if not examples:
         raise EvaluationError(
             "The benchmark contains no examples.",
@@ -372,8 +320,7 @@ def run_evaluation(
 
     selected = list(examples)
     if config.max_examples is not None and len(selected) > config.max_examples:
-        # Truncate deterministically from the front so repeated runs see the same
-        # subset — a random subset per run would make comparisons noisy.
+        # Deterministic front truncation, so repeated runs compare on the same subset.
         selected = selected[: config.max_examples]
         warnings.append(
             f"Evaluated only the first {config.max_examples} of {len(examples)} examples "
@@ -409,8 +356,7 @@ def run_evaluation(
             call_started = time.perf_counter()
             output = backend.generate(messages, generation, example_id=example.id, seed=seed)
             latency = time.perf_counter() - call_started
-            # A resumed run replays earlier generations; report the latency they
-            # really took, not the microseconds the replay did.
+            # A resumed run replays generations; report their original latency, not the replay's.
             recorded_latency = output.metadata.get("recorded_latency_seconds")
             if recorded_latency is not None:
                 latency = float(recorded_latency)
@@ -462,7 +408,6 @@ def run_evaluation(
 
     duration = time.perf_counter() - started
 
-    # --- aggregates ---------------------------------------------------------
     overall = summarize("overall", [r.score for r in results])
     metrics: dict[str, Any] = {"overall": overall.to_dict()}
 
@@ -484,7 +429,6 @@ def run_evaluation(
             "judgment; inspect the raw responses before drawing conclusions."
         )
 
-    # --- OOD ----------------------------------------------------------------
     ood_report: OODReport | None = None
     if config.ood.enabled:
         ood_report = build_ood_report(
@@ -494,10 +438,8 @@ def run_evaluation(
             metric_name="score",
         )
         if not ood_report.measurable:
-            # State which side is missing. A pure held-out benchmark (every example
-            # OOD, as in a format_holdout release) is a legitimate design, and
-            # reporting it as "no OOD examples" would send the reader looking for
-            # a tagging bug that is not there.
+            # Name the missing side: an all-OOD benchmark (format_holdout) is legitimate, and
+            # "no OOD examples" would suggest a tagging bug that is not there.
             if ood_report.ood.count == 0:
                 reason = (
                     "the benchmark has no examples tagged split_tag='ood'"
@@ -515,9 +457,7 @@ def run_evaluation(
                 "The OOD score itself is still valid and is reported on its own."
             )
 
-    # --- consistency --------------------------------------------------------
-    # Grouped by the configured key. The v0.0.6 configs name scenario_family, so
-    # this block is unchanged for them; the group_id view is in `corrected`.
+    # By the configured key (scenario_family in v0.0.6); the group_id view is in `corrected`.
     consistency_report: ConsistencyReport | None = None
     if config.consistency.enabled:
         grouped = [r for r in results if group_values.get(r.example_id)]
@@ -578,12 +518,7 @@ def run_evaluation(
 
 
 def load_evaluation_result(path: Path | str) -> dict[str, Any]:
-    """Load a saved results file.
-
-    Returns the raw dict rather than a reconstructed object: ``compare.py`` needs
-    to read results produced by other versions of this code, and a permissive
-    reader is the right tool for that.
-    """
+    """Load a saved results file."""
     source = Path(path)
     if not source.exists():
         raise EvaluationError(

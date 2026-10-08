@@ -187,11 +187,6 @@ def checkpoint(tmp_path_factory) -> tuple[Path, dict[str, Any]]:
     return directory, write_official_checkpoint(directory)
 
 
-# ---------------------------------------------------------------------------
-# Loading
-# ---------------------------------------------------------------------------
-
-
 class TestTextView:
     def test_every_language_weight_arrives_exactly(self, checkpoint):
         import torch
@@ -262,11 +257,6 @@ class TestTextView:
         assert "view" not in loaded.load_metadata
 
 
-# ---------------------------------------------------------------------------
-# LoRA
-# ---------------------------------------------------------------------------
-
-
 class TestLoRAOnTheView:
     def test_a_40_layer_view_gets_280_modules_and_the_estimated_count(self):
         import torch
@@ -278,8 +268,7 @@ class TestLoRAOnTheView:
         text = tiny_text_config(40, hidden=16)
         torch.manual_seed(0)
         model = Ministral3ForCausalLM(Ministral3Config(**text))
-        # r=2: at r=16 a 16-wide toy model would be mostly adapter, and the
-        # full-fine-tune guard would rightly refuse it. Logos itself is r=16.
+        # r=2: at r=16 the toy model is mostly adapter and the full-fine-tune guard refuses it.
         config = model_config(Path("/unused"), lora={"r": 2, "alpha": 4})
         result = attach_lora(
             model,
@@ -309,11 +298,6 @@ class TestLoRAOnTheView:
         diagnostics = verify_gradients_flow(result.model, batch)
         assert diagnostics["lora_tensors"] == 560
         assert diagnostics["lora_tensors_with_nonzero_grad"] >= 280
-
-
-# ---------------------------------------------------------------------------
-# The real chat template
-# ---------------------------------------------------------------------------
 
 
 class TestChatTemplate:
@@ -360,11 +344,6 @@ class TestChatTemplate:
             "beta",
             "</s>",
         ]
-
-
-# ---------------------------------------------------------------------------
-# Training on the view, end to end
-# ---------------------------------------------------------------------------
 
 
 class TestTrainingOnTheView:

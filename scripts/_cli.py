@@ -62,11 +62,7 @@ def setup_logging(args: argparse.Namespace, *, log_file: Path | None = None) -> 
 
 
 def fail(error: BaseException, *, exit_code: int = 1) -> NoReturn:
-    """Print an actionable error and exit.
-
-    KleosError already renders its own diagnostics and suggestions, so it is shown
-    verbatim rather than wrapped in a traceback the user cannot act on.
-    """
+    """Print an actionable error and exit."""
     logger = get_logger("cli")
     if isinstance(error, KleosError):
         print(f"\n✗ {error.render()}\n", file=sys.stderr)

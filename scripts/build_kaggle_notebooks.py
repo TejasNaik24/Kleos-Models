@@ -29,14 +29,11 @@ KAGGLE_DIR = REPO_ROOT / "notebooks" / "kaggle"
 
 REPO_URL = "https://github.com/TejasNaik24/Kleos-Models.git"
 EXPERIMENT_ID = "kleos-v007-ministral314breasoning-run1"
-#: The two paths H9's config hash is computed with (tests/test_logos_v002_config.py).
-#: The dataset sits in /tmp, which Kaggle never saves: the private release cannot
-#: reach a version's output, however the session ends.
+#: The paths H9's config hash is computed with (tests/test_logos_v002_config.py).
+#: Kaggle never saves /tmp, so the private release cannot reach a version's output.
 DATASET = "/tmp/kleos-data/kleos-policy-v0.0.7"
 OUTPUTS = "/kaggle/working/outputs"
-#: Kaggle stops a GPU session at 12 hours. A long command is stopped here instead,
-#: so the version ends normally and its output (checkpoints, partial results) is
-#: saved for the next version to resume from.
+#: Under Kaggle's 12 h GPU limit, so a version ends normally and saves its output for resume.
 SESSION_HOURS = 11.25
 #: Pre-registered under H9 (docs/experiments.md).
 CONFIG_HASH = "d1961583546b5761dd854cfe845838ca91a87ea6189d54be617de21085e8cfa9"
@@ -66,11 +63,6 @@ def kaggle_notebook(cells: list[dict[str, Any]], *, title: str) -> dict[str, Any
         "nbformat": 4,
         "nbformat_minor": 4,
     }
-
-
-# ---------------------------------------------------------------------------
-# Shared cells
-# ---------------------------------------------------------------------------
 
 
 def settings_cell() -> dict[str, Any]:
@@ -255,11 +247,6 @@ print("dataset:", source, "->", DATASET)
 """)
 
 
-# ---------------------------------------------------------------------------
-# Training
-# ---------------------------------------------------------------------------
-
-
 def build_training_notebook() -> dict[str, Any]:
     cells = [
         markdown(f"""
@@ -381,11 +368,6 @@ if STOPPED:
     return kaggle_notebook(cells, title="KLEOS Logos v0.0.2 — training (H9)")
 
 
-# ---------------------------------------------------------------------------
-# Evaluation
-# ---------------------------------------------------------------------------
-
-
 def build_evaluation_notebook() -> dict[str, Any]:
     cells = [
         markdown(f"""
@@ -468,12 +450,7 @@ else:
 
 
 def build_output_probe() -> dict[str, Any]:
-    """Two minutes, no GPU: does Kaggle keep a FAILED version's output?
-
-    The resume runbook relies on attaching a stopped or failed version's output.
-    Run this once (Save & Run All); it fails on purpose. Then, in any notebook,
-    Add Input -> this notebook's output, and look for probe/marker.txt.
-    """
+    """Two minutes, no GPU: does Kaggle keep a FAILED version's output?"""
     cells = [
         markdown("""
 # Kaggle output probe (run once, before Logos v0.0.2)

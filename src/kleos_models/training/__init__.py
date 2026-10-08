@@ -1,8 +1,4 @@
-"""Training layer: QLoRA pipeline, arguments, callbacks, checkpointing, memory.
-
-Requires the ``[train]`` extra to run, but stays importable without it — torch and
-transformers are imported inside functions.
-"""
+"""Training layer: QLoRA pipeline, arguments, callbacks, checkpointing, memory."""
 
 from kleos_models.training.arguments import (
     build_training_arguments,

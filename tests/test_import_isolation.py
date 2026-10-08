@@ -1,16 +1,4 @@
-"""Enforce the dependency-isolation rule.
-
-The data, config, experiment and evaluation-scoring layers must be importable
-with **no torch and no transformers installed**. That property is what makes
-dataset work fast, CI cheap, and re-scoring possible on any machine.
-
-It is easy to break by accident: one convenience import at module scope in a
-utility file pulls torch into the whole light layer. These tests make that
-failure loud.
-
-The technique is to poison ``sys.modules`` so any attempt to import torch raises,
-then import each light module in a subprocess-clean namespace.
-"""
+"""Enforce the dependency-isolation rule."""
 
 from __future__ import annotations
 
@@ -46,35 +34,28 @@ LIGHT_MODULES = [
     "kleos_models.evaluation.capability",
     "kleos_models.evaluation.reports",
     "kleos_models.evaluation.runner",
-    # The corrected measures and evaluation resume run on stored results, on a
-    # CPU runtime, with no model: re-reporting Hermes must not need torch.
+    # Corrections and resume run on stored results on a CPU: re-reporting needs no torch.
     "kleos_models.evaluation.corrections",
     "kleos_models.evaluation.resume",
     "kleos_models.experiments",
     "kleos_models.experiments.manifest",
     "kleos_models.experiments.registry",
     "kleos_models.experiments.environment",
-    # Verifying a deployment artifact must work on the host about to serve it,
-    # before any GPU is touched and before the weights are downloaded.
+    # Verifying a deployment artifact must work before any GPU use or weight download.
     "kleos_models.serving",
     "kleos_models.serving.manifest",
-    # The container entrypoint's preflight must run before torch is touched:
-    # it is what refuses a bad package before the 24.5 GB download.
+    # The entrypoint preflight refuses a bad package before the 24.5 GB download.
     "kleos_models.serving.startup",
-    # The status contract and the reference client are what KLEOS imports; a
-    # web backend must not need torch to call Hermes or to fall back from it.
+    # KLEOS imports these; a web backend must not need torch to call Hermes.
     "kleos_models.serving.status",
     "kleos_models.serving.client",
-    # The ZeroGPU request path and the Space/package tooling: torch only inside
-    # the GPU step, so a Space starts, and a package uploads, without importing
-    # it at module scope.
+    # ZeroGPU request path and Space/package tooling: torch only inside the GPU step.
     "kleos_models.serving.zerogpu",
     "kleos_models.serving.smoke",
     "kleos_models.serving.space",
 ]
 
-#: The heavy layer may not import torch at module scope either — it imports
-#: inside functions — so that inspection and planning work without it.
+#: The heavy layer imports torch only inside functions, so planning works without it.
 LAZY_HEAVY_MODULES = [
     "kleos_models.models",
     "kleos_models.models.adapters",
@@ -91,9 +72,7 @@ LAZY_HEAVY_MODULES = [
     "kleos_models.inference",
     "kleos_models.inference.backends",
     "kleos_models.inference.generate",
-    # The serving layer imports torch through the loader and fastapi through
-    # create_app, both inside functions, so the package stays importable on a
-    # machine that only needs to verify an artifact.
+    # torch and fastapi load inside functions, so verifying an artifact needs neither.
     "kleos_models.serving.loader",
     "kleos_models.serving.app",
 ]
@@ -102,13 +81,7 @@ BLOCKED = ("torch", "transformers", "peft", "bitsandbytes", "accelerate", "datas
 
 
 class _BlockingFinder:
-    """A meta-path finder that refuses to locate the blocked modules.
-
-    Patching ``builtins.__import__`` alone is not enough:
-    ``importlib.import_module`` goes through ``_bootstrap._gcd_import`` and never
-    consults it. Installing a finder catches both routes, which matters because
-    the heavy layer imports torch via ``importlib``.
-    """
+    """A meta-path finder that refuses to locate the blocked modules."""
 
     def find_module(self, fullname, path=None):  # pragma: no cover - legacy API
         return None
@@ -157,11 +130,7 @@ def test_light_module_imports_without_torch(module_name, block_heavy_imports, mo
 
 @pytest.mark.parametrize("module_name", LAZY_HEAVY_MODULES)
 def test_heavy_module_imports_lazily(module_name, block_heavy_imports, monkeypatch):
-    """Model/training modules import without torch; they import it inside functions.
-
-    This is what lets `scripts/inspect_model.py` and `scripts/plan_run.py` report
-    architecture and feasibility before anything heavy is installed.
-    """
+    """Model/training modules import without torch; they import it inside functions."""
     module = _reimport(module_name, monkeypatch)
     assert module is not None
 
@@ -190,8 +159,7 @@ def test_importing_the_package_does_not_pull_in_torch(monkeypatch):
 def test_missing_dependency_error_is_actionable(block_heavy_imports, monkeypatch):
     """Calling into the heavy layer without torch gives an install hint."""
     compat = _reimport("kleos_models.compat", monkeypatch)
-    # Resolve the exception class *after* the re-import: _reimport rebuilds the
-    # kleos_models modules, so a class bound beforehand is a different object.
+    # Resolve after the re-import: _reimport rebuilds the modules, so classes change identity.
     errors = importlib.import_module("kleos_models.errors")
 
     with pytest.raises(errors.MissingDependencyError) as info:

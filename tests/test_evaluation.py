@@ -1,10 +1,4 @@
-"""Evaluation tests (spec §21-§24, §30, §54).
-
-Metric calculations, grader behaviour, consistency, OOD separation, capability
-deltas and report generation. Several tests exist specifically to pin
-research-integrity properties: OOD must not be reported when unmeasurable, and a
-non-significant improvement must not be described as a win.
-"""
+"""Evaluation tests (spec §21-§24, §30, §54)."""
 
 from __future__ import annotations
 
@@ -87,8 +81,7 @@ class TestClassificationScores:
         assert scores.accuracy == 0.0
 
     def test_macro_f1_penalizes_a_majority_class_predictor(self):
-        # 9 of 10 are "no"; always predicting "no" scores 0.9 accuracy but
-        # should not look competent on macro F1.
+        # Always predicting "no" scores 0.9 accuracy but must not look competent on macro F1.
         references = ["no"] * 9 + ["yes"]
         predictions = ["no"] * 10
         scores = classification_scores(predictions, references)
@@ -140,13 +133,7 @@ class TestRankingMetrics:
     def test_ndcg_handles_an_empty_reference(self):
         assert ndcg(["a"], []) == 0.0
 
-    # -- duplicate handling (regression) ------------------------------------
-    #
-    # Each predicted item must be credited once. Crediting duplicates let a
-    # response that repeated its top answer score ABOVE a perfect ranking:
-    # arm1 of kleos-v006-ministral8b-run1 reported max 1.0685, and three
-    # repeats of one item scored 1.3425. Because the inflation hit the
-    # baseline arm, it made the reported effect look smaller than it was.
+    # Each predicted item is credited once; repeats must not score above a perfect ranking.
 
     @pytest.mark.parametrize(
         "predicted",
@@ -168,8 +155,7 @@ class TestRankingMetrics:
         assert repeated < perfect
 
     def test_a_repeat_occupies_its_slot_rather_than_being_dropped(self):
-        # ["a", "a", "b"] must not be scored as if it were ["a", "b"]: the
-        # duplicate consumed a rank position a correct item could have used.
+        # The duplicate uses up a rank position a correct item could have filled.
         assert ndcg(["a", "a", "b"], ["a", "b", "c"]) < ndcg(["a", "b"], ["a", "b", "c"])
 
     def test_ndcg_is_bounded_over_every_short_sequence(self):
@@ -263,7 +249,6 @@ class TestBootstrap:
         assert result["significant_at_05"] is False
 
     def test_a_tiny_noisy_difference_is_not_significant(self):
-        # This is the case the reporting layer must not describe as a win.
         base = [0.5, 0.6, 0.4, 0.55, 0.45, 0.5]
         finetuned = [0.52, 0.58, 0.44, 0.5, 0.47, 0.53]
         result = bootstrap_difference(base, finetuned, iterations=800, seed=3)
@@ -301,9 +286,7 @@ class TestResponseParsing:
         assert result == ["beta", "alpha"]
 
     def test_decorated_list_items_resolve_to_their_candidate(self):
-        # Models write "1. Copperline — because ...", not the bare name. Without
-        # resolution the whole line is compared to the reference and a correct
-        # ranking scores zero.
+        # Unresolved, a line like "1. Copperline — ..." never matches and a correct ranking scores 0.
         result = extract_ranking(
             "1. Copperline — in the active workspace; due in 7 days.\n"
             "2. Eldermoor — in the active workspace; due in 3 days.",
@@ -312,8 +295,7 @@ class TestResponseParsing:
         assert result == ["Copperline", "Eldermoor"]
 
     def test_a_list_item_naming_no_candidate_is_kept_not_dropped(self):
-        # Dropping it would shorten the prediction and inflate nDCG for an answer
-        # that never mentioned the item.
+        # Dropping it would shorten the prediction and inflate nDCG.
         result = extract_ranking(
             "1. Copperline — first.\n2. Nonesuch — invented.",
             candidates=["Copperline", "Eldermoor"],
@@ -328,13 +310,7 @@ class TestResponseParsing:
 
 
 class TestRankingIsFormatAgnostic:
-    """The same ordering must score the same however it is written.
-
-    KLEOS trains on prose/bullets/slack_thread and tests on JSON only
-    (``format_holdout``). If the grader scored formatting rather than ordering,
-    a fine-tuned model that kept its training format would score zero and the
-    experiment would report a judgment failure that never happened.
-    """
+    """The same ordering must score the same however it is written."""
 
     EXPECTED: ClassVar[list[str]] = ["Copperline", "Eldermoor", "Oakhurst", "Foxglove"]
 
@@ -374,7 +350,7 @@ class TestRankingIsFormatAgnostic:
         assert len(set(scores.values())) == 1, scores
 
     def test_a_wrong_order_still_loses_in_every_rendering(self):
-        # The fix must not turn the grader into a set-membership check.
+        # Resolution must not turn the grader into a set-membership check.
         grader = get_grader("ranking")
         reversed_expected = list(reversed(self.EXPECTED))
         as_json = grader.grade(
@@ -433,8 +409,7 @@ class TestKleosPolicyGrader:
             assert as_json.sub_scores[component] == as_prose.sub_scores[component]
 
     def test_format_validity_is_reported_and_excluded_from_the_score(self):
-        # The whole point: prose answers correctly and is still marked invalid
-        # format, so a format regression can never be read as a judgment one.
+        # Correct prose is still invalid format: format regressions never read as judgment ones.
         grader = get_grader("kleos_policy")
         assert grader.grade(self.AS_JSON, self.REFERENCE).sub_scores["format_valid"] == 1.0
         prose = grader.grade(self.AS_PROSE, self.REFERENCE)
@@ -457,8 +432,7 @@ class TestKleosPolicyGrader:
         assert result.score < 1.0
 
     def test_overconfidence_is_penalised(self):
-        # Committing to an answer the reference says to abstain from is the
-        # false-positive behaviour this dataset exists to measure.
+        # Committing where the reference abstains is the false positive this dataset measures.
         grader = get_grader("kleos_policy")
         overconfident = json.loads(self.AS_JSON)
         overconfident["confident"] = True
@@ -597,8 +571,7 @@ class TestLLMJudge:
         result = grader.grade("response", {"label": "a"})
         assert result.sub_scores["correctness"] == 1.0
         assert result.sub_scores["evidence_usage"] == 0.5
-        # The judge identity must be recorded: scores from different judges are
-        # not comparable.
+        # Scores from different judges are not comparable.
         assert result.details["judge_model"] == "test-judge"
 
     def test_unparseable_judge_output_is_flagged(self):
@@ -627,7 +600,6 @@ class TestConsistency:
         assert report.inconsistent_groups
 
     def test_consistent_but_wrong_is_distinguished_from_correct(self):
-        # A model that is consistently wrong must not look good.
         report = build_consistency_groups(
             example_ids=["a", "b"],
             group_ids=["g1", "g1"],
@@ -676,7 +648,6 @@ class TestOOD:
         assert report.generalization_gap == 1.0
 
     def test_report_is_unmeasurable_without_ood_examples(self):
-        # Spec §36: no OOD evaluation means no generalization claim.
         report = build_ood_report(scores=[1.0], split_tags=["in_distribution"])
         assert not report.measurable
         assert "NOT MEASURABLE" in report.render()
@@ -737,7 +708,6 @@ class TestCapability:
         assert delta.per_category["math"]["delta"] == 0.0
 
     def test_unpaired_scores_are_rejected(self):
-        # Both arms must run the identical fixed suite.
         with pytest.raises(ValueError, match="paired scores"):
             build_capability_delta(base_scores=[0.5], fine_tuned_scores=[0.5, 0.6])
 
@@ -898,9 +868,7 @@ class TestComparison:
         )
         assert "no meaningful difference" in comparison._conclusion()
 
-    # Finding H-F5: benchmark identity is content, not path. Colab rebuilds the
-    # benchmark at the same path every session, so a path can match while the
-    # content differs, and differ while the content matches.
+    # Finding H-F5: benchmark identity is content, not path.
 
     def test_same_path_with_different_targets_is_not_comparable(self):
         base = self._payload("arm0_base", {"a": 0.5})

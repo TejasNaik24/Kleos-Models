@@ -1,18 +1,4 @@
-"""Evaluation metrics (spec section 21).
-
-The research question is about *judgment and correctness*, not tone, so the
-metrics here measure decisions: did the model pick the right item, rank things in
-the right order, cite the evidence it claims to.
-
-Implemented in pure Python with no numpy dependency in the hot paths, so the
-scoring layer imports without torch and runs anywhere.
-
-Conventions
------------
-* Every metric returns a float where **higher is better**.
-* Metrics degrade explicitly: an undefined metric (no positives, empty ranking)
-  returns 0.0 and records why, rather than raising or returning NaN.
-"""
+"""Evaluation metrics (spec section 21)."""
 
 from __future__ import annotations
 
@@ -29,27 +15,13 @@ from kleos_models.logging_utils import get_logger
 logger = get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Normalization
-# ---------------------------------------------------------------------------
-
 _ARTICLES = re.compile(r"\b(a|an|the)\b", re.IGNORECASE)
 _PUNCT = re.compile(r"[^\w\s]")
 _SPACE = re.compile(r"\s+")
 
 
 def normalize_answer(text: str) -> str:
-    """Normalize a free-text answer for comparison.
-
-    Lower-cases, strips accents, removes articles and punctuation, collapses
-    whitespace. Standard practice for extractive QA scoring, and it stops
-    "The Q3 report." and "q3 report" being counted as a disagreement.
-
-    Article stripping is skipped when it would empty the string. A label that is
-    literally ``"a"`` or ``"the"`` is unusual but legal, and normalizing it to
-    the empty string would silently collapse it together with every other such
-    label.
-    """
+    """Normalize a free-text answer for comparison."""
     decomposed = unicodedata.normalize("NFKD", text)
     stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
     lowered = stripped.casefold()
@@ -60,11 +32,6 @@ def normalize_answer(text: str) -> str:
 
     without_punct = _PUNCT.sub(" ", without_articles)
     return _SPACE.sub(" ", without_punct).strip()
-
-
-# ---------------------------------------------------------------------------
-# Classification
-# ---------------------------------------------------------------------------
 
 
 def exact_match(prediction: str, reference: str) -> float:
@@ -119,12 +86,7 @@ class ClassificationScores:
 def classification_scores(
     predictions: Sequence[str], references: Sequence[str]
 ) -> ClassificationScores:
-    """Accuracy plus macro/micro precision, recall and F1.
-
-    Macro-averaging is reported alongside micro because KLEOS label distributions
-    are imbalanced (most notifications are not urgent), and accuracy alone would
-    let a majority-class predictor look competent.
-    """
+    """Accuracy plus macro/micro precision, recall and F1."""
     if len(predictions) != len(references):
         raise ValueError(
             f"predictions and references differ in length: {len(predictions)} vs {len(references)}"
@@ -209,19 +171,10 @@ def classification_scores(
     )
 
 
-# ---------------------------------------------------------------------------
-# Set metrics
-# ---------------------------------------------------------------------------
-
-
 def set_precision_recall_f1(
     predicted: Sequence[str], reference: Sequence[str]
 ) -> tuple[float, float, float]:
-    """Precision, recall and F1 over two sets of items.
-
-    Used for "which context items are relevant" style tasks, where the answer is
-    a set rather than a single label.
-    """
+    """Precision, recall and F1 over two sets of items."""
     predicted_set = {normalize_answer(p) for p in predicted}
     reference_set = {normalize_answer(r) for r in reference}
     if not reference_set:
@@ -236,11 +189,6 @@ def set_precision_recall_f1(
     return precision, recall, f1
 
 
-# ---------------------------------------------------------------------------
-# Ranking
-# ---------------------------------------------------------------------------
-
-
 def dcg(relevances: Sequence[float]) -> float:
     """Discounted cumulative gain."""
     return sum(rel / math.log2(index + 2) for index, rel in enumerate(relevances))
@@ -249,22 +197,7 @@ def dcg(relevances: Sequence[float]) -> float:
 def ndcg(
     predicted_order: Sequence[str], ideal_order: Sequence[str], *, k: int | None = None
 ) -> float:
-    """Normalized DCG of a predicted ranking against an ideal one.
-
-    Relevance is assigned by position in the ideal ranking: the top item scores
-    ``n``, the next ``n-1``, and so on. This rewards getting the most important
-    item first, which is what prioritization tasks care about.
-
-    An item is credited **once**. A repeat occupies its rank position with zero
-    relevance rather than earning the item's gain a second time: the ideal DCG is
-    computed over distinct items, so crediting duplicates would let a response
-    that simply repeats its top answer score above a perfect ranking. That is not
-    hypothetical — it produced scores of 1.07 in the first KLEOS evaluation, and
-    1.34 in the degenerate case of one item repeated three times.
-
-    Repeats are scored as zero rather than dropped, because the repeat still
-    consumed a slot that a correct item could have occupied.
-    """
+    """Normalized DCG of a predicted ranking against an ideal one."""
     if not ideal_order:
         return 0.0
     relevance = {normalize_answer(item): len(ideal_order) - i for i, item in enumerate(ideal_order)}
@@ -287,11 +220,7 @@ def ndcg(
 
 
 def kendall_tau(predicted_order: Sequence[str], reference_order: Sequence[str]) -> float:
-    """Kendall's tau-a rank correlation, rescaled to [0, 1].
-
-    0.5 means "no better than random ordering", 1.0 is a perfect match, 0.0 is
-    exactly reversed. Rescaled so the metric obeys the higher-is-better rule.
-    """
+    """Kendall's tau-a rank correlation, rescaled to [0, 1]."""
     common = [
         item
         for item in (normalize_answer(i) for i in reference_order)
@@ -322,12 +251,7 @@ def kendall_tau(predicted_order: Sequence[str], reference_order: Sequence[str]) 
 
 
 def spearman_footrule(predicted_order: Sequence[str], reference_order: Sequence[str]) -> float:
-    """Normalized Spearman footrule similarity in [0, 1].
-
-    Sums absolute rank displacement, normalized so 1.0 is identical ordering.
-    Complements Kendall's tau: tau counts pairwise inversions, footrule measures
-    how far items moved.
-    """
+    """Normalized Spearman footrule similarity in [0, 1]."""
     reference_rank = {normalize_answer(item): index for index, item in enumerate(reference_order)}
     predicted_rank = {normalize_answer(item): index for index, item in enumerate(predicted_order)}
     common = set(reference_rank) & set(predicted_rank)
@@ -341,19 +265,10 @@ def spearman_footrule(predicted_order: Sequence[str], reference_order: Sequence[
 
 
 def top_1_accuracy(predicted_order: Sequence[str], reference_order: Sequence[str]) -> float:
-    """Whether the top-ranked item matches.
-
-    Reported separately because for prioritization the first item usually is the
-    decision; a good tau with the wrong top item is still the wrong answer.
-    """
+    """Whether the top-ranked item matches."""
     if not predicted_order or not reference_order:
         return 0.0
     return float(normalize_answer(predicted_order[0]) == normalize_answer(reference_order[0]))
-
-
-# ---------------------------------------------------------------------------
-# Aggregation
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -419,16 +334,7 @@ def bootstrap_difference(
     iterations: int = 2000,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """Paired bootstrap test on the difference between two score vectors.
-
-    Reports a confidence interval and a two-sided p-value for
-    ``mean(right) - mean(left)``.
-
-    Why this and not a t-test: evaluation scores are usually bounded and far from
-    normal (many exact 0.0 and 1.0), and a paired bootstrap makes no distributional
-    assumption. It is also the honest way to answer "did fine-tuning actually
-    help", which is the entire point of the experiment.
-    """
+    """Paired bootstrap test on the difference between two score vectors."""
     import random
 
     if len(left) != len(right):
@@ -470,8 +376,7 @@ def bootstrap_difference(
     }
 
 
-#: Fewer clusters than this and a cluster bootstrap is reported as not estimable:
-#: resampling a handful of groups gives an interval that means little.
+#: Below this many clusters, a cluster bootstrap is reported as not estimable.
 MIN_BOOTSTRAP_CLUSTERS = 5
 
 
@@ -491,13 +396,7 @@ def cluster_bootstrap_mean(
     seed: int = 42,
     min_clusters: int = MIN_BOOTSTRAP_CLUSTERS,
 ) -> dict[str, Any]:
-    """Mean with a 95% interval from resampling whole clusters.
-
-    When examples come in groups that share a scenario (perturbations of one
-    case), they are not independent, and an interval that resamples examples is
-    too narrow. Resampling the groups themselves respects that: the effective
-    sample size is the number of groups, not the number of examples.
-    """
+    """Mean with a 95% interval from resampling whole clusters."""
     import random
 
     if len(values) != len(clusters):
@@ -548,13 +447,7 @@ def paired_cluster_bootstrap_difference(
     seed: int = 42,
     min_clusters: int = MIN_BOOTSTRAP_CLUSTERS,
 ) -> dict[str, Any]:
-    """Paired bootstrap on ``mean(right) - mean(left)``, resampling clusters.
-
-    The cluster counterpart of :func:`bootstrap_difference`: examples stay paired,
-    and each resample draws whole groups with replacement. Same output keys, plus
-    ``clusters``, ``method`` and ``estimable``. A p-value of 0 means no resample
-    crossed zero, i.e. ``p < 1 / iterations``; render it that way, not as 0.
-    """
+    """Paired bootstrap on ``mean(right) - mean(left)``, resampling clusters."""
     import random
 
     if not (len(left) == len(right) == len(clusters)):

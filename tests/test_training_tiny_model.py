@@ -1,20 +1,4 @@
-"""End-to-end training verification on tiny randomly-initialized models.
-
-Spec §45 forbids a fake training pipeline. These tests are the evidence that this
-one is real, and they run on CPU in seconds because the models are built from a
-config with a handful of layers — no weights are downloaded.
-
-What is proven here:
-
-* the family adapters find real modules in real architectures;
-* LoRA attaches and *only* LoRA parameters are trainable;
-* assistant-span masking selects exactly the answer tokens under the real Qwen and
-  Mistral chat templates;
-* a real optimizer step reduces the loss on a memorizable batch;
-* adapter weights save and reload, and the reloaded adapter changes the output.
-
-Skipped cleanly when the ``[train]`` extra is not installed.
-"""
+"""End-to-end training verification on tiny randomly-initialized models."""
 
 from __future__ import annotations
 
@@ -27,11 +11,6 @@ from kleos_models.data.schemas import TrainingExample
 from kleos_models.models.adapters import get_adapter
 
 pytestmark = [pytest.mark.requires_torch, pytest.mark.requires_peft, pytest.mark.slow]
-
-
-# ---------------------------------------------------------------------------
-# Tiny model builders
-# ---------------------------------------------------------------------------
 
 
 def build_tiny_qwen3():
@@ -104,11 +83,6 @@ def tiny_mistral():
     return build_tiny_mistral()
 
 
-# ---------------------------------------------------------------------------
-# Target discovery against real architectures
-# ---------------------------------------------------------------------------
-
-
 class TestTargetDiscovery:
     def test_qwen_targets_exist_in_the_real_architecture(self, tiny_qwen):
         adapter = get_adapter(qwen_config())
@@ -135,7 +109,6 @@ class TestTargetDiscovery:
 
         message = str(info.value)
         assert "not_a_real_module" in message
-        # The error must show what IS available, or it is not actionable.
         assert "q_proj" in message
 
     def test_excluded_modules_are_not_adapted(self, tiny_qwen):
@@ -153,11 +126,6 @@ class TestTargetDiscovery:
         assert all(c["in_features"] > 0 for c in candidates)
 
 
-# ---------------------------------------------------------------------------
-# LoRA attachment
-# ---------------------------------------------------------------------------
-
-
 class TestLoRAAttachment:
     def test_only_lora_parameters_are_trainable(self, tiny_qwen):
         from kleos_models.models.peft_setup import attach_lora
@@ -173,7 +141,6 @@ class TestLoRAAttachment:
         )
 
         assert result.trainable_parameters > 0
-        # A LoRA run must train a tiny fraction of the model.
         assert result.trainable_fraction < 0.5
 
         trainable_names = [name for name, p in result.model.named_parameters() if p.requires_grad]
@@ -213,10 +180,6 @@ class TestLoRAAttachment:
         assert result.trainable_parameters > 0
 
 
-# ---------------------------------------------------------------------------
-# Masking against the real chat templates
-# ---------------------------------------------------------------------------
-
 QWEN_TEMPLATE = (
     "{% for message in messages %}"
     "<|im_start|>{{ message['role'] }}\n{{ message['content'] }}<|im_end|>\n"
@@ -228,11 +191,7 @@ QWEN_TEMPLATE = (
 class TestMaskingWithARealTokenizer:
     @pytest.fixture
     def tokenizer(self):
-        """A real fast tokenizer with a Qwen-style chat template.
-
-        Built locally from a tiny BPE vocabulary rather than downloaded, so the
-        test needs no network but still exercises real tokenizer code paths.
-        """
+        """A real fast tokenizer with a Qwen-style chat template."""
         from tokenizers import Tokenizer, models, pre_tokenizers
         from transformers import PreTrainedTokenizerFast
 
@@ -298,7 +257,6 @@ class TestMaskingWithARealTokenizer:
         decoded = tokenizer.decode(supervised)
 
         assert "alpha" in decoded
-        # The prompt must not be supervised.
         assert "Rank" not in decoded
         assert "KLEOS" not in decoded
 
@@ -335,11 +293,6 @@ class TestMaskingWithARealTokenizer:
             ]
         )
         assert "SENTINEL" not in decoded
-
-
-# ---------------------------------------------------------------------------
-# The pipeline actually trains
-# ---------------------------------------------------------------------------
 
 
 class TestRealTrainingStep:
@@ -396,12 +349,7 @@ class TestRealTrainingStep:
             verify_gradients_flow(result.model, batch)
 
     def test_optimizer_steps_reduce_the_loss(self):
-        """The core anti-fake-pipeline test: real steps must actually learn.
-
-        A tiny model over a fixed batch should memorize quickly. If the loss does
-        not fall, either the adapter is not connected to the graph or the
-        optimizer is not updating it.
-        """
+        """The core anti-fake-pipeline test: real steps must actually learn."""
         import torch
 
         from kleos_models.models.peft_setup import attach_lora
@@ -516,7 +464,6 @@ class TestAdapterPersistence:
         with torch.no_grad():
             trained_logits = model(**batch).logits.clone()
 
-        # Reload onto a freshly built base and confirm the outputs match.
         fresh_base = build_tiny_qwen3()
         reloaded = PeftModel.from_pretrained(fresh_base, str(adapter_dir))
         reloaded.eval()
@@ -632,7 +579,6 @@ class TestEndToEndPipeline:
         batch = collator([dataset[i] for i in range(4)])
 
         assert batch["input_ids"].shape == batch["labels"].shape
-        # Padded positions must not contribute to the loss.
         padded = batch["attention_mask"] == 0
         assert torch.all(batch["labels"][padded] == IGNORE_INDEX)
 
@@ -650,12 +596,7 @@ class TestEndToEndPipeline:
 
 
 class TestFullPipelineEndToEnd:
-    """The whole `scripts/train.py` path, on a tiny model, on CPU.
-
-    This is the strongest available evidence that the pipeline is not a facade:
-    it runs `run_training` itself — the same function the CLI calls — and asserts
-    that real artifacts land on disk with a truthful manifest.
-    """
+    """The whole `scripts/train.py` path, on a tiny model, on CPU."""
 
     @pytest.fixture
     def tiny_setup(self, tmp_path):
@@ -756,12 +697,10 @@ class TestFullPipelineEndToEnd:
 
         result = run_training(config, bundle, manifest, loaded=loaded, verify_gradients=True)
 
-        # Adapter weights exist and are real files.
         assert result.adapter_path.exists()
         assert (result.adapter_path / "adapter_config.json").exists()
         assert any(result.adapter_path.glob("adapter_model.*"))
 
-        # Tokenizer, effective config, metrics, manifest.
         assert result.tokenizer_path.exists()
         assert (result.output_dir / "config.yaml").exists()
         assert (result.output_dir / "metrics.json").exists()
@@ -769,12 +708,10 @@ class TestFullPipelineEndToEnd:
         assert (result.output_dir / "README.md").exists()
         assert (result.output_dir / "environment.txt").exists()
 
-        # A real loss was computed.
         metrics = json.loads((result.output_dir / "metrics.json").read_text(encoding="utf-8"))
         assert "train_loss" in metrics
         assert metrics["train_loss"] > 0
 
-        # The manifest tells the truth about the run.
         assert result.manifest.status is RunStatus.COMPLETED
         assert result.manifest.dataset_version == "tiny-test-v0"
         assert result.manifest.config_hash == config.config_hash
@@ -814,7 +751,6 @@ class TestFullPipelineEndToEnd:
         checkpoints = discover_checkpoints(result.output_dir)
         assert checkpoints, "no checkpoint was written"
         assert all(c.valid for c in checkpoints)
-        # KLEOS metadata travels with the checkpoint.
         assert checkpoints[0].metadata is not None
         assert checkpoints[0].metadata["dataset_version"] == "tiny-test-v0"
 
@@ -826,15 +762,13 @@ class TestFullPipelineEndToEnd:
         config, bundle, loaded, tmp_path = tiny_setup
         manifest = build_manifest(config, kind="training", dataset_version="tiny-test-v0")
 
-        # Break the model so the forward pass raises.
         class Exploding:
             def __getattr__(self, name):
                 raise RuntimeError("simulated hardware failure")
 
         loaded.model = Exploding()
 
-        # Any exception is acceptable here; the assertion is about what the
-        # manifest records afterwards, not the exception type.
+        # Only what the manifest records matters, not the exception type.
         with pytest.raises(Exception):  # noqa: B017
             run_training(config, bundle, manifest, loaded=loaded)
 

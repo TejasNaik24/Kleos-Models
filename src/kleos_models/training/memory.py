@@ -1,10 +1,4 @@
-"""Runtime memory reporting and OOM diagnostics (spec sections 13, 14, 32).
-
-Estimation and feasibility planning live in :mod:`kleos_models.models.feasibility`.
-This module covers what happens *during* a run: peak-memory tracking, the
-pre-flight environment report, and turning a bare ``CUDA out of memory`` into
-something a user can act on.
-"""
+"""Runtime memory reporting and OOM diagnostics (spec sections 13, 14, 32)."""
 
 from __future__ import annotations
 
@@ -87,11 +81,7 @@ def reset_peak_memory() -> None:
 
 
 def peak_allocated_all_gb() -> float | None:
-    """The fullest GPU's peak allocation, or ``None`` without CUDA.
-
-    On one GPU this is ``torch.cuda.max_memory_allocated``. A model spread over
-    several GPUs (``device_map: auto``) is limited by whichever fills first.
-    """
+    """The fullest GPU's peak allocation, or ``None`` without CUDA."""
     try:
         import torch
     except ImportError:
@@ -122,8 +112,7 @@ class DeviceReading:
     peak_reserved_gb: float
     total_gb: float
     free_at_peak_gb: float
-    #: Paged optimizer state for the trainable parameters on this GPU, which
-    #: bitsandbytes allocates outside PyTorch's allocator at the first step.
+    #: Paged optimizer state on this GPU, allocated by bitsandbytes outside PyTorch at step one.
     paged_optimizer_gb: float
 
     @property
@@ -148,12 +137,7 @@ def probe_result(
     sequence_length: int,
     precision: str,
 ) -> dict[str, Any]:
-    """The memory probe's record, gated on the GPU with the least to spare.
-
-    With one GPU the record is exactly what it always was. With several, its
-    top-level figures are the tightest GPU's (``scripts/check_smoke_gate.py``
-    gates on them unchanged), and every GPU's figures are listed beside them.
-    """
+    """The memory probe's record, gated on the GPU with the least to spare."""
     tightest = min(readings, key=lambda r: r.spare_after_optimizer_gb)
     result: dict[str, Any] = {
         "batch_size": batch_size,
@@ -185,22 +169,7 @@ def probe_training_peak(
     collator: Any,
     training_config: TrainingConfig,
 ) -> dict[str, Any] | None:
-    """Measure a training step's memory on the longest micro-batch, before step 1.
-
-    The pre-flight estimate is arithmetic; this is the measurement. Two forward
-    and backward passes on the ``per_device_train_batch_size`` longest examples,
-    under the autocast the Trainer will use, keeping the gradients between them as
-    gradient accumulation does. A configuration that cannot survive its longest
-    batch then fails in the first minute rather than hours in, and a smoke run
-    reports the peak its real run will reach whichever examples its ten steps
-    happen to draw.
-
-    Nothing trains: gradients are discarded, and the Trainer re-seeds on
-    construction, so the passes leave no trace on the run.
-
-    Returns:
-        The measurement, or ``None`` without CUDA.
-    """
+    """Measure a training step's memory on the longest micro-batch, before step 1."""
     import torch
 
     if not torch.cuda.is_available():
@@ -216,8 +185,7 @@ def probe_training_peak(
     batch = collator([dataset[i] for i in longest[:size]])
     device = next(model.parameters()).device
     batch = {key: value.to(device) for key, value in batch.items()}
-    # A model spread over several GPUs (device_map: auto) is measured on each;
-    # on one GPU, exactly as before.
+    # A model spread over several GPUs (device_map: auto) is measured on each.
     spread = model_devices(model)
     measured = [torch.device("cuda", index) for index in spread] if len(spread) > 1 else [device]
 
@@ -256,9 +224,8 @@ def probe_training_peak(
             model.eval()
         free_memory()
 
-    # bitsandbytes' paged optimizer allocates its state outside PyTorch's
-    # allocator at the first optimizer step, from what is free now, on the GPU
-    # that holds each trainable parameter.
+    # The paged optimizer allocates outside PyTorch at the first step, from what is then
+    # free, on each trainable parameter's GPU.
     paged = "paged" in training_config.optim
     readings = []
     for target, free_bytes, total_bytes, peak_allocated, peak_reserved in raw:
@@ -306,15 +273,7 @@ def render_environment_report(
     gpu: GPUInfo | None = None,
     seq_length: int | None = None,
 ) -> str:
-    """The pre-flight report the training script prints (spec section 13).
-
-    Everything the spec requires before an expensive run: GPU, VRAM, CUDA, library
-    versions, model id, quantization, LoRA settings, and the memory estimate.
-
-    Args:
-        seq_length: The longest training sequence, when measured; the memory
-            estimate otherwise assumes ``model.max_seq_length``.
-    """
+    """The pre-flight report the training script prints (spec section 13)."""
     from kleos_models.compat import library_versions
     from kleos_models.models.feasibility import estimate_memory
 
@@ -406,12 +365,7 @@ def diagnose_oom(
     *,
     stage: str = "training",
 ) -> InsufficientMemoryError:
-    """Convert a CUDA OOM into an actionable error (spec section 32).
-
-    A bare ``CUDA error`` tells a user nothing. This reports what was configured,
-    what the hardware is, and an ordered list of things to change — cheapest and
-    least experiment-distorting first.
-    """
+    """Convert a CUDA OOM into an actionable error (spec section 32)."""
     gpu = probe_gpu()
     snapshot = snapshot_memory()
 

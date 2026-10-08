@@ -1,20 +1,9 @@
-# ---------------------------------------------------------------------------
 # Loading a frozen deployment package, or refusing to.
 #
-# The research loader answers "can I run this experiment?". This one answers a
-# narrower and stricter question: "is what I am about to serve the exact
-# artifact that was measured?" Every check here fails closed, because the
-# failure it guards against is silent — a LoRA adapter attached to the wrong
-# base revision raises no error, it just gives quietly worse answers.
-#
-# Generation deliberately reuses HuggingFaceBackend, the same class the
-# evaluation arms used. Serving through a second, similar-looking code path
-# would mean the deployed model is not demonstrably the model that scored
-# 0.8051 — and that demonstration is the whole point of this package.
-#
-# torch / transformers / peft are imported inside functions so that verifying a
-# package, and importing this module, work without them.
-# ---------------------------------------------------------------------------
+# Every check fails closed: an adapter on the wrong base revision raises no error, it
+# just answers worse. Generation reuses HuggingFaceBackend, the class the evaluation
+# arms used, so the served model is demonstrably the measured one. torch,
+# transformers and peft are imported lazily so verifying a package works without them.
 
 from __future__ import annotations
 
@@ -64,12 +53,7 @@ class LoadedDeployment:
         )
 
     def generation_config(self, max_new_tokens: int | None = None) -> GenerationConfig:
-        """The frozen decoding contract, with an optional *lower* token budget.
-
-        ``max_new_tokens`` may be lowered by a caller but never raised above the
-        manifest's limit: a request must not be able to widen the contract the
-        model was measured under.
-        """
+        """The frozen decoding contract, with an optional *lower* token budget."""
         config = self.generation_defaults
         if max_new_tokens is not None:
             ceiling = self.manifest.limits.max_new_tokens
@@ -92,8 +76,8 @@ class LoadedDeployment:
         )
         return output
 
-    # The three steps of generate(), exposed for hosts that bill GPU time
-    # (ZeroGPU): only generate_ids needs the GPU. Same backend, same order.
+    # generate() in three steps for ZeroGPU, which bills GPU time: only generate_ids
+    # needs the GPU.
 
     def prepare(self, messages: list[Message]) -> PreparedPrompt:
         return self.backend.prepare(messages)
@@ -172,17 +156,7 @@ def check_config_matches_manifest(config: ModelConfig, manifest: DeploymentManif
 
 
 def verify_base_revision(base_model: str, revision: str, *, require_remote: bool = False) -> str:
-    """Check the base revision is a real, pinned commit before downloading 24 GB.
-
-    Passing a 40-character sha to ``from_pretrained`` already resolves that exact
-    commit or fails, so the pin is enforced regardless. This adds an early, cheap
-    failure and a positive confirmation from the Hub when it is reachable.
-
-    Args:
-        require_remote: Fail when the Hub cannot be reached, instead of relying
-            on the load-time pin alone. Use in environments that must never
-            serve from a stale cache.
-    """
+    """Check the base revision is a real, pinned commit before downloading 24 GB."""
     if not is_pinned_revision(revision):
         raise ConfigError(
             f"Refusing to serve {base_model!r} at revision {revision!r}.",
@@ -246,28 +220,7 @@ def load_deployment(
     expected_identity: dict[str, Any] | None = None,
     adapter_device: str | None = None,
 ) -> LoadedDeployment:
-    """Verify a deployment package and load the model it describes.
-
-    Args:
-        package_dir: Root of the package (holds ``manifest.json``).
-        verify: Re-hash every artifact first. Leave on: the hashes are the only
-            thing standing between a corrupted adapter and a served one.
-        require_remote_revision: Confirm the base commit with the Hub rather
-            than relying on the load-time pin alone.
-        device_map: Override the packaged device map (e.g. ``"cuda:0"``).
-        expected_identity: The identity this deployment was built to serve (see
-            :func:`kleos_models.serving.manifest.load_expected_identity`). When
-            given, a package that is intact but *different* is refused. Checked
-            before anything is downloaded.
-        adapter_device: Where PEFT reads the adapter file before attaching it
-            (see :func:`kleos_models.models.loading.load_adapter_model`).
-            ``None`` keeps PEFT's own choice; ZeroGPU passes ``"cpu"``.
-
-    Raises:
-        ConfigError: the package does not match its manifest, contradicts
-            itself, or is not the expected artifact.
-        ModelCompatibilityError: the artifacts do not load.
-    """
+    """Verify a deployment package and load the model it describes."""
     root = Path(package_dir)
     manifest = verify_package(root) if verify else DeploymentManifest.load(root)
     if expected_identity is not None:
@@ -279,9 +232,7 @@ def load_deployment(
         manifest.base_model, manifest.base_revision, require_remote=require_remote_revision
     )
 
-    # The tokenizer is the frozen copy inside the package, not the Hub's. Set at
-    # runtime rather than baked into the packaged YAML so the package stays
-    # relocatable.
+    # The package's frozen tokenizer, set at runtime so the package stays relocatable.
     config.tokenizer = str((root / TOKENIZER_DIRNAME).resolve())
     if device_map:
         config.device_map = device_map

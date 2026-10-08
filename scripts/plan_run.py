@@ -145,8 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"Wrote assessment to {args.json}\n")
 
-    # Exit non-zero if the single assessed config cannot be trained, so a driver
-    # script can branch on it.
+    # Non-zero when the single assessed config cannot be trained, for driver scripts.
     if args.config and not reports[0].fits:
         return 2
     return 0

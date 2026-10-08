@@ -1,21 +1,4 @@
-"""Per-model serving names and options, read from a deployment record.
-
-Hermes was the only model served, so what makes a Space "the Hermes Space" was
-spelled as constants: the ``HERMES_*`` secrets, the ``x-hermes-key`` header,
-the Space folder and record file name, the base checkpoint files baked into the
-image, the status copy. A second model (KLEOS Logos v0.0.2) needs its own.
-
-A deployment record (``configs/deployment/<model>.yaml``) may carry an optional
-``serving`` block. Without one, every value here is today's Hermes constant, so
-the Hermes record needs no edit and Hermes serves exactly as before. The block
-also turns on what a thinking model needs: the trace in the reply (contract
-version 2) and the rule that a request starts with a system message.
-
-Unknown keys are refused rather than ignored: a misspelt option that silently
-falls back to a Hermes default would serve the wrong contract.
-
-This module imports no torch.
-"""
+"""Per-model serving names and options, read from a deployment record."""
 
 from __future__ import annotations
 
@@ -29,8 +12,7 @@ import yaml
 
 from kleos_models.errors import ConfigError
 
-#: The base checkpoint files baked into the Hermes Space image: the Hugging
-#: Face shards of Mistral-Nemo and their configs, at the pinned revision.
+#: Mistral-Nemo HF shards and configs baked into the Hermes Space image (pinned revision).
 HERMES_BASE_FILES: tuple[str, ...] = (
     "config.json",
     "generation_config.json",
@@ -126,11 +108,7 @@ def _flag(value: Any, key: str) -> bool:
 
 
 def profile_from_record(spec: Mapping[str, Any]) -> ServingProfile:
-    """The serving profile of a record's ``deployment:`` mapping.
-
-    Raises:
-        ConfigError: the ``serving`` block has an unknown key or a malformed value.
-    """
+    """The serving profile of a record's ``deployment:`` mapping."""
     short = _short_name(spec.get("name"))
     version = str(spec.get("version") or "").strip()
     display = f"{short} {version}".strip()
@@ -204,5 +182,5 @@ def load_profile(record_path: Path | str) -> ServingProfile:
     return profile_from_record(spec)
 
 
-#: The profile of a record with no ``serving`` block: today's Hermes.
+#: The profile of a record with no ``serving`` block: Hermes.
 HERMES_PROFILE = profile_from_record({"name": "kleos-hermes", "version": "v0.0.6"})

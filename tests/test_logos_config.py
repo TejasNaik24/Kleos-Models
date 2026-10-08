@@ -1,16 +1,4 @@
-"""KLEOS Logos v0.0.1: configuration, the text-only view, and the tokenizer flag.
-
-Three things are pinned here:
-
-* **Hermes is untouched.** Its ``config_hash`` still reproduces, and the field added
-  for Logos (``fix_mistral_regex``) is invisible to every existing config.
-* **Logos differs from Hermes only where declared**, so H8 compares base models,
-  not recipes.
-* **The text-only view is refused unless it is exactly right**, and every other
-  model still loads the way it did.
-
-All of it runs without torch: checkpoints are represented by their config.
-"""
+"""KLEOS Logos v0.0.1: configuration, the text-only view, and the tokenizer flag."""
 
 from __future__ import annotations
 
@@ -67,19 +55,13 @@ def logos_model() -> ModelConfig:
     return load_model_config(MODELS / "ministral3_14b.yaml")
 
 
-# ---------------------------------------------------------------------------
-# Hashes
-# ---------------------------------------------------------------------------
-
-
 class TestFrozenConfigHashes:
     def test_hermes_hash_still_reproduces(self, clean_env):
         # The hash recorded in Hermes' manifest, deployment record and report.
         assert drive_config("kleos_hermes_v006.yaml").config_hash == HERMES_HASH
 
     def test_logos_hash_is_the_pre_registered_one(self, clean_env):
-        # docs/experiments.md (H8) and docs/logos.md quote it; the runbook
-        # tells the user to check the printed prefix against it.
+        # Quoted in docs/experiments.md (H8) and docs/logos.md; the runbook checks its prefix.
         assert drive_config("kleos_logos_v001.yaml").config_hash == LOGOS_HASH
 
     def test_an_environment_variable_changes_the_hash(self, clean_env, monkeypatch):
@@ -139,11 +121,6 @@ def _write_training_config(directory: Path, value: str) -> Path:
         encoding="utf-8",
     )
     return path
-
-
-# ---------------------------------------------------------------------------
-# Logos against Hermes
-# ---------------------------------------------------------------------------
 
 
 class TestLogosAgainstHermes:
@@ -257,11 +234,6 @@ class TestSetModel:
                 CONFIGS_DIR / "evaluation" / "kleos_logos_v001.yaml",
                 model_path=MODELS / "ministral3_14b.yaml",
             )
-
-
-# ---------------------------------------------------------------------------
-# The text-only view
-# ---------------------------------------------------------------------------
 
 
 def mistral3_container(**overrides: Any) -> SimpleNamespace:
@@ -405,11 +377,6 @@ class TestLoadPlan:
         assert isinstance(adapter, Ministral3TextAdapter)
 
 
-# ---------------------------------------------------------------------------
-# The tokenizer regex flag
-# ---------------------------------------------------------------------------
-
-
 class TestRegexFlag:
     def _config(self, value: bool | None) -> ModelConfig:
         return logos_model().model_copy(update={"fix_mistral_regex": value})
@@ -463,11 +430,6 @@ class TestRegexFlag:
         captured.clear()
         loading.load_tokenizer(load_model_config(MODELS / "mistral_nemo_12b.yaml"))
         assert "fix_mistral_regex" not in captured  # Hermes: nothing passed, as before
-
-
-# ---------------------------------------------------------------------------
-# load_model, with the heavy parts faked
-# ---------------------------------------------------------------------------
 
 
 class _FakeAuto:

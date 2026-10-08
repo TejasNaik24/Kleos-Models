@@ -1,16 +1,4 @@
-"""The Hermes serving container, checked without Docker or a GPU.
-
-These are static checks on docker/hermes.Dockerfile, .dockerignore,
-docker/compose.yaml, docker/hermes.env.example and the pinned requirements.
-They exist because a container definition fails in the least convenient place —
-on a rented GPU host — and because two of its failure modes are silent:
-
-* a build context that sweeps in `.env` or the private dataset, and
-* an image whose pins drift from the versions the frozen model was measured
-  under.
-
-The startup sequence itself is tested in tests/test_startup.py.
-"""
+"""The Hermes serving container, checked without Docker or a GPU."""
 
 from __future__ import annotations
 
@@ -31,8 +19,7 @@ ENV_EXAMPLE = REPO_ROOT / "docker" / "hermes.env.example"
 REQUIREMENTS = REPO_ROOT / "docker" / "requirements-hermes.txt"
 SERVING_RECORD = REPO_ROOT / "configs" / "deployment" / "kleos_hermes_v006.yaml"
 
-#: Versions recorded in the kleos-v006-mistralnemo12b-run1 manifest. The served
-#: model is only the measured model if these match.
+#: Versions in the kleos-v006-mistralnemo12b-run1 manifest; serving must match them.
 RESEARCH_VERSIONS = {
     "transformers": "5.16.1",
     "peft": "0.20.0",
@@ -44,11 +31,6 @@ RESEARCH_TORCH = "2.11.0+cu128"
 SECRET_NAMES = ("HERMES_API_KEY", "HF_TOKEN", "HERMES_API_KEY_FILE", "HF_TOKEN_FILE")
 
 
-# ---------------------------------------------------------------------------
-# Parsing helpers
-# ---------------------------------------------------------------------------
-
-
 def instructions() -> list[tuple[str, str]]:
     """(KEYWORD, arguments) for every Dockerfile instruction, continuations joined."""
     joined: list[str] = []
@@ -58,7 +40,7 @@ def instructions() -> list[tuple[str, str]]:
         if not buffer and (not line.strip() or line.lstrip().startswith("#")):
             continue
         if line.lstrip().startswith("#"):
-            continue  # a comment inside a continued instruction
+            continue
         if line.endswith("\\"):
             buffer += line[:-1] + " "
             continue
@@ -129,11 +111,7 @@ def dockerignore_patterns() -> list[tuple[bool, re.Pattern[str]]]:
 
 
 def excluded_from_context(relative: str) -> bool:
-    """Whether Docker would leave this path out of the build context.
-
-    Last matching pattern wins, and a pattern matching any parent directory
-    matches the file — the MatchesOrParentMatches rule Docker applies.
-    """
+    """Whether Docker would leave this path out of the build context."""
     parts = relative.split("/")
     parents = ["/".join(parts[: i + 1]) for i in range(len(parts) - 1)]
     excluded = False
@@ -141,11 +119,6 @@ def excluded_from_context(relative: str) -> bool:
         if regex.match(relative) or any(regex.match(parent) for parent in parents):
             excluded = not exception
     return excluded
-
-
-# ---------------------------------------------------------------------------
-# Build context
-# ---------------------------------------------------------------------------
 
 
 class TestBuildContextIsAnAllowlist:
@@ -215,11 +188,6 @@ class TestBuildContextIsAnAllowlist:
         assert first[0] is False and first[1].pattern == "^[^/]*$", (
             "Keep the allowlist shape: '*' first, then explicit '!' re-includes."
         )
-
-
-# ---------------------------------------------------------------------------
-# Dockerfile
-# ---------------------------------------------------------------------------
 
 
 class TestDockerfile:
@@ -302,11 +270,6 @@ class TestDockerfile:
         assert labels["org.opencontainers.image.version"] == record["version"]
 
 
-# ---------------------------------------------------------------------------
-# Pinned requirements
-# ---------------------------------------------------------------------------
-
-
 def requirement_lines() -> list[str]:
     return [
         line.strip()
@@ -350,11 +313,6 @@ class TestPinnedRequirements:
         assert {"fastapi", "uvicorn", "anyio", "tokenizers", "jinja2"} <= names
 
 
-# ---------------------------------------------------------------------------
-# Compose example
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(scope="module")
 def service() -> dict:
     return yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]["hermes"]
@@ -390,11 +348,6 @@ class TestComposeExample:
 
     def test_contains_no_secret_values(self):
         assert scan_sensitive_content(COMPOSE.read_text(encoding="utf-8")) == []
-
-
-# ---------------------------------------------------------------------------
-# Environment template
-# ---------------------------------------------------------------------------
 
 
 def template_variables() -> dict[str, str]:

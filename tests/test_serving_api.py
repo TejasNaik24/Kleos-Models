@@ -1,14 +1,4 @@
-"""The Hermes inference service boundary.
-
-Run against a stub deployment: no GPU, no weights, no network. What is under
-test is the boundary itself — authentication, bounds, error shapes and the
-isolation guarantees — not the model.
-
-The isolation tests matter as much as the functional ones. Hermes is a model
-service, and KLEOS remains the source of truth for users, workspaces, memories
-and conversations. If this service ever starts accepting or keeping that state,
-these tests should fail.
-"""
+"""The Hermes inference service boundary."""
 
 from __future__ import annotations
 
@@ -42,8 +32,7 @@ httpx = pytest.importorskip("httpx", reason="needs httpx for the in-process clie
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-# Deliberately short: a placeholder, and too short to be mistaken for a real
-# credential by scripts/check_no_private_data.py.
+# Too short to be mistaken for a credential by scripts/check_no_private_data.py.
 API_KEY = "unit-test"
 PINNED = "04d8a90549d23fc6bd7f642064003592df51e9b3"
 
@@ -238,8 +227,7 @@ class TestRequestValidation:
         assert post(client, payload).status_code == 422
 
     def test_unknown_fields_are_rejected(self, client):
-        # Guards against a caller quietly passing workspace state or tool
-        # definitions that this service must not receive.
+        # This service must not receive workspace state or tool definitions.
         payload = {**ONE_MESSAGE, "workspace_id": "w1", "tools": [{"name": "shell"}]}
         assert post(client, payload).status_code == 422
 
@@ -282,9 +270,7 @@ class TestGenerationLimits:
         assert deployment.calls[-1]["max_new_tokens"] == 16
 
     def test_the_api_forwards_the_budget_and_the_loader_clamps_it(self, client, deployment):
-        # The clamp lives in LoadedDeployment.generate, where a request cannot
-        # bypass it; see tests/test_serving_loader.py. The API's job is only to
-        # pass the request through unchanged.
+        # The loader clamps (see test_serving_loader.py); the API passes the budget through.
         post(client, {**ONE_MESSAGE, "max_new_tokens": 100_000})
         assert deployment.calls[-1]["max_new_tokens"] == 100_000
 
@@ -354,7 +340,6 @@ class TestIsolationAndSecrets:
         first = post(client, {"messages": [{"role": "user", "content": "remember alpha"}]})
         second = post(client, {"messages": [{"role": "user", "content": "what did I say?"}]})
         assert first.status_code == second.status_code == 200
-        # Each call receives only its own messages: nothing is carried forward.
         assert len(deployment.calls[-1]["messages"]) == 1
         assert "alpha" not in deployment.calls[-1]["messages"][0].content
 
@@ -366,7 +351,6 @@ class TestIsolationAndSecrets:
             "/docs/oauth2-redirect",
             "/redoc",
         }
-        # No schema or docs surface is published.
         assert client.get("/openapi.json").status_code == 404
         assert client.get("/docs").status_code == 404
 

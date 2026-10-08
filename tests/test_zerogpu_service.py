@@ -1,16 +1,4 @@
-"""The ZeroGPU request path, without ZeroGPU, a GPU, Gradio or weights.
-
-`ZeroGPUService` is where a request becomes either an answer or a status KLEOS
-can fall back on. It runs here over the real `LoadedDeployment` (so the token
-ceiling and decoding contract are the production ones) with a fake backend, and
-a fake GPU call standing in for `@spaces.GPU`. What is under test:
-
-* nothing reaches the GPU without the shared secret, a valid body and in-bounds
-  input — GPU time is the scarce, per-account resource;
-* every way the GPU call can fail becomes a contract status, never an exception;
-* prompts, responses and keys stay out of the logs;
-* startup fails closed before downloading anything it would refuse to serve.
-"""
+"""The ZeroGPU request path, without ZeroGPU, a GPU, Gradio or weights."""
 
 from __future__ import annotations
 
@@ -464,11 +452,6 @@ class TestLogsCarryNoContent:
         assert MARKER not in self._log_text(caplog)
 
 
-# ---------------------------------------------------------------------------
-# The GPU step, with a fake torch
-# ---------------------------------------------------------------------------
-
-
 def fake_torch() -> types.ModuleType:
     torch = types.ModuleType("torch")
     properties = types.SimpleNamespace(
@@ -505,9 +488,7 @@ class TestGPUStep:
         assert result["compute_capability"] == "12.0"
         assert result["peak_vram_bytes"] == 8 * 1024**3
         assert result["cuda_runtime"] == "12.8"
-        # ZeroGPU pickles the worker's return value back to the Space process.
-        # Round-tripping our own freshly built dict is the point; nothing
-        # untrusted is ever unpickled.
+        # ZeroGPU pickles the worker's return value back; this round-trips our own dict.
         assert pickle.loads(pickle.dumps(result)) == result
 
     def test_calls_are_counted_per_worker_process(self, monkeypatch):
@@ -545,11 +526,6 @@ class TestGPUDuration:
         monkeypatch.setenv("HERMES_GPU_TOKENS_PER_SECOND", "1")
         prepared = PreparedPrompt(inputs={}, prompt_length=40)
         assert gpu_duration(prepared, GenerationConfig(max_new_tokens=512)) == 60
-
-
-# ---------------------------------------------------------------------------
-# Startup
-# ---------------------------------------------------------------------------
 
 
 class FakeHub:
@@ -615,9 +591,7 @@ class TestStartup:
     def test_a_foreign_but_self_consistent_package_is_refused_before_loading(
         self, monkeypatch, tmp_path
     ):
-        # The Docker regression, on the Space's startup path, through the real
-        # loader: a package that verifies against its own manifest but is not
-        # the frozen Hermes artifact must never reach model loading.
+        # A self-consistent package that is not the frozen Hermes artifact must never load.
         from tests.test_deployment_manifest import build_package
 
         package = build_package(tmp_path)
@@ -648,8 +622,7 @@ class TestStartup:
         (load,) = loads
         assert load["verify"] is True
         assert load["device_map"] == "cuda:0"
-        # PEFT must read the adapter file on the CPU: under ZeroGPU's startup
-        # emulation there is no GPU to read it onto (first Space start failed).
+        # ZeroGPU's startup emulation has no GPU, so PEFT must read the adapter on the CPU.
         assert load["adapter_device"] == "cpu"
         expected = load["expected_identity"]
         assert expected["base_revision"] == PINNED

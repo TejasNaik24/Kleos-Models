@@ -1,25 +1,4 @@
-"""Resumable evaluation: a disconnect costs the example in flight, not the arm.
-
-An arm of the KLEOS benchmark takes two to three hours on a free T4, longer than
-a Colab session reliably lasts. Every finished generation is therefore appended
-to ``<output>.partial.jsonl``, flushed to disk and closed before the next one
-starts. A resumed run replays those generations and generates only the rest.
-
-Greedy decoding makes a replayed generation the one an uninterrupted run would
-have produced, so the finished result is the result of an uninterrupted run.
-Grading is never replayed: it always reruns over every response, with the code
-that finishes the run.
-
-The partial file's first line is an identity: everything that could change a
-generation (arm, seeds, the examples and the benchmark's bytes, decoding, the
-orchestration prompt, the model config, the adapter's weights, the code commit,
-library versions and the GPU's compute capability). A resume under a different
-identity is refused, because it would splice two different evaluations into one
-result. A torn last line, from a runtime killed mid-write, is dropped and its
-example generated again.
-
-This module imports no torch.
-"""
+"""Resumable evaluation: a disconnect costs the example in flight, not the arm."""
 
 from __future__ import annotations
 
@@ -159,16 +138,10 @@ def start_partial(path: Path, identity: Mapping[str, Any]) -> None:
 
 
 def load_partial(path: Path, identity: Mapping[str, Any]) -> PartialState:
-    """Read an interrupted run's generations, refusing a different evaluation.
-
-    Raises:
-        EvaluationError: when the header is missing or names a different
-            identity, or a line other than the last is unreadable.
-    """
+    """Read an interrupted run's generations, refusing a different evaluation."""
     raw = path.read_bytes()
     lines = raw.split(b"\n")
-    # A file ending in "\n" splits into a trailing empty element; anything else
-    # there is a line that was being written when the runtime died.
+    # A complete file leaves an empty tail; anything else is a line torn when the runtime died.
     tail = lines.pop()
     state = PartialState(path=path)
 
@@ -215,7 +188,6 @@ def load_partial(path: Path, identity: Mapping[str, Any]) -> PartialState:
         good_bytes += len(line) + 1
 
     if tail:
-        # The runtime died while this line was being written.
         state.dropped_torn_line = True
         with path.open("r+b") as handle:
             handle.truncate(good_bytes)
@@ -226,13 +198,7 @@ def load_partial(path: Path, identity: Mapping[str, Any]) -> PartialState:
 
 
 class PartialWriter:
-    """Append-only, fsynced record of finished generations.
-
-    The file is opened and closed again for every record. Colab's Google Drive
-    mount uploads a file only once it is closed, and ``fsync`` does not change
-    that: a handle held open for the whole arm meant a killed runtime lost every
-    generation of its session (finding L-F3, docs/logos.md).
-    """
+    """Append-only, fsynced record of finished generations."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -248,12 +214,7 @@ class PartialWriter:
 
 
 class ResumingBackend:
-    """Wrap a backend: replay recorded generations, record new ones.
-
-    The runner sees an ordinary backend. Replayed outputs carry their original
-    latency in ``metadata['recorded_latency_seconds']`` so generation statistics
-    describe the real run, not the replay.
-    """
+    """Wrap a backend: replay recorded generations, record new ones."""
 
     def __init__(
         self,

@@ -1,27 +1,15 @@
-# ---------------------------------------------------------------------------
-# The Hermes inference service.
+# The Hermes inference service: KLEOS backend -> HTTPS -> this service (base + Hermes LoRA).
 #
-#   KLEOS Web → KLEOS FastAPI backend → HTTPS → this service
-#                                                   ↓
-#                              Mistral-Nemo base @ pinned revision + Hermes LoRA
+# A model service, not a KLEOS data store: it holds no users, workspaces or
+# conversations and keeps nothing between requests. Enforced here:
+#   * no persistence, so no cross-user or cross-workspace state;
+#   * no tool execution or outbound fetching (the only egress is the Hub at startup);
+#   * prompts and responses are not logged by default;
+#   * no start without an API key;
+#   * generation is serialized (one GPU; a queue is safer than an OOM).
 #
-# Hermes is a MODEL SERVICE, not a second KLEOS data store. It holds no users,
-# workspaces, memories, conversations or documents, and it keeps nothing between
-# requests. KLEOS remains the source of truth for all of that; this process turns
-# messages into one response and forgets them.
-#
-# Consequences that are enforced here rather than left to convention:
-#   * no persistence of any kind, so there is no cross-user or cross-workspace state
-#   * no tool execution and no outbound fetching — the only egress is the Hub, at
-#     startup, for the pinned base weights
-#   * prompts and responses are never logged by default
-#   * the service refuses to start without an API key
-#   * generation is serialized: one GPU cannot do two generates at once, and a
-#     queue is safer than an OOM
-#
-# fastapi is imported inside create_app so this module, and the manifest tooling
-# that shares the package, stay importable without web dependencies installed.
-# ---------------------------------------------------------------------------
+# fastapi is imported inside create_app so the manifest tooling stays importable
+# without web dependencies.
 
 from __future__ import annotations
 
@@ -44,8 +32,7 @@ from kleos_models.serving.manifest import ServingLimits
 
 logger = get_logger("kleos_models.serving.app")
 
-#: Environment variables the service reads. Secrets come from the environment
-#: and never from the manifest, the package or this repository.
+#: Environment variables read by the service; secrets come only from the environment.
 ENV_PACKAGE_DIR = "HERMES_PACKAGE_DIR"
 ENV_API_KEY = "HERMES_API_KEY"
 ENV_DEVICE_MAP = "HERMES_DEVICE_MAP"
@@ -55,9 +42,7 @@ ENV_MAX_INPUT_CHARS = "HERMES_MAX_INPUT_CHARS"
 ENV_ALLOW_UNAUTHENTICATED = "HERMES_ALLOW_UNAUTHENTICATED"
 #: Serving record whose identity the package must match (set by the container).
 ENV_EXPECTED_DEPLOYMENT_CONFIG = "HERMES_EXPECTED_DEPLOYMENT_CONFIG"
-#: Exit the process when the model cannot be loaded, instead of staying up with
-#: /v1/generate returning 503. The container sets it so an orchestrator sees the
-#: failure rather than a live process that will never be ready.
+#: Exit when the model fails to load, rather than serving 503s, so an orchestrator sees it.
 ENV_EXIT_ON_LOAD_FAILURE = "HERMES_EXIT_ON_LOAD_FAILURE"
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
@@ -145,11 +130,6 @@ class ServingSettings:
         )
 
 
-# ---------------------------------------------------------------------------
-# Wire contract
-# ---------------------------------------------------------------------------
-
-
 class GenerateMessage(BaseModel):
     """One conversation turn. Only what the model needs to answer."""
 
@@ -194,12 +174,7 @@ class GenerateResponse(BaseModel):
 
 
 def key_matches(presented: str | None, keys: tuple[str, ...]) -> bool:
-    """Constant-time comparison of a presented key against every configured key.
-
-    Shared by the Docker service (bearer header) and the ZeroGPU Space (custom
-    header). Compares against every key rather than stopping at the first
-    match: short-circuiting would leak through timing which key matched.
-    """
+    """Constant-time comparison of a presented key against every configured key."""
     if not presented:
         return False
     matched = False
@@ -235,13 +210,7 @@ def create_app(
     *,
     deployment: Any | None = None,
 ) -> Any:
-    """Build the FastAPI application.
-
-    Args:
-        settings: Resolved configuration. Read from the environment when omitted.
-        deployment: A pre-loaded (or stubbed) deployment. When given, the model
-            is not loaded from disk — this is how the API tests run without a GPU.
-    """
+    """Build the FastAPI application."""
     try:
         from fastapi import Depends, FastAPI, Header, HTTPException
         from fastapi.responses import JSONResponse
@@ -283,12 +252,8 @@ def create_app(
                     expected_identity=expected,
                 )
             except Exception as exc:
-                # Never answer /v1/generate with an artifact that failed
-                # verification — that is the one outcome this service exists to
-                # prevent. By default the process stays up so /health can say
-                # why; with exit_on_load_failure it exits non-zero instead, so an
-                # orchestrator marks the deploy failed rather than waiting on a
-                # process that will never become ready.
+                # Never serve an unverified artifact. Stay up so /health can say why, unless
+                # exit_on_load_failure asks for a non-zero exit.
                 state["error"] = f"{type(exc).__name__}: {exc}"
                 logger.error("Startup verification failed: %s", state["error"])
                 if settings.exit_on_load_failure:
@@ -307,14 +272,8 @@ def create_app(
         redoc_url=None,
         openapi_url=None,
     )
-    # One generate at a time. A single GPU cannot overlap them, and queueing is
-    # preferable to an out-of-memory kill mid-request.
-    #
-    # A *threading* lock, not an async one, and held inside the worker thread on
-    # purpose. `model.generate` is not interruptible, so a timed-out request is
-    # abandoned by the event loop while its thread runs on. Holding the lock in
-    # the thread means the next request still waits for the GPU to be free
-    # instead of starting a second generation on top of the first.
+    # Serialize generates. A threading lock held in the worker thread, because a timed-out
+    # request's uninterruptible generate keeps running and the next one must wait for it.
     gpu_lock = threading.Semaphore(1)
 
     def _require_auth(authorization: str | None = Header(default=None)) -> None:
@@ -387,7 +346,7 @@ def create_app(
             raise HTTPException(status_code=500, detail="generation failed") from exc
 
         elapsed = time.perf_counter() - started
-        # Structured, and free of prompt or response text by design.
+        # Never prompt or response text.
         logger.info(
             "generate ok request_id=%s messages=%d prompt_tokens=%d completion_tokens=%d "
             "elapsed=%.2fs",

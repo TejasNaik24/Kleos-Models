@@ -1,11 +1,4 @@
-"""The Kaggle notebooks that train and evaluate Logos v0.0.2 (H9).
-
-Kaggle runs them unattended, so a mistake surfaces hours into a 12-hour session
-or not at all. These tests hold what can be checked before then: the files are
-what the builder writes, every code cell is valid Python, every script, flag
-and config they name exists, the paths are the ones H9's config hash was
-computed with, and nothing in them publishes or carries a secret.
-"""
+"""The Kaggle notebooks that train and evaluate Logos v0.0.2 (H9)."""
 
 from __future__ import annotations
 
@@ -172,8 +165,7 @@ class TestNothingLeaves:
 
 class TestResumeGuard:
     def test_an_incomplete_restored_checkpoint_is_set_aside_loudly(self, loaded):
-        # Finding L-F5: a checkpoint without optimizer or scheduler state would
-        # resume with a fresh optimizer and a restarted schedule, silently.
+        # Finding L-F5: without optimizer/scheduler state a resume silently restarts both.
         text = source_of(loaded["logos_v002_train.ipynb"])
         for name in ("optimizer.pt", "scheduler.pt", "trainer_state.json"):
             assert name in text

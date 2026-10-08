@@ -1,9 +1,4 @@
-"""Notebook tests.
-
-Notebooks are the canonical entry point for training, so they get the same
-scrutiny as code: valid JSON, no hard-coded secrets, and references that actually
-resolve to files and flags that exist.
-"""
+"""Notebook tests."""
 
 from __future__ import annotations
 
@@ -133,9 +128,7 @@ class TestReferences:
         assert invocations, "no script invocations found in the training notebook"
 
         for script, flag_text in invocations:
-            # sys.executable, not a hard-coded ".venv/bin/python": CI installs
-            # into the runner's own environment and has no .venv, so the literal
-            # path passes locally and raises FileNotFoundError on every CI run.
+            # sys.executable, not ".venv/bin/python": CI has no .venv.
             help_text = subprocess.run(
                 [sys.executable, str(REPO_ROOT / script), "--help"],
                 capture_output=True,
@@ -156,7 +149,7 @@ class TestTrainingNotebookContent:
         return loaded["02_train_qlora.ipynb"]
 
     def test_it_warns_against_reinstalling_torch(self, training):
-        # Reinstalling torch on Colab breaks CUDA. This must be stated.
+        # Reinstalling torch on Colab breaks CUDA.
         text = source_of(training)
         assert "colab_setup" in text
         assert "torch" in text.lower()
@@ -169,8 +162,7 @@ class TestTrainingNotebookContent:
         assert "--resume-from-checkpoint auto" in source_of(training)
 
     def test_training_and_resume_pin_the_experiment_id(self, training):
-        # A generated id is new on every invocation, so resume would search an
-        # empty directory and silently restart from step 0.
+        # A generated id changes per run, so resume would silently restart from step 0.
         cells = [
             "".join(cell["source"])
             for cell in training["cells"]

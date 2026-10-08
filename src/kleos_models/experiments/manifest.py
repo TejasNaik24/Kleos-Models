@@ -1,18 +1,4 @@
-"""Experiment manifests (spec sections 16, 34, 36, 38).
-
-Every run writes a manifest. Not optionally, and not only on success — a run that
-crashes writes a manifest with ``status="failed"`` and the error recorded.
-
-Spec section 36 is explicit that failed experiments must be recorded rather than
-quietly deleted, because "fine-tuning did not improve performance" is a valid
-result and the record of how it was obtained is what makes it credible.
-
-A manifest identifies a run by everything needed to reproduce it:
-model + dataset version + config hash + seed + code commit + environment, plus the
-model-family details that keep incompatible runs from being pooled.
-
-This module imports no torch.
-"""
+"""Experiment manifests (spec sections 16, 34, 36, 38)."""
 
 from __future__ import annotations
 
@@ -46,7 +32,6 @@ class ExperimentManifest(BaseModel):
 
     model_config = ConfigDict(extra="allow", protected_namespaces=())
 
-    # --- identity ----------------------------------------------------------
     experiment_id: str
     name: str = "kleos-experiment"
     description: str = ""
@@ -56,7 +41,6 @@ class ExperimentManifest(BaseModel):
     kind: str = Field(default="training", description="training | evaluation | comparison")
     status: RunStatus = RunStatus.STARTED
 
-    # --- reproducibility chain ---------------------------------------------
     config_hash: str = ""
     seed: int = 42
     seeding: dict[str, Any] = Field(default_factory=dict)
@@ -66,25 +50,22 @@ class ExperimentManifest(BaseModel):
     dataset_counts: dict[str, int] = Field(default_factory=dict)
     split_strategy: str | None = None
 
-    # --- model identity (spec section 38) ----------------------------------
+    # Model identity, spec section 38.
     model: dict[str, Any] = Field(default_factory=dict)
     lora: dict[str, Any] = Field(default_factory=dict)
     quantization: dict[str, Any] = Field(default_factory=dict)
     reasoning_mode: str | None = None
 
-    # --- run context --------------------------------------------------------
     hardware: dict[str, Any] = Field(default_factory=dict)
     software: dict[str, Any] = Field(default_factory=dict)
     environment: dict[str, Any] = Field(default_factory=dict)
     git: dict[str, Any] = Field(default_factory=dict)
 
-    # --- timings ------------------------------------------------------------
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     started_at: str | None = None
     finished_at: str | None = None
     duration_seconds: float | None = None
 
-    # --- what happened ------------------------------------------------------
     effective_config: dict[str, Any] = Field(default_factory=dict)
     adjustments: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -99,8 +80,6 @@ class ExperimentManifest(BaseModel):
     checkpoints: list[dict[str, Any]] = Field(default_factory=list)
     error: dict[str, Any] | None = None
     notes: list[str] = Field(default_factory=list)
-
-    # -- lifecycle ----------------------------------------------------------
 
     def mark_started(self) -> ExperimentManifest:
         self.started_at = datetime.now(UTC).isoformat()
@@ -168,8 +147,6 @@ class ExperimentManifest(BaseModel):
     def note(self, message: str) -> None:
         self.notes.append(message)
 
-    # -- persistence --------------------------------------------------------
-
     def save(self, directory: Path | str, *, filename: str = MANIFEST_FILENAME) -> Path:
         """Write the manifest, atomically enough to survive an interrupted Colab."""
         target = Path(directory)
@@ -232,12 +209,7 @@ class ExperimentManifest(BaseModel):
 def generate_experiment_id(
     *, name: str = "kleos", model_name: str | None = None, config_hash: str | None = None
 ) -> str:
-    """Build a readable, sortable, unique experiment id.
-
-    Format: ``<name>-<model>-<YYYYmmdd-HHMMSS>-<confighash|random>``. Time-ordered
-    so runs sort chronologically, and carrying the config hash so two runs of the
-    same configuration are visibly related.
-    """
+    """Build a readable, sortable, unique experiment id."""
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     suffix = config_hash[:8] if config_hash else uuid.uuid4().hex[:8]
     parts = [name]
@@ -258,18 +230,7 @@ def build_manifest(
     model_description: dict[str, Any] | None = None,
     root: Path | str | None = None,
 ) -> ExperimentManifest:
-    """Create a manifest pre-populated from an :class:`ExperimentConfig`.
-
-    Args:
-        config: The resolved experiment configuration.
-        kind: ``training``, ``evaluation`` or ``comparison``.
-        experiment_id: Override the generated id.
-        dataset_version: Version string from the dataset manifest.
-        dataset_hash: Content digest of the loaded data.
-        dataset_counts: Per-split counts.
-        model_description: Output of ``ModelFamilyAdapter.describe()``.
-        root: Repository root for git capture.
-    """
+    """Create a manifest pre-populated from an :class:`ExperimentConfig`."""
     from kleos_models.experiments.environment import capture_environment
 
     snapshot = capture_environment(root)

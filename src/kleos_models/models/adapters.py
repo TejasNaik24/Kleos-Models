@@ -1,43 +1,4 @@
-"""Model-family adapters (spec sections 3, 38, 39, 46).
-
-Everything that differs between Qwen and Mistral lives behind this interface.
-The training and evaluation pipelines never branch on model family; the task
-definition, dataset, split and rubric stay identical across families so that a
-Qwen-vs-Mistral comparison measures the model, not the harness.
-
-Why a family abstraction is not optional
-----------------------------------------
-These are real, verified differences between the four supported checkpoints:
-
-======================================  ==========================  ========================
-Checkpoint                              Auto class                  LoRA targeting
-======================================  ==========================  ========================
-Qwen/Qwen3-8B                           AutoModelForCausalLM        attention + MLP
-Qwen/Qwen3-30B-A3B-Thinking-2507        AutoModelForCausalLM        attention only (128 experts)
-mistralai/Mistral-Small-3.2-24B-...     AutoModelForImageTextToText language_model.* only
-mistralai/Ministral-8B-Instruct-2410    AutoModelForCausalLM        attention + MLP
-======================================  ==========================  ========================
-
-Mistral Small 3.2 declares ``Mistral3ForConditionalGeneration`` with
-``model_type: mistral3``, and transformers registers ``mistral3`` **only** in
-``MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES``. ``AutoModelForCausalLM`` cannot
-load it. It is a vision-language model, so LoRA must be scoped to the language
-tower and the vision tower must stay frozen and unquantized.
-
-Qwen3-30B-A3B is a mixture of experts: 48 layers x 128 experts. Targeting
-``mlp.experts.*`` would create roughly 18,000 adapter modules, which is not a
-sensible default. Attention-only targeting is.
-
-Reasoning is a capability, not a prompt hack
---------------------------------------------
-Qwen3-8B accepts ``enable_thinking``; Qwen3-30B-A3B-Thinking-2507 is thinking-only
-and its template does not accept the flag at all; Mistral models have no reasoning
-mode. Requesting an unsupported mode raises rather than silently producing a
-mangled prompt, and we never inject ``<think>`` strings to fake reasoning.
-
-This module imports torch/transformers lazily, inside methods, so it stays
-importable for introspection in the light environment.
-"""
+"""Model-family adapters (spec sections 3, 38, 39, 46)."""
 
 from __future__ import annotations
 
@@ -118,10 +79,8 @@ class TargetModuleResolution:
         }
 
 
-#: Key renames that expose the text tower of a ``mistral3`` (vision-language)
-#: checkpoint as a plain causal LM. Mistral's hub checkpoints use the layout
-#: from before transformers 5 reorganized VLMs: ``language_model.model.*`` and a
-#: separate, untied ``language_model.lm_head.weight``.
+#: Key renames exposing a ``mistral3`` checkpoint's text tower as a plain causal LM.
+#: Hub checkpoints use the pre-transformers-5 VLM layout, with an untied lm_head.
 MISTRAL3_TEXT_KEY_MAPPING: dict[str, str] = {
     r"^language_model\.model\.": "model.",
     r"^language_model\.lm_head\.": "lm_head.",
@@ -132,14 +91,7 @@ MISTRAL3_NON_TEXT_PREFIXES: tuple[str, ...] = ("vision_tower.", "multi_modal_pro
 
 @dataclass(frozen=True)
 class CheckpointView:
-    """How to load one tower of a composite checkpoint as a standalone model.
-
-    Used for KLEOS Logos: the text tower of Ministral 3 14B, whose checkpoint is
-    a vision-language model. The weights come from the official repository at
-    the pinned revision, byte for byte; only their names are mapped, and the
-    vision weights are never loaded. The view is recorded in the manifest so a
-    run always says which tower it trained.
-    """
+    """How to load one tower of a composite checkpoint as a standalone model."""
 
     kind: str
     container_model_type: str
@@ -159,13 +111,7 @@ class CheckpointView:
         }
 
     def validate_loading_info(self, info: Mapping[str, Any]) -> dict[str, Any]:
-        """Refuse a load that did not map every expected weight.
-
-        A missing key would be randomly initialized and a mismatched one
-        reshaped or dropped: either way the model is not the checkpoint, and
-        nothing downstream would notice. The only keys allowed to go unused are
-        the other tower's.
-        """
+        """Refuse a load that did not map every expected weight."""
         missing = sorted(str(k) for k in info.get("missing_keys") or [])
         mismatched = [str(k) for k in info.get("mismatched_keys") or []]
         unexpected = sorted(str(k) for k in info.get("unexpected_keys") or [])
@@ -218,8 +164,6 @@ class ModelFamilyAdapter(ABC):
     def __init__(self, config: ModelConfig) -> None:
         self.config = config
 
-    # -- capability declaration --------------------------------------------
-
     @property
     @abstractmethod
     def capabilities(self) -> ModelCapabilities:
@@ -228,11 +172,7 @@ class ModelFamilyAdapter(ABC):
     @property
     @abstractmethod
     def default_target_modules(self) -> list[str]:
-        """Architecture-appropriate LoRA targets.
-
-        Chosen by inspecting the actual architecture, not copied from a Llama
-        tutorial. They are still validated against the loaded model.
-        """
+        """Architecture-appropriate LoRA targets."""
 
     @property
     def excluded_module_patterns(self) -> list[str]:
@@ -244,14 +184,8 @@ class ModelFamilyAdapter(ABC):
         """Modules kept in full precision when quantizing."""
         return ["lm_head"]
 
-    # -- loading ------------------------------------------------------------
-
     def auto_model_class(self) -> Any:
-        """Return the transformers auto class able to load this checkpoint.
-
-        Raises:
-            ModelCompatibilityError: when the named class does not exist.
-        """
+        """Return the transformers auto class able to load this checkpoint."""
         from kleos_models.compat import require_transformers
 
         transformers = require_transformers()
@@ -279,22 +213,11 @@ class ModelFamilyAdapter(ABC):
         return kwargs
 
     def checkpoint_view(self, hf_config: Any) -> CheckpointView | None:
-        """A view to load when the checkpoint is a container for this family.
-
-        ``None`` (the default) means the checkpoint loads as itself. An adapter
-        overriding this must refuse, not guess, when the container is not the
-        one it knows how to open.
-        """
+        """A view to load when the checkpoint is a container for this family."""
         return None
 
-    # -- reasoning ----------------------------------------------------------
-
     def resolve_reasoning_mode(self, requested: ReasoningMode | None = None) -> ReasoningMode:
-        """Validate a requested reasoning mode against real capability.
-
-        Raises:
-            ModelCompatibilityError: when the checkpoint cannot honour the request.
-        """
+        """Validate a requested reasoning mode against real capability."""
         capability = self.capabilities.reasoning
         mode = requested or self.config.reasoning.default_mode
 
@@ -335,8 +258,6 @@ class ModelFamilyAdapter(ABC):
         """Template kwargs implementing the reasoning mode. Empty by default."""
         return {}
 
-    # -- LoRA targeting -----------------------------------------------------
-
     def resolve_target_modules(self, lora: LoRAConfig) -> list[str]:
         """Config targets, or family defaults when set to ``auto``."""
         if lora.target_modules == "auto":
@@ -350,12 +271,7 @@ class ModelFamilyAdapter(ABC):
         return list(lora.target_modules)
 
     def validate_target_modules(self, model: Any, lora: LoRAConfig) -> TargetModuleResolution:
-        """Check requested targets exist in the loaded model (spec section 46).
-
-        A target that matches nothing produces an adapter that trains nothing, and
-        a loss curve that looks plausible while the model never changes. This
-        turns that silent failure into a hard error.
-        """
+        """Check requested targets exist in the loaded model (spec section 46)."""
         requested = self.resolve_target_modules(lora)
         excluded = [*self.excluded_module_patterns, *lora.exclude_modules]
         prefix = self.capabilities.language_model_prefix
@@ -426,14 +342,8 @@ class ModelFamilyAdapter(ABC):
         """Family-specific adjustments before attaching the adapter."""
         return model
 
-    # -- metadata -----------------------------------------------------------
-
     def describe(self) -> dict[str, Any]:
-        """Manifest-ready description of the model.
-
-        Recorded on every run so results cannot be pooled across incompatible
-        checkpoints (spec section 38).
-        """
+        """Manifest-ready description of the model."""
         capabilities = self.capabilities
         return {
             "name": self.config.name,
@@ -456,11 +366,7 @@ class ModelFamilyAdapter(ABC):
 
 
 def _is_leaf_linear(model: Any, name: str) -> bool:
-    """Whether the named module is a leaf that LoRA can wrap.
-
-    Checks for a ``weight`` attribute with 2 dimensions, which covers ``nn.Linear``
-    and the bitsandbytes 4-bit/8-bit replacements without importing either.
-    """
+    """Whether the named module is a leaf that LoRA can wrap."""
     module = model.get_submodule(name) if hasattr(model, "get_submodule") else None
     if module is None:
         return False
@@ -473,17 +379,8 @@ def _is_leaf_linear(model: Any, name: str) -> bool:
     return len(shape) == 2
 
 
-# ---------------------------------------------------------------------------
-# Qwen dense (Qwen3-8B)
-# ---------------------------------------------------------------------------
-
-
 class QwenDenseAdapter(ModelFamilyAdapter):
-    """Qwen3 dense causal LMs, e.g. ``Qwen/Qwen3-8B``.
-
-    Qwen3 supports switchable thinking through the chat template's
-    ``enable_thinking`` argument.
-    """
+    """Qwen3 dense causal LMs, e.g. ``Qwen/Qwen3-8B``."""
 
     model_types = ("qwen3", "qwen2", "qwen2_5")
     family = "qwen"
@@ -506,8 +403,6 @@ class QwenDenseAdapter(ModelFamilyAdapter):
 
     @property
     def default_target_modules(self) -> list[str]:
-        # Attention projections plus the dense MLP. Standard for Qwen3 dense and
-        # verified against the published architecture.
         return [
             "q_proj",
             "k_proj",
@@ -519,33 +414,12 @@ class QwenDenseAdapter(ModelFamilyAdapter):
         ]
 
     def chat_template_kwargs(self, mode: ReasoningMode) -> dict[str, Any]:
-        # Qwen3's template reads enable_thinking; passing it explicitly keeps the
-        # mode recorded and reproducible rather than relying on a template default.
+        # Explicit, so the mode is recorded rather than left to a template default.
         return {"enable_thinking": mode is ReasoningMode.THINKING}
 
 
-# ---------------------------------------------------------------------------
-# Qwen MoE (Qwen3-30B-A3B-Thinking-2507)
-# ---------------------------------------------------------------------------
-
-
 class QwenMoEAdapter(ModelFamilyAdapter):
-    """Qwen3 mixture-of-experts checkpoints.
-
-    ``Qwen/Qwen3-30B-A3B-Thinking-2507`` has 48 layers and 128 experts with 8
-    active per token. Two consequences drive this adapter:
-
-    1. **LoRA targets attention only.** Adapting ``mlp.experts.*`` would create
-       roughly 48 x 128 x 3 = 18,432 adapter modules. Beyond being impractical,
-       each expert sees only a fraction of tokens, so per-expert adapters train on
-       very little data.
-    2. **The router must never be adapted or quantized.** Perturbing ``mlp.gate``
-       changes expert routing, which destabilizes training in a way that is hard
-       to attribute.
-
-    It is also thinking-only: the template always opens ``<think>`` and does not
-    accept ``enable_thinking``.
-    """
+    """Qwen3 mixture-of-experts checkpoints."""
 
     model_types = ("qwen3_moe",)
     family = "qwen"
@@ -586,36 +460,16 @@ class QwenMoEAdapter(ModelFamilyAdapter):
 
     @property
     def modules_to_not_quantize(self) -> list[str]:
-        # Quantizing the router degrades routing decisions disproportionately to
-        # the memory it saves.
+        # Quantizing the router costs routing quality far beyond the memory saved.
         return ["lm_head", "mlp.gate"]
 
     def chat_template_kwargs(self, mode: ReasoningMode) -> dict[str, Any]:
-        # Passing enable_thinking to a Thinking-2507 template is an error, not a
-        # no-op. The mode is implicit in the checkpoint.
+        # Passing enable_thinking to this template is an error, not a no-op.
         return {}
 
 
-# ---------------------------------------------------------------------------
-# Mistral dense (Ministral-8B)
-# ---------------------------------------------------------------------------
-
-
 class MistralDenseAdapter(ModelFamilyAdapter):
-    """Text-only Mistral causal LMs, e.g. ``mistralai/Ministral-8B-Instruct-2410``.
-
-    This is the scale-matched counterpart to Qwen3-8B: comparing an 8B Qwen
-    against a 24B multimodal Mistral confounds family with scale and modality.
-
-    ``ministral`` is registered alongside ``mistral`` because transformers gave
-    Ministral its own ``model_type`` (it uses interleaved sliding-window
-    attention, where classic Mistral does not). transformers 4.x reports these
-    checkpoints as ``mistral`` and 5.x reports ``ministral``, and the loader
-    trusts whatever the checkpoint says — so both have to resolve here or the
-    same config breaks on a version bump. The distinction does not affect
-    adapter placement: the projection names are identical, so the LoRA targets
-    below are correct for both.
-    """
+    """Text-only Mistral causal LMs, e.g. ``mistralai/Ministral-8B-Instruct-2410``."""
 
     model_types = ("mistral", "ministral")
     family = "mistral"
@@ -651,38 +505,8 @@ class MistralDenseAdapter(ModelFamilyAdapter):
         ]
 
 
-# ---------------------------------------------------------------------------
-# Mistral 3 vision-language (Mistral-Small-3.2-24B)
-# ---------------------------------------------------------------------------
-
-
 class Mistral3VLMAdapter(ModelFamilyAdapter):
-    """``Mistral3ForConditionalGeneration`` checkpoints (``model_type: mistral3``).
-
-    ``mistralai/Mistral-Small-3.2-24B-Instruct-2506`` is a vision-language model:
-    a 40-layer text tower plus a 24-layer vision tower behind a projector.
-
-    Two things follow, and both are easy to get wrong:
-
-    * ``AutoModelForCausalLM`` **cannot load it**. In transformers, ``mistral3``
-      is registered only in ``MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES``.
-      Loading must go through ``AutoModelForImageTextToText``.
-    * LoRA must be scoped to ``language_model.*``. Adapting the vision tower while
-      training on text-only KLEOS data would update parameters that receive no
-      meaningful gradient signal and inflate the adapter for no benefit.
-
-    KLEOS training data is text-only, so the vision tower is frozen and left
-    unquantized.
-
-    **Known issue (finding L-F1, docs/logos.md), not fixed:** on transformers 5
-    both scoping mechanisms miss. Target validation requires names that *start
-    with* ``language_model``, but transformers 5 names them
-    ``model.language_model.*``, so attaching LoRA raises. And PEFT reads the
-    ``exclude_modules`` list by exact name or ``.suffix``, so ``"vision_tower"``
-    excludes none of the projections inside the tower. No KLEOS run uses this
-    adapter; ``tests/test_vlm_targeting_finding.py`` holds both as strict xfails.
-    Logos loads its ``mistral3`` checkpoint through ``Ministral3TextAdapter``.
-    """
+    """``Mistral3ForConditionalGeneration`` checkpoints (``model_type: mistral3``)."""
 
     model_types = ("mistral3",)
     family = "mistral"
@@ -733,17 +557,11 @@ class Mistral3VLMAdapter(ModelFamilyAdapter):
 
     @property
     def modules_to_not_quantize(self) -> list[str]:
-        # Quantizing a tower that is never trained and (for text-only data) never
-        # even used buys nothing and risks load-time errors.
+        # Never trained or used on text data; quantizing it only risks load errors.
         return ["lm_head", "vision_tower", "multi_modal_projector"]
 
     def prepare_model_for_training(self, model: Any) -> Any:
-        """Freeze the vision tower and projector explicitly.
-
-        PEFT already freezes everything outside the adapter, but making this
-        explicit means a misconfigured ``modules_to_save`` cannot silently start
-        training a 24-layer vision encoder.
-        """
+        """Freeze the vision tower and projector explicitly."""
         frozen = 0
         for name, parameter in model.named_parameters():
             if any(fragment in name for fragment in ("vision_tower", "multi_modal_projector")):
@@ -758,27 +576,8 @@ class Mistral3VLMAdapter(ModelFamilyAdapter):
         return model
 
 
-# ---------------------------------------------------------------------------
-# Ministral 3 text tower (KLEOS Logos)
-# ---------------------------------------------------------------------------
-
-
 class Ministral3TextAdapter(ModelFamilyAdapter):
-    """The text tower of a Ministral 3 checkpoint, loaded as a plain causal LM.
-
-    ``mistralai/Ministral-3-14B-Instruct-2512-BF16`` is published as a
-    vision-language model (``Mistral3ForConditionalGeneration``, model_type
-    ``mistral3``) whose text tower is ``ministral3``: 40 layers x 5120, the
-    same shape as Mistral-Nemo with a wider MLP. KLEOS is text-only, and the
-    0.44B-parameter vision tower would cost roughly 0.9 GB on a 16 GB T4 that
-    has less than 1 GB to spare. So Logos loads *only* the text tower, as
-    ``Ministral3ForCausalLM``: the same weights, renamed on load, with the
-    vision weights left on disk.
-
-    A config selects this view by stating ``model_type: ministral3`` for a
-    checkpoint that reports ``mistral3``. An adapter trained on this view binds
-    to ``model.layers.*`` names and must be served through the same view.
-    """
+    """The text tower of a Ministral 3 checkpoint, loaded as a plain causal LM."""
 
     model_types = ("ministral3",)
     family = "mistral"
@@ -816,8 +615,7 @@ class Ministral3TextAdapter(ModelFamilyAdapter):
 
     @property
     def excluded_module_patterns(self) -> list[str]:
-        # Defensive: the view loads no vision modules, and if one ever appeared
-        # it must not receive an adapter.
+        # Defensive: the view loads no vision modules, but one must never get an adapter.
         return [*super().excluded_module_patterns, "vision_tower", "multi_modal_projector"]
 
     def checkpoint_view(self, hf_config: Any) -> CheckpointView | None:
@@ -864,9 +662,7 @@ class Ministral3TextAdapter(ModelFamilyAdapter):
             hf_config, "torch_dtype", None
         )
         if getattr(text, "dtype", None) is None and container_dtype is not None:
-            # The container states the weights' dtype; a sub-config usually
-            # does not. Carry it over so 'auto' dtype means what it means for
-            # the full checkpoint.
+            # Sub-configs rarely state dtype; inherit the container's so 'auto' matches.
             text.dtype = container_dtype
             inherited = str(container_dtype).replace("torch.", "")
 
@@ -897,21 +693,8 @@ class Ministral3TextAdapter(ModelFamilyAdapter):
         return model
 
 
-# ---------------------------------------------------------------------------
-# Registry
 class Ministral3ReasoningTextAdapter(Ministral3TextAdapter):
-    """The text tower of Ministral 3 *Reasoning*: the same view, always thinking.
-
-    ``mistralai/Ministral-3-14B-Reasoning-2512`` has the Instruct release's
-    architecture and text-tower shape, so it opens through the same text-only
-    view and takes the same LoRA targets. It differs in behaviour: it writes
-    ``[THINK]...[/THINK]`` before every answer. Its chat template renders an
-    assistant message's ``reasoning`` field as that span, which is how KLEOS
-    Logos v0.0.2 is trained on policy-derived traces (schema 1.1).
-
-    Selected by ``model_type: ministral3_reasoning``, a selector like
-    ``ministral3`` (the checkpoint itself reports ``mistral3``).
-    """
+    """The text tower of Ministral 3 *Reasoning*: the same view, always thinking."""
 
     model_types = ("ministral3_reasoning",)
 
@@ -931,8 +714,6 @@ class Ministral3ReasoningTextAdapter(Ministral3TextAdapter):
         )
 
 
-# ---------------------------------------------------------------------------
-
 #: Concrete adapters, in resolution order.
 _ADAPTER_CLASSES: tuple[type[ModelFamilyAdapter], ...] = (
     QwenMoEAdapter,
@@ -950,22 +731,14 @@ ADAPTER_REGISTRY: dict[str, type[ModelFamilyAdapter]] = {
 
 
 def register_adapter(cls: type[ModelFamilyAdapter]) -> type[ModelFamilyAdapter]:
-    """Register a new family adapter.
-
-    Adding a model family should require a config plus an adapter, never a change
-    to the training pipeline (spec section 3).
-    """
+    """Register a new family adapter."""
     for model_type in cls.model_types:
         ADAPTER_REGISTRY[model_type] = cls
     return cls
 
 
 def _infer_model_type(config: ModelConfig) -> str:
-    """Best-effort ``model_type`` when the config does not state one.
-
-    Prefers the explicit field. Falls back to checkpoint-name heuristics so
-    ``scripts/inspect_model.py --model <id>`` works without a config file.
-    """
+    """Best-effort ``model_type`` when the config does not state one."""
     if config.model_type:
         return config.model_type
 
@@ -991,11 +764,7 @@ def _infer_model_type(config: ModelConfig) -> str:
 
 
 def get_adapter(config: ModelConfig) -> ModelFamilyAdapter:
-    """Resolve the family adapter for a model configuration.
-
-    Raises:
-        ModelCompatibilityError: when no adapter handles the model type.
-    """
+    """Resolve the family adapter for a model configuration."""
     model_type = _infer_model_type(config)
     adapter_class = ADAPTER_REGISTRY.get(model_type)
 
@@ -1017,8 +786,7 @@ def get_adapter(config: ModelConfig) -> ModelFamilyAdapter:
 
     adapter = adapter_class(config)
 
-    # A config claiming a family the adapter disagrees with usually means the
-    # wrong checkpoint was pasted in. Catch it before a multi-hour run.
+    # A family mismatch usually means the wrong checkpoint; catch it before a long run.
     if config.family and config.family != adapter.family:
         raise ModelCompatibilityError(
             f"Config declares family={config.family!r} but {config.base_model!r} "
@@ -1044,15 +812,7 @@ class LoadPlan:
 
 
 def resolve_load_plan(config: ModelConfig, hf_config: Any) -> LoadPlan:
-    """Decide how to load ``config`` given the checkpoint's reported config.
-
-    Normally the checkpoint is the authority: a config whose ``model_type``
-    disagrees with the checkpoint is corrected, with a warning. That is how the
-    same Ministral-8B config survives transformers 4.x reporting ``mistral``
-    and 5.x ``ministral``. The one exception is a deliberate view: when the
-    configured adapter knows how to open the reported container (``ministral3``
-    over a ``mistral3`` checkpoint), the config is kept and the view is used.
-    """
+    """Decide how to load ``config`` given the checkpoint's reported config."""
     reported = getattr(hf_config, "model_type", None)
     if reported and config.model_type and reported != config.model_type:
         try:
@@ -1078,12 +838,7 @@ def resolve_load_plan(config: ModelConfig, hf_config: Any) -> LoadPlan:
 
 
 def resolve_adapter_from_hf_config(hf_config: Any, config: ModelConfig) -> ModelFamilyAdapter:
-    """Resolve an adapter using a downloaded HF config as the authority.
-
-    Preferred over :func:`get_adapter` once the checkpoint's real config is
-    available, because it removes all guesswork about the architecture. A
-    deliberate view (see :func:`resolve_load_plan`) keeps the configured adapter.
-    """
+    """Resolve an adapter using a downloaded HF config as the authority."""
     architectures = list(getattr(hf_config, "architectures", None) or [])
     plan = resolve_load_plan(config, hf_config)
     if plan.view is not None:

@@ -1,11 +1,4 @@
-"""The Logos v0.0.2 Space: its own folder, staged from its own record.
-
-The Hermes Space folder and its tests (tests/test_zerogpu_space.py) are not
-touched. What is pinned here: the Logos Space stages exactly its four files,
-bakes in the Ministral 3 Reasoning shards at the pinned revision (and refuses
-Hermes' Nemo shards), reads `logos_record.yaml`, and wires the profile into the
-service, the settings and the GPU duration.
-"""
+"""The Logos v0.0.2 Space: its own folder, staged from its own record."""
 
 from __future__ import annotations
 
