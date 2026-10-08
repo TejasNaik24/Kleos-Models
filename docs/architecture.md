@@ -274,7 +274,7 @@ documents the request and reply contract.
 
 - **No Supabase.** Training consumes exported, versioned dataset artifacts. The
   research pipeline never touches production infrastructure.
-- **No dependency on the private data repository.** It produces a directory; this
+- **No dependency on [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data).** It produces a directory; this
   code consumes a path.
 - **No automatic publishing.** Uploading requires an explicit command and passes
   an allowlist plus a content scan ([publishing.md](publishing.md)).

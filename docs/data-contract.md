@@ -276,9 +276,9 @@ Checks: schema, duplicate ids, coverage gaps, quality status, placeholder text,
 sensitive-content patterns, policy-versus-fact phrasing, length against
 `max_seq_length`, and leakage across splits.
 
-## Consuming the private dataset
+## Consuming a dataset release
 
-The private `kleos-training-data` repository produces a release directory:
+The [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data) repository produces a release directory:
 
 ```
 <path to release>/

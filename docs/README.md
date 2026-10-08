@@ -96,7 +96,7 @@ The configuration files are described beside them, in
 | [runbooks/logos-v001-colab.md](runbooks/logos-v001-colab.md) | Runbook | Training and evaluating Logos v0.0.1 on Colab, as run for H8 |
 | [runbooks/logos-v002-kaggle.md](runbooks/logos-v002-kaggle.md) | Runbook | Training and evaluating Logos v0.0.2 on Kaggle, and the H9 comparison commands |
 | [publishing.md](publishing.md) | Reference | Base-model pins and licenses; publishing a public adapter compared with uploading a private deployment package |
-| [privacy.md](privacy.md) | Policy | The public/private boundary: what may be committed and what stays in the private data repository |
+| [privacy.md](privacy.md) | Policy | The public/private boundary: what may be committed and what stays in private storage |
 | [datasets/kleos-policy-v0.0.7-repair-spec.md](datasets/kleos-policy-v0.0.7-repair-spec.md) | Record | Requirements for the v0.0.7 data release, written from the audit of v0.0.6, with a status note on what shipped |
 | [SECURITY.md](../SECURITY.md) | Policy | Reporting a vulnerability, accidental data exposure, secrets handling and automated checks |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | Project | Setup, checks, design constraints, adding a model family or a grader, generated artifacts and the pull-request checklist |

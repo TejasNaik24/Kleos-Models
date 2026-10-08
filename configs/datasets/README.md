@@ -5,7 +5,7 @@
 | `example.yaml` | The synthetic development fixtures in `data/examples/` | `debug.yaml`, `qlora_small.yaml`, tests and CI |
 | `kleos_policy_v006.yaml` | The sealed `kleos-policy-v0.0.6` release, consumed pre-split | Ministral-8B, KLEOS Hermes, KLEOS Logos v0.0.1 |
 | `kleos_policy_v007.yaml` | The sealed `kleos-policy-v0.0.7` release, consumed pre-split | KLEOS Logos v0.0.2 |
-| `private_artifact.yaml` | Template for any release exported by the private `kleos-training-data` repository | A starting point for new releases |
+| `private_artifact.yaml` | Template for any release exported by [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data) | A starting point for new releases |
 
 ## `example.yaml`
 
@@ -16,7 +16,7 @@ them describe the pipeline, not KLEOS.
 
 ## `private_artifact.yaml`
 
-Template for consuming a release produced by the private `kleos-training-data`
+Template for consuming a release produced by the [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data)
 repository, which exports:
 
 ```

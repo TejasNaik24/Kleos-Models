@@ -22,6 +22,7 @@ Behavioral fine-tuning and pre-registered evaluation of open-weight models for K
 - **What:** the data contract, QLoRA training pipeline, pre-registered evaluation harness and serving stack behind two KLEOS models, both fine-tuned from Mistral AI open-weight bases.
 - **Fine-tuning:** KLEOS Hermes (Mistral-Nemo 12B) raised the KLEOS policy score from 0.4755 (the same base with prompt-engineered orchestration) to 0.8051, with all 7 tasks improved (p < 0.001, 349 held-out items).
 - **Head-to-head:** KLEOS Logos v0.0.2 (Ministral 3 14B Reasoning, trained to write a policy-derived reasoning trace before it answers) is measurably better than Hermes on the pre-registered answerable subset: +0.0409, cluster 95% CI +0.0040 to +0.0780.
+- **Data:** every training example is synthetic, built by the companion pipeline [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data); its releases are sealed, content-hashed and rebuild byte for byte.
 - **Cost:** $0. Trained on free Colab and Kaggle T4 GPUs, served from free Hugging Face ZeroGPU Spaces.
 - **Caveats:** one training seed per model, so training noise sits outside every interval; and every answer is prose, never JSON (`format_valid` 0.0 for every model).
 
@@ -44,13 +45,14 @@ Built by Tejas Naik.
 - [Contributing and security](#contributing-and-security)
 - [Citation](#citation)
 - [License](#license)
+- [Related projects](#related-projects)
 - [Acknowledgements](#acknowledgements)
 
 ## Overview
 
-KLEOS is an AI operating system for computer science students. Its models make judgment calls on the student's behalf: which notification matters, which context to surface, what to recommend, how to resolve two memories that disagree, which tool a request needs, how to reason across workspaces, what goes in a briefing, and when to decline for lack of evidence.
+KLEOS is an AI operating system for computer science students, live at [kleos-cs.vercel.app](https://kleos-cs.vercel.app). Its models make judgment calls on the student's behalf: which notification matters, which context to surface, what to recommend, how to resolve two memories that disagree, which tool a request needs, how to reason across workspaces, what goes in a briefing, and when to decline for lack of evidence.
 
-This repository holds everything on the model side of that system: the dataset contract and validators, the training pipeline, the evaluation harness, the experiment record, and the code that packages and serves a trained adapter. It does not hold the KLEOS application, the research dataset (a private repository produces sealed releases that this code consumes by path) or any model weights. The bundled examples in `data/examples/` are synthetic development fixtures. The public/private boundary is defined in [docs/privacy.md](docs/privacy.md).
+This repository holds everything on the model side of that system: the dataset contract and validators, the training pipeline, the evaluation harness, the experiment record, and the code that packages and serves a trained adapter. It does not hold the KLEOS application, the research dataset or any model weights. The dataset is built by the companion repository [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data): every example is generated from a scenario with fictional entities and every answer is computed from an explicit decision policy, and each sealed release is consumed here as a directory path. The bundled examples in `data/examples/` are synthetic development fixtures. The public/private boundary is defined in [docs/privacy.md](docs/privacy.md).
 
 ## Research question and design
 
@@ -117,7 +119,7 @@ Both adapters are served from private package repositories and are not published
 
 ```mermaid
 flowchart LR
-    A["Sealed dataset release<br/>(private repository)"] --> B["Validate<br/>schema, coverage, leakage"]
+    A["Sealed dataset release<br/>(Kleos-Training-Data)"] --> B["Validate<br/>schema, coverage, leakage"]
     B --> C["Format<br/>chat template, assistant-only loss"]
     C --> D["Train<br/>QLoRA on a pinned base"]
     D --> E["Run manifest<br/>config_hash, dataset hash, commit"]
@@ -154,7 +156,7 @@ flowchart LR
 
 **Benchmark.** 349 items built from the sealed test split by `scripts/build_benchmark.py`, covering seven tasks: 271 answerable and 78 should-decline. The split strategy is `format_holdout` (the JSON input format never appears in training). Test scenarios come from the same families as training; only the input format is held out, so the benchmark measures transfer across format, not to new scenarios (deviation D2). The items form 78 groups (`group_id`) of logically equivalent perturbations of one case. The `kleos_policy` grader scores ranking, deciding factor and confidence together and reports `format_valid` separately, outside the score. From H8 on, intervals come from a paired cluster bootstrap by `group_id` (2,000 resamples, 95%).
 
-**Data.** kleos-policy-v0.0.6 has 820 training, 181 validation and 349 test examples. kleos-policy-v0.0.7 adds a policy-derived reasoning trace and a "What decided it" line to the training and validation answers, and trains the four decline labels that v0.0.6 lacks; its `test.jsonl` is byte-identical to v0.0.6's. Both releases are private and sealed. Details: [docs/training.md](docs/training.md), [docs/evaluation.md](docs/evaluation.md), [docs/data-contract.md](docs/data-contract.md).
+**Data.** kleos-policy-v0.0.6 has 820 training, 181 validation and 349 test examples. kleos-policy-v0.0.7 adds a policy-derived reasoning trace and a "What decided it" line to the training and validation answers, and trains the four decline labels that v0.0.6 lacks; its `test.jsonl` is byte-identical to v0.0.6's. Both releases are sealed and content-hashed (v0.0.6 `3cc9a744…`, v0.0.7 `b53afa42…`); the [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data) pipeline rebuilds them byte for byte with `make slice`. Details: [docs/training.md](docs/training.md), [docs/evaluation.md](docs/evaluation.md), [docs/data-contract.md](docs/data-contract.md).
 
 ## Tech stack
 
@@ -224,8 +226,8 @@ python scripts/compare.py --cross-model --base hermes_arm2.json --finetuned logo
 ## Reproducing the results
 
 - **Anyone** can run the 1,638 tests, run the harness on the fixtures, and check that the training configs still resolve to the recorded `config_hash` values (`tests/test_logos_config.py` and `tests/test_logos_v002_config.py` pin Hermes, Logos v0.0.1 and Logos v0.0.2). The run reports record the hash chain from the benchmark file to each results file, adapter and deployment package.
-- **Holders of a release** can retrain and re-evaluate with the runbooks: [Logos v0.0.1 on Colab](docs/runbooks/logos-v001-colab.md), [Logos v0.0.2 on Kaggle](docs/runbooks/logos-v002-kaggle.md), and deployment to ZeroGPU for [Hermes](docs/runbooks/deploy-hermes-zerogpu.md) and [Logos](docs/runbooks/deploy-logos-zerogpu.md).
-- **No one outside the project** can reproduce the scores from this repository alone: the kleos-policy releases are private, and the adapters are not published.
+- **Anyone who rebuilds a release** with the companion pipeline ([Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data), `make slice-clean slice`, which reproduces v0.0.7's content hash `b53afa42…`) can retrain and re-evaluate with the runbooks: [Logos v0.0.1 on Colab](docs/runbooks/logos-v001-colab.md), [Logos v0.0.2 on Kaggle](docs/runbooks/logos-v002-kaggle.md), and deployment to ZeroGPU for [Hermes](docs/runbooks/deploy-hermes-zerogpu.md) and [Logos](docs/runbooks/deploy-logos-zerogpu.md).
+- **The trained adapters are not published**, so the exact served weights cannot be re-derived without retraining; a retrained adapter is a new run with its own seed noise, not a bit-for-bit copy.
 
 Every run writes a manifest with the experiment id, `config_hash`, seed, dataset version and hash, split strategy, model and revision, LoRA and quantization settings, hardware, library versions, git commit and dirty flag, checkpoints, metrics and status. Failed runs are recorded as `status: failed`. Automatic configuration changes go into `adjustments[]`, and `training.strict_config: true` turns any of them into an error.
 
@@ -333,6 +335,11 @@ The code is MIT-licensed ([LICENSE](LICENSE)), and so are the synthetic fixtures
 | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | A config only; never trained | Apache-2.0 |
 
 Redistributing a derivative of an Apache-2.0 base requires attribution and a statement of modification.
+
+## Related projects
+
+- [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data): the pipeline that generates, screens and seals the synthetic datasets these models are trained and evaluated on.
+- [KLEOS](https://kleos-cs.vercel.app): the AI operating system for computer science students that Hermes and Logos serve.
 
 ## Acknowledgements
 

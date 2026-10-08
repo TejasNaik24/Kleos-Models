@@ -21,7 +21,7 @@ A real export dropped in as `data/my_export.jsonl`, `data/memories.json` or
 `tests/test_gitignore.py` verifies this against real git behavior, so the
 guarantee cannot quietly regress.
 
-Real training data belongs in the separate private repository and is consumed by
+Real training data is built by [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data), kept in private storage, and consumed by
 path, never copied here. See [../docs/privacy.md](../docs/privacy.md).
 
 ## `examples/` is not the research dataset
@@ -51,7 +51,7 @@ python scripts/prepare_dataset.py --emit-schemas
 
 ## Using the real dataset
 
-The private `kleos-training-data` repository produces a versioned release. Point
+The [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data) pipeline produces a versioned release. Point
 at it by path, anywhere on disk outside this repository:
 
 ```bash

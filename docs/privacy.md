@@ -5,7 +5,7 @@ the single statement of that rule; other documents link here.
 
 ## What lives where
 
-| This public repository | The private `kleos-training-data` repository and private storage |
+| This public repository | Private storage, outside this repository and [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data) |
 | --- | --- |
 | Code, schemas, configs | Raw conversations and memory records |
 | Synthetic development fixtures | Sanitized real examples |
@@ -31,7 +31,7 @@ placeholder paths such as `<private storage>/outputs/<experiment-id>/`.
 
 ## The boundary in practice
 
-The private repository produces a versioned release directory:
+The [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data) pipeline produces a versioned release directory, kept in private storage outside both repositories:
 
 ```
 <path to release>/

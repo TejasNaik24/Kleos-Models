@@ -326,7 +326,7 @@ cost is that v0.0.6's limits cap Logos as they cap Hermes:
   evidence, which is the shortcut both Hermes and Ministral-8B learned.
 - The test split is 100% JSON-formatted inputs, a format no training example uses.
 
-The repair belongs upstream, in the private data repository. The
+The repair belongs upstream, in [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data). The
 [v0.0.7 repair specification](datasets/kleos-policy-v0.0.7-repair-spec.md) keeps
 `test.jsonl` byte-identical, so every v0.0.7 result stays comparable with every
 v0.0.6 number. Logos v0.0.2 trains on `kleos-policy-v0.0.7` (RELEASE.lock content
