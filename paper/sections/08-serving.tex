@@ -1,0 +1,43 @@
+\section{Serving as a product component}\label{sec:serving}
+
+\paragraph{Packages and pins.}
+% source: SVR:12-18, 34; DEP:178-186; KMC/deployment/kleos_logos_v002.yaml:19-23; HER:483-488 (H-F1).
+Each served model is a deployment package: the adapter weights, the tokenizer files and a manifest that pins the base checkpoint to a commit and records the adapter's SHA-256 (\code{dc121fa3\ldots} for Hermes, the frozen step-200 weights; \code{e49724f6\ldots} for Logos v0.0.2, the step-175 weights). The research copy of Hermes' adapter configuration recorded no revision (finding H-F1); the package copy pins \code{04d8a905\ldots}, and every later adapter records its revision at training time. Packages live in private model repositories and are read by the serving host at startup. The serving code loads the base in NF4 with float16 compute, applies the adapter and decodes greedily with the evaluated budget (512 tokens for Hermes, 1,024 for Logos v0.0.2), so that the served model is the evaluated model and its outputs can be checked against the frozen evaluation byte for byte. The reply carries the answer (\code{text}) and, for Logos v0.0.2 under the version-2 contract, the trace (\code{reasoning}), which the \kleos{} application shows under ``How Logos decided.''
+
+\paragraph{The free GPU host.}
+% source: SVR:89-98; DEP:182, 781-806; HMD:186-188; LMD:467-469; huggingface2026zerogpu.
+Both models run on Hugging Face Spaces ZeroGPU \citep{huggingface2026zerogpu}, which allocates half of an NVIDIA RTX Pro 6000 Blackwell (48\,GB, compute capability 12.0) for the duration of a call. A free account has 5 minutes of GPU time per day, charged to the calling account and reset 24 hours after that account's first use; a call is admitted only while 1.5 times its requested duration remains, and it waits up to 60\,s for a GPU. Each call requests
+\begin{equation}
+\min\bigl(\max(\lceil 10 + \text{max\_new\_tokens} / 12 \rceil,\, 15),\, 60\bigr) \text{ seconds},
+\end{equation}
+with the constants exposed as Space variables: 53\,s for Hermes and 60\,s for Logos v0.0.2 (the rule gives 96\,s at 1,024 tokens, capped at 60), so admission needs 80\,s and 90\,s of remaining quota respectively. The record estimates roughly 20 to 30 Hermes answers a day and about 9 Logos v0.0.2 answers per fresh daily window; raising its cap to request the full budget's worth of time would cut that to about 5 (all three estimated). A Logos v0.0.2 answer that loops runs out of its 60\,s, is aborted and is reported to the application as a model error, which the application treats like a cut answer.
+
+\paragraph{Reproduction checks.}
+% source: Hermes SVR:12-18, 34, 70-71, 102-137; Logos SVR:143-208.
+Hermes was checked twice on 2026-09-23. On a Colab T4 the package reproduced 9 of 9 frozen evaluation outputs byte for byte (one prompt from each of the seven tasks plus two should-decline items); the record calls this a reproducibility result, not a score. On ZeroGPU, on different hardware, the same 9 of 9 reproduced byte for byte, 9 of 9 prompt token counts matched and a repeated call returned an identical answer. Logos v0.0.2 was deployed on 2026-10-07 and checked over two daily quota windows, because the first day's window, already partly used before the test, admitted only 7 of the 9 prompts: on day 1 the quota admitted 7 of the 9 prompts, of which 6 reproduced exactly, with prompt tokens equal on all 7; on day 2 the remaining 2 reproduced exactly. In total 8 of 9 answers and traces are identical, prompt tokens match on 9 of 9 and the decisions agree on 8 of 9 (Table~\ref{tab:serving}). The divergent item is an answerable briefing case. Its trace is identical for 568 of its 761 characters; then one sentence goes another way (``Startup has\ldots'' where the evaluation wrote ``Startup is the active workspace\ldots''). The answer declines and asks before looking in another workspace (label \code{ask\_before\_crossing}), where the evaluation had ranked the three items in the active workspace (label \code{scope}, scored 1.0). The record's diagnosis is GPU arithmetic, not setup: the same weights, prompt and decoding rule on a different GPU with float16 rounding. The recorded decision (2026-10-07) was to accept and document: Logos v0.0.2 is served as a Beta, and claims about it say that it measured better than Hermes on the benchmark, not that the live Space reproduces that score. Re-measuring the full benchmark on the Space would take over five weeks at about 9 answers a day (estimated). Appendix~\ref{app:serving} keeps the host facts and the day-by-day smoke record.
+
+% source: SVR:102-116, 131-137, 150-152, 178-195; DEP:793-794; HMD:186-188; LMD:467-469.
+\begin{table}[t]
+\centering\small
+\caption{Serving measurements on ZeroGPU. Hermes figures are medians over 10 calls on 2026-09-23 with answers of 69 to 128 tokens; Logos figures are from the two-day smoke test of 2026-10-07. ``Estimated'' rows follow the admission rule, not a measurement. Source: \code{docs/experiments/serving-verification-records.md}.}
+\label{tab:serving}
+\begin{tabular}{L{56mm}L{44mm}L{52mm}}
+\toprule
+Measure & \hermes{} v0.0.6 & \logos{} v0.0.2 \\
+\midrule
+Generation speed & about 12 tokens/s, cold and warm & 11.0 tokens/s warm, 10.9 cold \\
+Warm call, median & 7.9\,s (0.15\,s to obtain a GPU) & 19.7\,s (19.4\,s generating) \\
+Cold call, median & 12.9\,s (4.1\,s to obtain a GPU); slowest 34\,s & 29.9\,s (5.5\,s to obtain a GPU) \\
+GPU seconds per answer & 7 to 13 & 24 to 26 (217.8 to 232.3 for 9 answers) \\
+Peak GPU memory & 8.34\,GiB & 8.86\,GiB \\
+Startup: package download / base load and quantization & 2\,s / 41\,s (363 weights) & 1.9\,s / 57.1\,s \\
+Reproduction of the frozen evaluation & 9 of 9 (Colab T4) and 9 of 9 (ZeroGPU), byte for byte & 8 of 9 over two quota windows; prompt tokens 9 of 9 \\
+Requested GPU duration / quota needed for admission & 53\,s / 80\,s & 60\,s / 90\,s \\
+Answers per day on a free account (estimated) & 20 to 30 & about 9 per fresh window \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Container.}
+% source: SVR:39-61.
+A Docker image for Hermes was built (6.31\,GB, \code{linux/amd64}) from an allowlisted build context of 57 files, and 257 CPU-side tests passed inside it; it has not been run on a GPU host and is not part of the verified serving path.

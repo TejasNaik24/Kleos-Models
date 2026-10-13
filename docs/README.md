@@ -17,11 +17,13 @@ which to read them for a given purpose.
 
 ### Results
 
-1. The results tables in the [README](../README.md).
-2. [experiments.md](experiments.md): the status of hypotheses H1 to H9, each
+1. The [research paper](../paper/kleos-decision-policy.pdf), which collects every
+   finding with its sources (LaTeX source in [paper/](../paper/)).
+2. The results tables in the [README](../README.md).
+3. [experiments.md](experiments.md): the status of hypotheses H1 to H9, each
    result beside its decision rule, and the deviations log.
-3. The model pages: [KLEOS Hermes](hermes.md) and [KLEOS Logos](logos.md).
-4. The run reports in [experiments/](experiments/README.md) for the measurements
+4. The model pages: [KLEOS Hermes](hermes.md) and [KLEOS Logos](logos.md).
+5. The run reports in [experiments/](experiments/README.md) for the measurements
    behind each number.
 
 ### Run the pipeline
@@ -72,6 +74,7 @@ The configuration files are described beside them, in
 | Page | Kind | Purpose |
 | --- | --- | --- |
 | [README](../README.md) | Overview | What the repository is, results, models, method, quickstart, limitations and citation |
+| [paper/kleos-decision-policy.pdf](../paper/kleos-decision-policy.pdf) | Paper | The research paper: the data and its policy, the recipe and runs, the pre-registered protocol, results, analysis, serving, limitations and reproducibility; LaTeX source in [paper/](../paper/) |
 | [hermes.md](hermes.md) | Model | KLEOS Hermes v0.0.6: base and pins, recipe, the H1 replication, consistency and abstention, serving status and limitations |
 | [logos.md](logos.md) | Model | The KLEOS Logos line: v0.0.1 (research only) and v0.0.2 (served as Beta), the choice of Ministral 3, measured fits, H8 and H9 in brief, serving and limitations |
 | [experiments.md](experiments.md) | Record | Pre-registered hypotheses H1 to H9 with status and results, the results log, the deviations log and the fixed protocol |

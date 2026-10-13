@@ -20,6 +20,7 @@ Behavioral fine-tuning and pre-registered evaluation of open-weight models for K
 ## TL;DR
 
 - **What:** the data contract, QLoRA training pipeline, pre-registered evaluation harness and serving stack behind two KLEOS models, both fine-tuned from Mistral AI open-weight bases.
+- **Paper:** all research findings are written up in [the research paper](paper/kleos-decision-policy.pdf) (LaTeX source in [paper/](paper/)).
 - **Fine-tuning:** KLEOS Hermes (Mistral-Nemo 12B) raised the KLEOS policy score from 0.4755 (the same base with prompt-engineered orchestration) to 0.8051, with all 7 tasks improved (p < 0.001, 349 held-out items).
 - **Head-to-head:** KLEOS Logos v0.0.2 (Ministral 3 14B Reasoning, trained to write a policy-derived reasoning trace before it answers) is measurably better than Hermes on the pre-registered answerable subset: +0.0409, cluster 95% CI +0.0040 to +0.0780.
 - **Data:** every training example is synthetic, built by the companion pipeline [Kleos-Training-Data](https://github.com/TejasNaik24/Kleos-Training-Data); its releases are sealed, content-hashed and rebuild byte for byte.
@@ -33,6 +34,7 @@ Built by Tejas Naik.
 - [Overview](#overview)
 - [Research question and design](#research-question-and-design)
 - [Results](#results)
+- [Research paper](#research-paper)
 - [Models](#models)
 - [How it works](#how-it-works)
 - [Method](#method)
@@ -100,6 +102,15 @@ Overall means over all 349 items, descriptive and not tested: Hermes 0.8051, Log
 - **Should-decline items.** The other 78 items expect four decline labels that never occur in v0.0.6 training (D3), which is why the answerable subset is primary. On them, H9's gain of +0.1020 is not significant by groups (CI −0.0018 to +0.2062).
 
 Full numbers: [H9 result](docs/experiments.md#h9-result--2026-10-06), [H8b result](docs/experiments.md#h8b-result--2026-09-29), and the run reports indexed in [docs/experiments/README.md](docs/experiments/README.md).
+
+## Research paper
+
+All research findings are written up in one paper: *Learning a Decision Policy from Synthetic Data: Pre-Registered QLoRA Fine-Tuning of Open-Weight Models for a Student AI Operating System* (Tejas Naik, The Ohio State University, October 2026).
+
+- **Read it:** [paper/kleos-decision-policy.pdf](paper/kleos-decision-policy.pdf). GitHub renders the PDF in the browser.
+- **Source:** [paper/](paper/) holds the LaTeX (`main.tex`, one file per section, figures drawn with pgfplots from the recorded numbers, `references.bib`) and the compile steps.
+
+The paper covers the synthetic decision data and its policy, the QLoRA recipe and the four training runs, the pre-registered protocol with hypotheses H1 to H9, the results, exploratory analyses of what the models learned, serving on ZeroGPU, the limitations and a reproducibility statement, with appendices for the deviations, the findings and the artifact hashes. Every number in it is copied from the frozen records in [docs/experiments.md](docs/experiments.md) and [docs/experiments/](docs/experiments/README.md), and each table names its source.
 
 ## Models
 
@@ -293,6 +304,7 @@ Kleos-Models/
 
 | Page | Contents |
 | --- | --- |
+| [paper/](paper/) | The research paper: PDF and LaTeX source |
 | [docs/README.md](docs/README.md) | Index of every page, by reader path |
 | [docs/hermes.md](docs/hermes.md) | KLEOS Hermes: base, recipe, H1 result, serving status |
 | [docs/logos.md](docs/logos.md) | KLEOS Logos: v0.0.1 and v0.0.2, H8 and H9, serving |
@@ -309,9 +321,19 @@ Contributions are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, `mak
 
 ## Citation
 
-If you use this software or its results, please cite it ([`CITATION.cff`](CITATION.cff) has the same metadata):
+To cite the research findings, cite the paper; to cite the software, cite the repository. [`CITATION.cff`](CITATION.cff) carries both, with the paper as the preferred citation.
 
 ```bibtex
+@misc{naik2026decisionpolicy,
+  author       = {Naik, Tejas},
+  title        = {Learning a Decision Policy from Synthetic Data: Pre-Registered {QLoRA}
+                  Fine-Tuning of Open-Weight Models for a Student {AI} Operating System},
+  year         = {2026},
+  month        = oct,
+  howpublished = {Research paper, KLEOS Models repository},
+  url          = {https://github.com/TejasNaik24/Kleos-Models/blob/main/paper/kleos-decision-policy.pdf}
+}
+
 @software{naik2026kleosmodels,
   author  = {Naik, Tejas},
   title   = {{KLEOS Models}: Behavioral Fine-Tuning and Pre-Registered Evaluation of

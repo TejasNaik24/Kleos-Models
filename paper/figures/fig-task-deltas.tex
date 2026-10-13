@@ -1,0 +1,36 @@
+% Figure 4: per-task gain (arm2 - arm1) for the three runs with a base arm.
+% source: pilot, docs/experiments.md H1 corrected table (EXP:157-165).
+% source: Hermes report per-task table (HER:266-275).
+% source: Logos v0.0.1, docs/experiments.md H8a table (EXP:594-603).
+% Task order is the data-contract order; n is the test count per task.
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  ybar, bar width=6.5pt,
+  width=\linewidth, height=6cm,
+  ylabel={Gain in mean score (fine-tuned $-$ base)}, ymin=0, ymax=0.52,
+  symbolic x coords={notif. ($n=38$), tool routing ($n=62$), briefing ($n=43$), context ($n=8$), recommend. ($n=41$), memory ($n=111$), workspace ($n=46$)},
+  xtick=data, x tick label style={font=\scriptsize, rotate=20, anchor=east},
+  enlarge x limits=0.09,
+  ymajorgrids, grid style={gray!30},
+  legend pos=north west, legend cell align=left, legend style={font=\scriptsize, draw=gray!50},
+  tick label style={font=\scriptsize}, label style={font=\small},
+]
+\addplot[fill=gray!40, draw=gray!60!black] coordinates {
+  (notif. ($n=38$),0.2617) (tool routing ($n=62$),0.3262) (briefing ($n=43$),0.4385) (context ($n=8$),0.3870)
+  (recommend. ($n=41$),0.1284) (memory ($n=111$),0.3412) (workspace ($n=46$),0.4108)};
+\addlegendentry{Ministral-8B pilot (v0.0.6)}
+\addplot[fill=blue!60!black, draw=blue!30!black] coordinates {
+  (notif. ($n=38$),0.1904) (tool routing ($n=62$),0.2750) (briefing ($n=43$),0.4035) (context ($n=8$),0.4065)
+  (recommend. ($n=41$),0.1971) (memory ($n=111$),0.3798) (workspace ($n=46$),0.4323)};
+\addlegendentry{\hermes{} (v0.0.6)}
+\addplot[fill=red!65!black, draw=red!35!black] coordinates {
+  (notif. ($n=38$),0.3054) (tool routing ($n=62$),0.2479) (briefing ($n=43$),0.4094) (context ($n=8$),0.3792)
+  (recommend. ($n=41$),0.0643) (memory ($n=111$),0.4586) (workspace ($n=46$),0.4005)};
+\addlegendentry{\logos{} v0.0.1 (v0.0.6)}
+\end{axis}
+\end{tikzpicture}
+\caption{Per-task gain from fine-tuning on the 349-item benchmark, by task (test items per task in parentheses). Every pilot and Hermes gain was significant under the pre-registered item-level bootstrap ($p<0.05$ and $p<0.001$ respectively); for Logos v0.0.1, five tasks improved under the cluster bootstrap, \code{recommendation\_generation} did not reach significance, and \code{context\_prioritization} (8 items, fewer than 5 groups) was not estimable by groups. Per-task intervals are not recorded, so no error bars are drawn (Table~\ref{tab:per-task}).}
+\label{fig:tasks}
+\end{figure}

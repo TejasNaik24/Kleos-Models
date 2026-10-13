@@ -9,6 +9,16 @@ version: 0.4.0
 date-released: 2026-10-07
 repository-code: "https://github.com/TejasNaik24/Kleos-Models"
 license: MIT
+preferred-citation:
+  type: generic
+  title: "Learning a Decision Policy from Synthetic Data: Pre-Registered QLoRA Fine-Tuning of Open-Weight Models for a Student AI Operating System"
+  authors:
+    - family-names: Naik
+      given-names: Tejas
+      affiliation: "The Ohio State University"
+  year: 2026
+  month: 10
+  url: "https://github.com/TejasNaik24/Kleos-Models/blob/main/paper/kleos-decision-policy.pdf"
 keywords:
   - fine-tuning
   - QLoRA

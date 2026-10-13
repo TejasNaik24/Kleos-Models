@@ -1,0 +1,244 @@
+% Appendices. Every value is copied from the record named in the "% source:" comment above it.
+
+\section{Hyperparameters and software}\label{app:hyper}
+Table~\ref{tab:hyper-full} lists the settings that Table~\ref{tab:recipe} omits and the software versions of each run.
+% source: TRN:46-62; AUD:47-53, 72, 29; HER:159-161, 213, 498; L1:252; KMC/training/*.yaml; versions HER:67-68, L1:70-72, L2:72, EXP:875, AUD:74, SVR:74, 151.
+\begin{table}[H]
+\centering\small
+\caption{Training settings not shown in Table~\ref{tab:recipe}, and the software versions per run. ``not recorded'' means the public record keeps no value. Sources: \code{docs/training.md}, the training configurations under \code{configs/training/} and the run reports.}
+\label{tab:hyper-full}
+\begin{tabular}{L{52mm}L{100mm}}
+\toprule
+Setting & Value \\
+\midrule
+Logging interval & every 5 steps (all four configurations) \\
+Validation and checkpoint interval & 50 steps (pilot, Hermes); 25 steps (Logos v0.0.1, v0.0.2) \\
+Checkpoints retained & 3, plus the best (\code{load\_best\_model\_at\_end} on the lowest validation loss) \\
+Strict configuration checking & off (pilot, Hermes); on (Logos v0.0.1, v0.0.2) \\
+PEFT options & \code{use\_dora} false, \code{use\_rslora} false, \code{modules\_to\_save} none, default LoRA initialization (recorded for the pilot and Hermes; not inspected for Logos v0.0.1) \\
+Warmup & ratio 0.03, resolved by Transformers 5 to 10 steps \\
+Mistral tokenizer regex fix & off for Hermes; on for both Logos runs (changes 0 of 1,350 examples) \\
+Adapter files (fp32) & pilot 174,655,536 bytes; Hermes 228,140,600; Logos v0.0.1 243,869,280; Logos v0.0.2 not recorded \\
+Trainable share reported by PEFT & pilot 1.5293\%; Hermes 1.38\% \\
+fp16-skipped optimizer steps & Hermes 4 (through step 305); Logos v0.0.1 2 (both before step 250); pilot and v0.0.2 not recorded \\
+\midrule
+Pilot software & transformers 5.16.1, peft 0.20.0, bitsandbytes 0.50.2, torch 2.11.0+cu128, Python 3.13.15 \\
+Hermes software & torch 2.11.0+cu128, transformers 5.16.1, peft 0.20.0, accelerate 1.14.0, bitsandbytes 0.50.2, datasets 4.8.5 \\
+Logos v0.0.1 software & as Hermes, plus tokenizers 0.23.2 \\
+Logos v0.0.2 software & transformers 5.16.1, peft 0.20.0, accelerate 1.14.0, bitsandbytes 0.50.2, tokenizers 0.23.2 installed over Kaggle's image; torch is Kaggle's own, recorded only in the run's environment file \\
+Serving (Logos Space) & torch 2.11.0+cu128, transformers 5.16.1, peft 0.20.0, bitsandbytes 0.50.2, gradio 6.28.0, spaces 0.51.3; the Hermes Space pins pydantic 2.12.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Prompt and answer format}\label{app:format}
+% source: data/examples/synthetic_train.jsonl (fixture-prior-0001, public development fixture); KMC/models/ministral3_14b_reasoning.yaml:33-37; V7:93-119.
+An example is a conversation of three messages. The sealed releases are not published as files (the public pipeline rebuilds them byte for byte), so the format is shown here on the first public development fixture shipped with the training harness, which its metadata marks as a synthetic development fixture and not the research dataset. It has the same structure as a release example without a reasoning trace.
+
+\begin{small}
+\begin{verbatim}
+system:  You are the reasoning layer of KLEOS. Deterministic systems have already
+         retrieved and ranked the context. Decide, then justify from the evidence
+         provided. Do not invent facts.
+
+user:    Rank these items by what deserves attention first.
+
+         - internship-application: deadline closes in 2 days; evidence strong
+           (confirmed opening)
+         - networking-event: deadline in 3 weeks; evidence weak (no confirmed
+           attendees)
+         - resume-review: deadline no deadline; evidence medium (peer feedback
+           offered)
+
+assistant:
+         1. internship-application
+         2. resume-review
+         3. networking-event
+
+         Reasoning: internship-application comes first because its deadline is
+         the nearest (closes in 2 days) and the evidence of impact is strong
+         (confirmed opening). Items with weak evidence or no deadline rank last,
+         since acting on them displaces work with a firm cost of delay.
+\end{verbatim}
+\end{small}
+
+In release v0.0.7 every training and validation answer ends with a line ``What decided it: $\langle$label$\rangle$.'' and carries a \code{reasoning} field. For the Reasoning base the chat template renders that field before the answer, so a supervised completion is \code{[THINK]}trace\code{[/THINK]}answer\code{</s>}, with \code{[THINK]} as token 34 and \code{[/THINK]} as token 35, and the loss covers the trace and the answer. The trace follows five steps:
+\begin{enumerate}
+  \item the rule the family's policy weighs, for example ``Score each item as deadline $\times$ evidence $\times$ impact'';
+  \item one line per item, in prompt order, mapping the prompt's wording to the policy's values, for example ``Redpine: due in 2 days (0.33), reported (0.55), high (1.0) $\rightarrow$ 0.18'';
+  \item each check the policy applied and its outcome: close call (relative separation below 0.15), stale explicit statement (30 days or older), usable evidence (weight 0.55 or above), workspace scope, strong challenger (weight 0.8 or above) and ambiguous request;
+  \item why the deciding factor decided it;
+  \item the conclusion: the ranking for a committed answer, or the failed check and the question to ask for a declined one.
+\end{enumerate}
+Traces are capped at 1,200 characters and follow wording rules so that they pass the privacy and fact checks: only item names are capitalized and never two capitalized words in a row, numbers use at most two decimal places, and no dates, at-signs or comma-grouped numbers appear. Each step has two or three phrasings, chosen deterministically, so a rebuild reproduces every trace.
+
+\section{Policies, labels and the test population}\label{app:policies}
+Table~\ref{tab:policies} reproduces the twelve policies and Table~\ref{tab:labels} the eleven deciding-factor labels with the policy that produces each; the scenario families are in Table~\ref{tab:families}.
+% source: the policy table of Kleos-Training-Data docs/scenarios.md (SC:194-207), copied cell by cell.
+\begin{table}[H]
+\centering\scriptsize
+\caption{The twelve decision policies: what each orders by, when it declines, and the deciding factor it names. Copied from the policy table of Kleos-Training-Data, \code{docs/scenarios.md}.}
+\label{tab:policies}
+\begin{tabular}{L{43mm}L{31mm}L{40mm}L{40mm}}
+\toprule
+Policy & Orders by & Abstains when & Deciding factor \\
+\midrule
+\code{rank\_by\_deadline\_then\_evidence} & Score & Never & Deadline, evidence or impact, whichever differs most between the top two \\
+\code{rank\_or\_abstain\_when\_close} & Score & The top two are within a 15\% relative separation & \code{insufficient\_separation} \\
+\code{rank\_by\_reliability\_over\_recency} & Evidence, then recency & Never & Evidence, or deadline when evidence ties \\
+\code{resolve\_or\_abstain\_on\_support} & Evidence, then recency & The top two are within 15\% on evidence and were recorded at the same time & \code{insufficient\_separation} \\
+\code{select\_by\_evidence\_need} & Evidence $\times$ impact, then freshness & Never & Evidence or impact \\
+\code{rank\_by\_relevance\_over\_recency} & Impact (relevance), then recency & Never & Impact, or deadline when impact ties \\
+\code{respect\_workspace\_scope} & In-scope items first, then score & Never. Out-of-scope items are flagged, not acted on. & \code{scope} when scopes are mixed, otherwise the score ranking \\
+\code{ask\_before\_crossing\_workspace} & Same as \code{respect\_}\allowbreak\code{workspace\_scope} & No in-scope item is adequate and the strongest out-of-scope item is & \code{ask\_before\_crossing} \\
+\code{defer\_to\_explicit\_statement} & Explicit statements, then evidence, then recency & The explicit statement is at least 30 days old and a newer inferred record has evidence of at least 0.8 & \code{explicit\_statement}, \code{evidence} or \code{stale\_explicit\_conflict} \\
+\code{verify\_when\_evidence\_weak} & Score & No item is adequate & \code{missing\_input} \\
+\code{ask\_when\_request\_ambiguous} & Score & The family sets \code{prompt.request\_ambiguous} & \code{request\_ambiguous} \\
+\code{prefer\_least\_privilege\_source} & Adequacy, then narrowest reach, then evidence & Never & \code{least\_privilege} when several sources are adequate, otherwise \code{evidence} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% source: labels and the policy cells that produce them, SC:194-207 (as consolidated in the fact pack, A6); test counts EXP:909 (D3), V7:130-132.
+\begin{table}[H]
+\centering\footnotesize
+\caption{The eleven deciding-factor labels named by the policy table, the policy-table cell that produces each (quoted verbatim, with the policy named), and what the record says about the test split. The benchmark's label set has nine options; the two labels whose only families have no JSON-format examples are absent from it. Test counts are recorded for the four decline labels only. Source: Kleos-Training-Data, \code{docs/scenarios.md}, policy table; \code{docs/experiments.md}, deviation D3; the v0.0.7 repair specification.}
+\label{tab:labels}
+\begin{tabular}{L{36mm}L{12mm}L{70mm}L{26mm}}
+\toprule
+Label & Kind & Policy-table cell & Test split \\
+\midrule
+\code{deadline} & commit & \code{rank\_by\_deadline\_then\_evidence}: ``Deadline, evidence or impact, whichever differs most between the top two''; \code{rank\_by\_reliability\_over\_recency}: ``Evidence, or deadline when evidence ties''; \code{rank\_by\_relevance\_over\_recency}: ``Impact, or deadline when impact ties'' & count not recorded \\
+\code{evidence} & commit & the three cells above; \code{select\_by\_evidence\_need}: ``Evidence or impact''; \code{prefer\_least\_privilege\_source}: ``\code{least\_privilege} when several sources are adequate, otherwise \code{evidence}''; \code{defer\_to\_explicit\_statement}: ``\code{explicit\_statement}, \code{evidence} or \code{stale\_explicit\_conflict}'' & count not recorded \\
+\code{impact} & commit & \code{rank\_by\_deadline\_then\_evidence} and \code{select\_by\_evidence\_need} (cells above); \code{rank\_by\_relevance\_over\_recency}: ``Impact, or deadline when impact ties'' & count not recorded \\
+\code{scope} & commit & \code{respect\_workspace\_scope}: ``\code{scope} when scopes are mixed, otherwise the score ranking'' & count not recorded \\
+\code{explicit\_statement} & commit & \code{defer\_to\_explicit\_statement}: ``\code{explicit\_statement}, \code{evidence} or \code{stale\_explicit\_conflict}'' & count not recorded \\
+\code{least\_privilege} & commit & \code{prefer\_least\_privilege\_source}: ``\code{least\_privilege} when several sources are adequate, otherwise \code{evidence}'' & absent: its family has no JSON-format examples \\
+\code{insufficient\_separation} & decline & \code{rank\_or\_abstain\_when\_close} abstains when ``The top two are within a 15\% relative separation''; \code{resolve\_or\_abstain\_on\_support} when ``The top two are within 15\% on evidence and were recorded at the same time'' & 3 items \\
+\code{ask\_before\_crossing} & decline & \code{ask\_before\_crossing\_workspace} abstains when ``No in-scope item is adequate and the strongest out-of-scope item is'' & absent: its family has no JSON-format examples \\
+\code{stale\_explicit\_conflict} & decline & \code{defer\_to\_explicit\_statement} abstains when ``The explicit statement is at least 30 days old and a newer inferred record has evidence of at least 0.8'' & 20 items \\
+\code{missing\_input} & decline & \code{verify\_when\_evidence\_weak} abstains when ``No item is adequate'' & 25 items \\
+\code{request\_ambiguous} & decline & \code{ask\_when\_request\_ambiguous} abstains when ``The family sets \code{prompt.request\_ambiguous}'' & 30 items \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Deviations D1 to D13}\label{app:deviations}
+Table~\ref{tab:deviations} condenses the deviations log; the full text of each entry is in the research record.
+% source: EXP:909-921 (the deviations log), condensed; the recorded effect on the result is quoted or paraphrased from each row.
+\begin{table}[H]
+\centering\scriptsize
+\caption{The deviations log, condensed. Each row's last column is the effect recorded at the time. Source: \code{docs/experiments.md}, deviations log.}
+\label{tab:deviations}
+\begin{tabular}{L{8mm}L{16mm}L{70mm}L{58mm}}
+\toprule
+Id & Date & Deviation & Recorded effect \\
+\midrule
+D1 & 2026-09-15 & H1 registered \code{arm0\_base} vs \code{arm2}; the run compared \code{arm1\_base\_orchestrated} vs \code{arm2} & The research question names the orchestrated baseline; arm0 exists only as a 20-example probe (0.5659), a biased head-of-file slice not comparable with a full run \\
+D2 & 2026-09-15 & H1 registered an entity holdout; the sealed release uses a format holdout on JSON & The test split probes format transfer, not entity generalization \\
+D3 & 2026-09-15 & 78 of 349 test items (22\%) expect a label that appears zero times in training (\code{request\_ambiguous} 30, \code{missing\_input} 25, \code{stale\_explicit\_conflict} 20, \code{insufficient\_separation} 3) & Affects both arms identically, so H1 stays fair; absolute deciding-factor figures carry the caveat (0.6332 overall, 0.816 on answerable items for the pilot) \\
+D4 & 2026-09-15 & The ranking extractor was corrected before the run (it had returned whole prose lines) & Instrument changed before any result; no reported number affected \\
+D5 & 2026-09-15 & The formatter folds the system prompt into the first user turn when the template drops it & Fixed before the run; without it every example would have trained without its policy instructions \\
+D6 & 2026-09-15 & The composite \code{kleos\_policy} grader was added, with \code{format\_valid} reported separately and excluded & Without the separation a format failure is indistinguishable from a judgment failure \\
+D7 & 2026-09-15 & The pilot used \code{revision: main}; the resolved commit is not recoverable & Future runs are pinned; the historical record is not backfilled \\
+D8 & 2026-09-18 & Hermes training was interrupted after step 250 and resumed 18 hours later on another T4 & No effect: the selected checkpoint (step 200) predates the interruption; resume state verified (step-300 evaluations agree to $1.4 \times 10^{-5}$) \\
+D9 & 2026-09-27 & Logos v0.0.1 trained over four Colab sessions with two resumes (from steps 100 and 250) & No effect on the selected adapter (step 175, written in session 2); the reported \code{train\_loss} is a resume artifact and is not quoted \\
+D10 & 2026-09-29 & Logos \code{arm2} was evaluated in three sessions; the first two never reached storage (finding L-F3); the third generated all 349 in one pass & No effect: a single uninterrupted run at the registered commit \\
+D11 & 2026-09-29 (declared before it ran) & Logos \code{arm1} would run at a later commit containing the L-F3 file-handling fix & Done as declared on 2026-10-01; the change touches file handling only; the second session resumed 172 recorded generations \\
+D12 & 2026-10-06 & Both Kaggle notebooks ran on the ``Latest Container Image,'' not a pinned one & No effect: neither run was resumed in a later version; libraries were installed at pinned versions \\
+D13 & 2026-10-06 & The training run is Version 2 of its notebook; Version 1 stopped at the commit guard in its first cell & No effect: Version 1 ran no code beyond the guard; both runs used the registration commit and the configuration hash matched before training \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Findings}\label{app:findings}
+Table~\ref{tab:findings} lists the three findings registers.
+% source: AUD:133-224 (F1-F3); HER:483-583 with statuses HMD:222-237 (H-F1 to H-F14); LF:20-118 with statuses LMD:536-545 (L-F1 to L-F8).
+\begin{table}[H]
+\centering\scriptsize
+\caption{The findings registers, one line each, with status as of 2026-10-07. Sources: the artifact audit, the Hermes run report and \code{docs/experiments/logos-findings.md}.}
+\label{tab:findings}
+\begin{tabular}{L{10mm}L{92mm}L{50mm}}
+\toprule
+Id & Finding & Status \\
+\midrule
+F1 & nDCG could exceed 1.0 on degenerate rankings; the pilot baseline re-graded from 0.5231 to 0.4744 (210 of 349 responses changed), the fine-tuned arm unchanged & resolved 2026-09-15 \\
+F2 & A 17.1\,MB \code{tokenizer.json} was refused by the 5\,MB scan cap & resolved 2026-09-15 \\
+F3 & The base-model revision was not pinned & resolved for future runs 2026-09-15; the pilot is not backfilled (D7) \\
+\midrule
+H-F1 & The research adapter configuration records \code{revision: null} & research copy kept; the package pins the revision; later adapters record it \\
+H-F2 & The manifest contradicts itself on the trainable count (1,342,592,000 against 57,016,320) & open; the per-layer reconciliation gives 57,016,320 \\
+H-F3 & A stale sliding-window note was frozen into the records & open \\
+H-F4 & A checkpoint-saved event is not a durability guarantee on Drive & open; weightless checkpoints are rejected at resume \\
+H-F5 & The comparison tool checked benchmark identity by path, not content & fixed for later runs \\
+H-F6 & The comparability check never compares base models & open (methodological) \\
+H-F7 & Result files drop the grader details & fixed for later runs \\
+H-F8 & \code{train\_loss} is invalid after a resume: the reported value is a resume artifact; the mean over the second session's steps 251 to 309 is 0.00459 & open; never quoted \\
+H-F9 & The retention pass did not protect the best checkpoint & fixed \\
+H-F10 & The memory estimator was about 5\,GB optimistic (7.96 to 8.12 against 13.09\,GB) & fixed \\
+H-F11 & Consistency was grouped by scenario family (ceiling 0.600, 57 flips for a perfect model) & reported by group from H8 on \\
+H-F12 & The fabricated-citation heuristic flags gold answers (47.9\% of test targets) & reported beside its floor \\
+H-F13 & Evidence coverage is vacuous (every response scores 1.0) & reported as vacuous \\
+H-F14 & Item-level intervals treat 349 dependent items as independent & cluster intervals from H8 on \\
+\midrule
+L-F1 & LoRA scoping for the vision-language adapter fails on Transformers 5 (7 of 14 modules landed in the vision tower) & open; the strict test is an expected failure \\
+L-F2 & The tokenizer class depends on \code{config.json} (442 against 492 tokens for the same text) & prompt tokens matched on 9 of 9 served prompts \\
+L-F3 & Evaluation resume lost killed sessions' work on the Drive mount & fixed; confirmed 2026-10-01 (172 generations resumed) \\
+L-F4 & A fresh start into a folder with checkpoints would delete the best one & open \\
+L-F5 & Checkpoint validation ignores optimizer and scheduler state & open \\
+L-F6 & \code{device\_map: auto} split the model unevenly across two T4s (probe 10.16\,GB on GPU 1 against an estimated 8.53; run peak 10.21\,GB) & open; no effect on the run \\
+L-F7 & The stop reason misses a budget cut after a closed trace (6 of 349) & resolved in serving \\
+L-F8 & Evaluation reports no progress while running & open \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Artifact register}\label{app:artifacts}
+% source: config hashes AUD:61, HER:57, L1:62, L2:67; commits AUD:68-69, HER:64, L1:67-68, L2:68 and the map XR:106-132; dataset identity AUD:64, HER:60-61, L1:64, L2:70, KMC/deployment/kleos_logos_v002.yaml:23; adapters AUD:29, HER:213, L1:252, KMC/deployment/kleos_logos_v002.yaml:20; result files HER:462-463, L1:471-472, 492, L2:220; test and benchmark SPEC:54, EXP:477; KCL:46-52.
+Three kinds of dataset identity appear in the records and are never interchangeable: the \emph{release content hash}, computed by the data pipeline over a sealed release (\code{3cc9a74486c42e8e} for v0.0.6, \code{b53afa4216bf6973} for v0.0.7, as the changelog prints them); the harness \emph{dataset hash}, computed over the loaded split files (\code{c7340f1d9cb31b1d\allowbreak{}1d7f0ade65d83740\allowbreak{}159a887f5d6cb495\allowbreak{}5820065076ffa875} for v0.0.6); and the deployment record's \emph{dataset SHA-256} (\code{5d02a5afd7be18e5\allowbreak{}7f13b7d86fa8c31a\allowbreak{}1b008dd9e1927f4f\allowbreak{}a506356649699c48} for v0.0.7). Likewise the test split (\code{a4decaaf029b2273\allowbreak{}66846d44018b0b1b\allowbreak{}669d21f068800a9f\allowbreak{}3175e15ec4783980}) and the benchmark built from it (\code{a11ffad75f5147f9\allowbreak{}d0ddad7bad4bfc07\allowbreak{}3dc730df2b19173f\allowbreak{}f642774233b4b266}) are different objects.
+
+Table~\ref{tab:artifacts} gives each run's identity.
+
+\begin{table}[H]
+\centering\scriptsize
+\caption{Per-run identity. Commits are given as the frozen records cite them and as they appear in the public history after the rewrite described in Section~\ref{sec:repro}; manifests hold the former. The pilot's configuration hash no longer reproduces at the current head because its base was pinned afterwards. Sources: the artifact audit, the run reports, the deployment record and \code{docs/experiments/README.md}.}
+\label{tab:artifacts}
+\begin{tabular}{L{22mm}L{130mm}}
+\toprule
+Run & Identity \\
+\midrule
+Ministral-8B pilot & config hash \code{3fbb3f90ed9662ee\allowbreak{}f801363820ddaade\allowbreak{}0c24e591468447b0\allowbreak{}30ef50d12b7806d3}; commit \code{2ad7c9a} (public \code{b64099b}), clean; dataset hash \code{c7340f1d\ldots}; adapter \code{6d4a0a93d274160b\allowbreak{}aeea65843f48d57d\allowbreak{}f759cddc9d423f55\allowbreak{}a20d7c88659e473c}, 174,655,536 bytes \\
+\hermes{} v0.0.6 & config hash \code{b2328857c6026dd7\allowbreak{}c904a6acadd00ec5\allowbreak{}5a6ce5289bf6210e\allowbreak{}743615fce6d8d3e8}; commit \code{4cd76c4} (public \code{22ca978}), clean; dataset hash \code{c7340f1d\ldots}; adapter \code{dc121fa36ce1409c\allowbreak{}a142e8da61a809f9\allowbreak{}386e32d0ef09c421\allowbreak{}4efa271d5b857b32}, 228,140,600 bytes; result files arm1 \code{71dee4c0\ldots}, arm2 \code{428400f5\ldots}, arm2 annotated \code{99fdcdc3\ldots} \\
+\logos{} v0.0.1 & config hash \code{18008c6716a58afc\allowbreak{}284c64eb7e1e96c9\allowbreak{}bfce34b8da2b8c48\allowbreak{}9b6d59c0c45b6f71}; training commit \code{ec4f9e3} (public \code{81e3e9a}); arm1 evaluation commit \code{ed5a987} (public \code{e915060}); dataset hash \code{c7340f1d\ldots}; adapter \code{f3e8dcdc09a3f3bb\allowbreak{}9f6fc4f64f867ff8\allowbreak{}b97834c955a03fcb\allowbreak{}de98a8068d5570a7}, 243,869,280 bytes; result files arm1 \code{a0b048b1\ldots}, arm2 \code{09243630\ldots} \\
+\logos{} v0.0.2 & config hash \code{d1961583546b5761\allowbreak{}dd854cfe845838ca\allowbreak{}91a87ea6189d54be\allowbreak{}617de21085e8cfa9}; commit \code{a17ace7} (public \code{6d7e450}); release content hash \code{b53afa42\ldots}; adapter \code{e49724f6554db662\allowbreak{}769fbe9b9431105d\allowbreak{}bc12f8f75cecd6e0\allowbreak{}e00728ea3f04dc4f}; result file arm2 \code{0dd74661\ldots}, whose \code{benchmark\_fingerprint} field is \code{c3d0d1f1\ldots} (a hash stored by the harness, distinct from the benchmark SHA-256) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Logos configuration hashes include the literal dataset and output paths used on the training hosts, which the record keeps for that reason. The pre-registration commits map as follows: H5 and H6 on 2026-09-15, \code{7145edd} to \code{a6bae0c}; H8 and the clustered-interval amendment on 2026-09-24, \code{ec4f9e3} to \code{81e3e9a}; D11 on 2026-09-29, \code{ed5a987} to \code{e915060}; H9 on 2026-10-06, \code{a17ace7} to \code{6d7e450}; the first commit, \code{fd87931} of 2026-08-14, is unchanged.
+
+\section{Serving details and the smoke record}\label{app:serving}
+Table~\ref{tab:zerogpu} records the host's rules and the checks behind Section~\ref{sec:serving}.
+% source: SVR:89-98 (ZeroGPU facts); DEP:182, 781-794 (duration rule); SVR:12-18, 102-137 (Hermes); SVR:150-195 (Logos day 1 and day 2); L2:136-145, 185-194 (thinking statistics).
+\begin{table}[H]
+\centering\small
+\caption{ZeroGPU facts as recorded on 2026-09-23 and the two-day Logos smoke record of 2026-10-07. Source: \code{docs/experiments/serving-verification-records.md}.}
+\label{tab:zerogpu}
+\begin{tabular}{L{50mm}L{102mm}}
+\toprule
+Item & Recorded value \\
+\midrule
+GPU & half an NVIDIA RTX Pro 6000 Blackwell: 48\,GB, compute capability 12.0 \\
+Daily quota & 5 minutes of GPU time for a free account, 2 minutes for an unauthenticated caller; charged to the calling account; reset 24 hours after that account's first use \\
+Admission and queue & admitted while remaining quota covers 1.5 times the requested duration; waits up to 60\,s for a GPU; up to 2 ZeroGPU Spaces per account; no persistent storage \\
+Duration rule & $\min(\max(\lceil \text{BASE} + \text{max\_new\_tokens}/\text{TOKENS\_PER\_SECOND} \rceil, \text{MIN}), \text{MAX})$ with defaults 10\,s, 12 tokens/s, 15\,s and 60\,s; measured speeds of 12 (Hermes) and 11.0 (Logos) tokens/s left the defaults in place \\
+Hermes, Colab check & adapter \code{dc121fa3\ldots}; the package copy of the adapter configuration pins \code{04d8a905\ldots}; tokenizer loaded without the regex fix, as trained; 9 of 9 byte-identical \\
+Hermes, ZeroGPU (10 calls) & 9 of 9 byte-identical, token counts equal, repeated call identical; 7 of 10 calls got a new worker; 73 to 131\,s of the 300\,s daily quota consumed; startup: download 2\,s, load and quantization 41\,s, packing 8.54\,GB 3\,s; peak CPU memory at startup not recorded \\
+Logos, startup & download 1.9\,s, load 57.1\,s, host peak 30.6\,GiB of 2,000\,GiB, 9.20\,GB packed for the GPU \\
+Logos, day 1 & 7 of 9 prompts admitted before the quota refused the 8th; 6 of 7 identical; 161 to 174 GPU seconds; warm median 19.7\,s, cold 29.9\,s \\
+Logos, day 2 & 2 of 2 identical (a tool-routing and a workspace-reasoning item); cold 25.2\,s (236 tokens), warm 33.6\,s (a 406-token answer); 56.5 to 58.8 GPU seconds \\
+Logos, totals & 8 of 9 identical in answer and trace; prompt tokens equal on 9 of 9; decisions agree on 8 of 9; 217.8 to 232.3 GPU seconds (24 to 26 per answer) \\
+Logos, evaluation traces & 349 of 349 answers traced; 0 traces left open; 0 empty answers or parse failures; mean 549 characters (median 540, maximum 840) against training traces of 327 to 878; completions mean 293.5 tokens, median 285, 95th percentile 413 \\
+\bottomrule
+\end{tabular}
+\end{table}

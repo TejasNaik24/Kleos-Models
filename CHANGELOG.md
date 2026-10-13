@@ -18,6 +18,9 @@ no KLEOS model uses.
 
 ### Added
 
+- The research paper under `paper/`: LaTeX source, figures drawn from the
+  recorded numbers, bibliography and the compiled PDF; linked from the README,
+  `docs/README.md` and `CITATION.cff`, which names it as the preferred citation.
 - `CITATION.cff` (CFF 1.2.0) and a citation section in the README.
 - `.claude/` ignored in `.gitignore`.
 - Documentation for outside readers: an index (`docs/README.md`), model pages

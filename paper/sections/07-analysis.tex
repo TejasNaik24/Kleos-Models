@@ -1,0 +1,55 @@
+\section{Analysis}\label{sec:analysis}
+
+Everything in this section is exploratory: it reads the recorded sub-scores, consistency and abstention tables for what the models learned, and no claim here was registered in advance.
+
+\paragraph{Where the gain comes from.}
+% source: HER:310-320, 363-367; L1:343-352; LMD:323-324; SPEC:39; EXP:911.
+The sub-scores in Table~\ref{tab:subscores} decompose the H1 gain. For Hermes the deciding-factor component moved most, from 0.0860 to 0.6132: the base model rarely named the factor the policy weighs, the adapter usually does. The ranking component moved from 0.5985 to 0.8822, with nDCG (0.6174 to 0.9527) rising more than top-1 accuracy (0.5702 to 0.7765), one reading is that the adapter orders the tail of a ranking better than it picks its head. Confidence, the component that scores whether the answer commits or declines when the reference does, rose from 0.7421 to 0.9198. Two ceilings bound these figures for every model trained on v0.0.6: because the 78 should-decline items expect labels absent from the training targets (deviation D3), the deciding factor cannot exceed 0.7765 and the score cannot exceed 0.9255 on the full benchmark. On the 271 answerable items the fine-tuned deciding factor is 0.7897 for Hermes (214 correct) and 0.816 for the pilot (221 correct), against 0.1107 (30 correct) for the Hermes base. Logos v0.0.1 shows the same shape with a slightly weaker deciding factor (0.5989) and ranking (0.8529).
+
+\paragraph{Consistency.}
+% source: HER:286-292, 559-565; EXP:291-295; HMD:135-136; EXP:573-574, 610-611, 787-788.
+Table~\ref{tab:consistency} reports how often a model gives the same decision across the items of one group. Under the configured unit, the scenario family, the fine-tuned Hermes agrees with itself on 0.333 of the 15 test families and is right when it agrees on 0.333, against 0.133 and 0.000 for its base; the pilot reproduces both fine-tuned figures exactly. Those numbers sit under a ceiling of 0.600, because 6 of the 15 families mix different correct labels, which is why the record re-reports consistency by perturbation group, where a perfect model scores 1.000. Hermes rises from 0.346 to 0.769 by group, Logos v0.0.1 from 0.154 to 0.833, and Logos v0.0.2 reaches 0.833 over all groups and 0.869 over the answerable ones. Fine-tuning reduced flips under every perturbation kind for Hermes (paraphrase 53 to 44, evidence order 36 to 21, irrelevant context 24 to 21, length 5 to 3, context order 1 to 0), but paraphrase remains the largest source of inconsistency in both arms. H3's verdict, ``improved, still poor,'' summarizes this: two thirds of the test families (10 of 15) still flip under a perturbation that should not change the decision.
+
+\paragraph{Abstention was learned by scenario family.}
+% source: HER:341-354; EXP:306-316; HER:353-354; LMD:500-502.
+The lower block of Table~\ref{tab:consistency} splits the should-decline items by the family that produces them. Two families decline unconditionally in training (every one of their 32 and 45 training targets abstains), and on their 50 test items the fine-tuned Hermes declines 50 times out of 50, as does the pilot. Two families decline conditionally, on the evidence (25 of 55 and 3 of 9 training targets abstain), and on their 28 test items both adapters decline 0 times. On the 271 answerable items both adapters commit 271 times. The record's reading is that the models learned ``this kind of question $\rightarrow$ decline,'' not ``the evidence is insufficient $\rightarrow$ decline.'' The base model has the opposite failure: it over-commits almost everywhere, declining correctly on only 3 of the 78 should-decline items. Logos v0.0.2 raised the should-decline score to 0.5855 after training on targets that include the four decline labels, but whether it declines on the evidence rather than on the family was not analyzed.
+
+% source: HER:286-292, 341-347; EXP:291-316; HMD:135-136.
+\begin{table}[t]
+\centering\scriptsize
+\caption{Consistency and abstention. Upper block: agreement across the items of one group, by the configured unit (15 scenario families, where a perfect model scores 0.600) and by perturbation group (78 groups, perfect score 1.000); flips are counts of decision changes attributed to each perturbation kind. Lower block: correct declines per abstention family, and correct commitments on the answerable items. ``Unspecified'' is the record's label for flips not attributed to a named perturbation kind; the record has no row for the schema kind. Sources: Hermes run report; \code{docs/experiments.md} H3.}
+\label{tab:consistency}
+\begin{tabular}{L{62mm}R{24mm}R{24mm}R{24mm}}
+\toprule
+Measure & Hermes base & Hermes fine-tuned & Pilot fine-tuned \\
+\midrule
+Agreement rate by family (ceiling 0.600) & 0.133 & 0.333 & 0.333 \\
+Correct-agreement rate by family & 0.000 & 0.333 & 0.333 \\
+Families flipping under some perturbation (of 15) & 13 & 10 & 10 \\
+Flips: paraphrase / unspecified / evidence order / irrelevant context / length / context order & 53 / 39 / 36 / 24 / 5 / 1 & 44 / 28 / 21 / 21 / 3 / 0 & not reported \\
+Agreement rate by group (ceiling 1.000) & 0.346 & 0.769 & not reported \\
+\midrule
+\code{mem.stale\_explicit\_conflict} (training: 32 of 32 decline), 20 test items & 0 / 20 & 20 / 20 & 20 / 20 \\
+\code{route.ask\_when\_underspecified} (45 of 45 decline), 30 test items & 0 / 30 & 30 / 30 & 30 / 30 \\
+\code{rec.verify\_before\_recommending} (25 of 55 decline, conditional), 25 test items & 3 / 25 & 0 / 25 & 0 / 25 \\
+\code{rec.abstain\_without\_evidence} (3 of 9 decline, conditional), 3 test items & 0 / 3 & 0 / 3 & 0 / 3 \\
+Should commit, 271 test items & 256 / 271 & 271 / 271 & 271 / 271 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Selection, memorization and the trace.}
+% source: HER:146-150; L1:190-196; EXP:710-715; L2:92.
+Section~\ref{sec:models} showed that in the two runs with recorded curves the validation loss turns upward in the third epoch while the training loss keeps falling, to about a tenth (Hermes) or a fifteenth (Logos v0.0.1) of the validation loss; the other two runs record only that their final validation loss exceeds the selected checkpoint's. The shipped adapters are the ones selected before that turn, at epochs 1.95 and 1.70, and the benchmark results above belong to those checkpoints, not to the end of training. For Logos v0.0.2 the selection criterion is a loss over the trace and the answer together, and the trace is 58\% of the validation targets by characters; the record keeps no answer-only loss, so it is not known whether the step that minimized the joint loss also minimized the answer loss.
+
+\paragraph{What H9 does and does not say.}
+% source: EXP:718-739; LMD:487-490; RM:98; L2:55-57; EXP:733-736.
+Logos v0.0.2 differs from Hermes in three ways at once: the base checkpoint (Ministral 3 14B Reasoning instead of Mistral-Nemo 12B), the training data (v0.0.7, with reasoning traces, instead of v0.0.6) and the generation budget (1,024 instead of 512 tokens). The pre-registration counted the first two as the confounded changes and listed the thinking budget as a further one, and the hardware and the torch build differ as well. Hermes was not retrained on v0.0.7, and v0.0.2 has no base arm. H9 therefore says that the new model is measurably better than the old on the answerable items, with a lower bound of $+0.0040$ that the record calls close to zero, and it does not say which change produced the gain or how large each part is. Within the Logos line, v0.0.2 against v0.0.1 isolates the data and budget changes from the base change only partly, since the base changed too (Instruct to Reasoning). The experiment that would separate them, Hermes retrained on v0.0.7 beside a v0.0.2 base arm, is the obvious next run; neither has been made.
+
+\paragraph{Heuristics reported beside their floors.}
+% source: HER:299-305; EXP:167-170; L1:333-338; EVAL:261-268.
+The faithfulness heuristics moved in the expected direction, and the record declines to make anything of it. For Hermes, citation precision rose from 0.5938 to 0.7192 and the unsupported-claim rate fell from 0.3400 to 0.1600; the number of responses flagged as containing a fabricated citation fell from 147 to 98 (194 to 116 for the pilot, 216 to 94 for Logos v0.0.1). The same heuristic flags 167 of the 349 gold test answers (47.9\%), so a flag is not evidence of a fabrication, and evidence coverage reads 1.0000 for every arm because no benchmark item names decisive evidence identifiers. These numbers are kept in the record as uncalibrated heuristics and are not findings.
+
+\paragraph{Generation economy.}
+% source: HER:261-262; L1:293-300; L2:137-144.
+Fine-tuning made the answers shorter and faster without any instruction to do so: mean completion length fell from 226 to 94 tokens for Hermes and from 348 to 95 for Logos v0.0.1, and mean latency on the T4 from 24.7 to 16.1\,s and from 36.7 to 17.2\,s, consistent with the adapters having learned the terse format of the targets. The reasoning model reverses part of that: Logos v0.0.2's completions average 293.5 tokens, of which the trace is the larger part, and 53.8\,s on the two-GPU evaluation host; Section~\ref{sec:serving} gives the served latencies.

@@ -1,0 +1,89 @@
+% Learning a Decision Policy from Synthetic Data:
+% Pre-Registered QLoRA Fine-Tuning of Open-Weight Models for a Student AI Operating System
+%
+% Compile with pdfLaTeX + BibTeX (Overleaf: default compiler, main document main.tex).
+% Every number in this paper is copied from a record in the KLEOS Models repository;
+% the "% source:" comments in the section files name the record and line.
+
+\documentclass[10pt,letterpaper]{article}
+\PassOptionsToPackage{hyphens}{url}
+
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{newtxtext,newtxmath}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,array}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{natbib}
+\usepackage{float}
+\usepackage{etoolbox}
+\apptocmd{\thebibliography}{\sloppy}{}{}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+\setlength{\bibsep}{3pt}
+\setlist{nosep,leftmargin=*}
+\setlength{\parskip}{0pt}
+\setlength{\tabcolsep}{3pt}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+
+% Project names and one notation macro.
+\newcommand{\kleos}{KLEOS}
+\newcommand{\hermes}{KLEOS Hermes}
+\newcommand{\logos}{KLEOS Logos}
+\newcommand{\ci}[2]{[$#1$, $#2$]}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{\Large\bfseries Learning a Decision Policy from Synthetic Data:\\
+Pre-Registered QLoRA Fine-Tuning of Open-Weight Models\\
+for a Student AI Operating System}
+\author{Tejas Naik\\
+The Ohio State University\\
+\texttt{kleos2027@gmail.com}}
+\date{October 2026 (version 1)}
+
+\begin{document}
+
+\maketitle
+
+\begin{center}\small
+Code and research records: \url{https://github.com/TejasNaik24/Kleos-Models}\\
+Data pipeline: \url{https://github.com/TejasNaik24/Kleos-Training-Data}\qquad
+\kleos{}: \url{https://kleos-cs.vercel.app}
+\end{center}
+
+\begin{abstract}
+\input{sections/00-abstract}
+\end{abstract}
+
+\input{sections/01-introduction}
+\input{sections/02-related-work}
+\input{sections/03-task-and-data}
+\input{sections/04-models-and-training}
+\input{sections/05-protocol}
+\input{sections/06-results}
+\input{sections/07-analysis}
+\input{sections/08-serving}
+\input{sections/09-limitations}
+\input{sections/10-reproducibility}
+\input{sections/11-conclusion}
+
+\section*{Acknowledgements}
+Mistral AI released the open-weight base models. Hugging Face maintains Transformers, PEFT and bitsandbytes and hosts the models on Spaces ZeroGPU. Google Colab and Kaggle provided the free GPU sessions on which every run was trained and evaluated.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\clearpage
+\appendix
+\input{sections/appendix}
+
+\end{document}

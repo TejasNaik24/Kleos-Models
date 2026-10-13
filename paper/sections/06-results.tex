@@ -1,0 +1,130 @@
+\section{Results}\label{sec:results}
+
+Every result in this section is pre-registered unless marked as a re-report or as descriptive. Scores are means of the \code{kleos\_policy} grader on the 349-item benchmark. Intervals are 95\% bootstrap intervals, item-level for the H1 comparisons and cluster-level by perturbation group from H8 on, as the protocol fixes. Table~\ref{tab:main} collects the main numbers, Table~\ref{tab:per-task} the per-task results, Table~\ref{tab:head-to-head} the comparisons between fine-tuned models and Table~\ref{tab:subscores} the grader sub-scores; Figures~\ref{fig:main} to \ref{fig:forest} draw them.
+
+\input{figures/fig-main-results}
+\input{figures/fig-task-deltas}
+\input{figures/fig-forest}
+
+% source: pilot EXP:167, 182-198; Hermes HER:259-262, HMD:110-111, L1:416-418, HMD:135-136; Logos v0.0.1 L1:291-294, EXP:605-613; Logos v0.0.2 EXP:748-752, 787-791, L2:154-176.
+\begin{table}[t]
+\centering\scriptsize
+\caption{Main results on the 349-item benchmark. Base and fine-tuned intervals are item-level; the answerable and should-decline columns are re-reports by group with cluster intervals where recorded. The pilot's baseline was re-graded after its interval was recorded, so neither pilot figure carries one; Logos v0.0.2 has no base arm and its overall mean is descriptive. Consistency is the agreement rate by perturbation group, where a perfect model scores 1.000. Sources: \code{docs/experiments.md} (H1, H8, H9 entries) and the run reports.}
+\label{tab:main}
+\begin{tabular}{L{19mm}L{21mm}L{21mm}L{26mm}L{27mm}L{20mm}L{16mm}}
+\toprule
+Model & Base, arm1 & Fine-tuned, arm2 & Difference & Answerable (271 items, 61 groups), arm2 & Should-decline (78 items, 17 groups), arm2 & Consistency, arm2 (all / answerable) \\
+\midrule
+Ministral-8B pilot & 0.4744 & 0.8015 & $+0.3271$; 7 of 7 tasks $p<0.05$ & not reported & not reported & not reported \\
+\hermes{} & 0.4755 \ci{0.4532}{0.4978} & 0.8051 \ci{0.7813}{0.8288} & $+0.3295$ \ci{0.3068}{0.3521}, $p<0.001$ & 0.8976 \ci{0.8634}{0.9301} (base 0.5570) & 0.4835 (base 0.1923) & 0.769 / 0.770 (base 0.346) \\
+\logos{} v0.0.1 & 0.4469 \ci{0.4219}{0.4720} & 0.7896 \ci{0.7644}{0.8147} & $+0.3427$ (descriptive); answerable $+0.3952$ \ci{+0.3443}{+0.4438} & 0.8808 \ci{0.8381}{0.9191} (base 0.4857 \ci{0.4445}{0.5261}) & 0.4724 (base 0.3123; $+0.1601$ \ci{+0.0712}{+0.2409}) & 0.833 / 0.853 (base 0.154 / 0.164) \\
+\logos{} v0.0.2 & not run & 0.8596 (descriptive) & --- & 0.9385 \ci{0.9083}{0.9663} & 0.5855 & 0.833 / 0.869 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{H1: the pilot and its replication}
+% source: EXP:157-198 (pilot per task, F1 re-grade); HER:259-320 (Hermes arms, per task, sub-scores); HER:384-437 and EXP:103-108 (descriptive comparison); HMD:110-111, L1:416-418, HMD:135-136 (subsets and consistency by group).
+The pilot run on Ministral-8B compared the orchestrated base against the fine-tuned adapter on all 349 items. Its first report scored the baseline at 0.5231. An artifact audit then found that nDCG could exceed 1.0 on a ranking that repeats an item (finding F1), and 60\% of the baseline's answers repeated one. Bounding nDCG re-graded 210 of the 349 baseline responses and none of the fine-tuned ones, moved the baseline to 0.4744, left the fine-tuned score at 0.8015, and raised the count of tasks with a significant improvement from six to seven. The corrected gap is $+0.3271$, with every task improved at $p<0.05$ under the pre-registered item-level bootstrap (Table~\ref{tab:per-task}, first block); parse failures fell from 13 to 0 (descriptive).
+
+\hermes{} replicated the result on a different base one week later: 0.4755 \ci{0.4532}{0.4978} to 0.8051 \ci{0.7813}{0.8288}, a paired difference of $+0.3295$ \ci{0.3068}{0.3521}. The comparison tool prints $p = 0.0$, meaning that none of the 2,000 resamples crossed zero, so the correct statement is $p<0.001$. Every task improved with $p<0.001$ (Table~\ref{tab:per-task}, second block; Figure~\ref{fig:tasks}), from $+0.1904$ on notification prioritization to $+0.4323$ on workspace reasoning; the 8-item context-prioritization task moved from 0.5935 to 1.0000 (interval 0.2612 to 0.5352). The sub-scores (Table~\ref{tab:subscores}) show where the gain comes from: the ranking component rose from 0.5985 to 0.8822 (nDCG 0.6174 to 0.9527, top-1 accuracy 0.5702 to 0.7765, Kendall's $\tau$ 0.5449 to 0.8479), the deciding factor from 0.0860 to 0.6132 and confidence from 0.7421 to 0.9198. \code{format\_valid} is 0.0000 in both arms with 0 parse failures: neither arm produced the held-out JSON format, and the scores measure judgment on prose answers. Descriptively, fine-tuning also shortened the answers, from a mean of 226 completion tokens to 94 (medians 217 and 91); one baseline answer hit the 512-token cap and no fine-tuned answer did; mean latency on the T4 fell from 24.7\,s to 16.1\,s. Re-reported by group after the H8 amendment, Hermes scores 0.8976 \ci{0.8634}{0.9301} on the 271 answerable items (base 0.5570) and 0.4835 on the 78 should-decline items (base 0.1923), and its agreement rate by group is 0.769 (base 0.346).
+
+The two fine-tuned models land within 0.004 of each other overall (0.8015 and 0.8051) and the two baselines within 0.002; the per-task differences between the adapters range from $-0.0766$ on notification prioritization to $+0.1076$ on context prioritization. The record treats these as leads, not results: scale, architecture and pretraining are confounded between the two bases, and the agreement is cross-base consistency, not a replication of one configuration across seeds.
+
+% source: pilot EXP:157-165; Hermes HER:266-275; Logos v0.0.1 EXP:594-603.
+\begin{table}[t]
+\centering\scriptsize
+\caption{Per-task results for the three runs with a base arm. Verdicts for the pilot and Hermes are under the pre-registered item-level bootstrap; verdicts for Logos v0.0.1 are under the cluster bootstrap by group (the item-level verdict is given where it differs). Per-task intervals are not recorded except the one shown. Sources: \code{docs/experiments.md} H1 and H8a tables; Hermes run report.}
+\label{tab:per-task}
+\begin{tabular}{L{40mm}R{8mm}R{14mm}R{16mm}R{14mm}L{54mm}}
+\toprule
+Task & $n$ & Base & Fine-tuned & Difference & Verdict \\
+\midrule
+\multicolumn{6}{l}{\emph{Ministral-8B pilot, corrected after F1 (2026-09-15)}} \\
+mission-control briefing & 43 & 0.5323 & 0.9708 & $+0.4385$ & improved, $p<0.05$ \\
+workspace reasoning & 46 & 0.5228 & 0.9336 & $+0.4108$ & improved, $p<0.05$ \\
+context prioritization & 8 & 0.5054 & 0.8924 & $+0.3870$ & improved, $p<0.05$ \\
+memory-conflict resolution & 111 & 0.4781 & 0.8192 & $+0.3412$ & improved, $p<0.05$ \\
+tool routing & 62 & 0.3919 & 0.7181 & $+0.3262$ & improved, $p<0.05$ \\
+notification prioritization & 38 & 0.6253 & 0.8871 & $+0.2617$ & improved, $p<0.05$ \\
+recommendation generation & 41 & 0.3285 & 0.4569 & $+0.1284$ & improved, $p<0.05$ \\
+overall & 349 & 0.4744 & 0.8015 & $+0.3271$ & 7 of 7 tasks improved \\
+\midrule
+\multicolumn{6}{l}{\emph{\hermes{} (2026-09-22)}} \\
+workspace reasoning & 46 & 0.5190 & 0.9512 & $+0.4323$ & improved, $p<0.001$ \\
+context prioritization & 8 & 0.5935 & 1.0000 & $+0.4065$ & improved, $p<0.001$; interval 0.2612 to 0.5352 \\
+mission-control briefing & 43 & 0.5681 & 0.9716 & $+0.4035$ & improved, $p<0.001$ \\
+memory-conflict resolution & 111 & 0.4756 & 0.8553 & $+0.3798$ & improved, $p<0.001$ \\
+tool routing & 62 & 0.3929 & 0.6679 & $+0.2750$ & improved, $p<0.001$ \\
+recommendation generation & 41 & 0.2974 & 0.4946 & $+0.1971$ & improved, $p<0.001$ \\
+notification prioritization & 38 & 0.6201 & 0.8105 & $+0.1904$ & improved, $p<0.001$ \\
+overall & 349 & 0.4755 & 0.8051 & $+0.3295$ & interval 0.3068 to 0.3521, $p<0.001$ \\
+\midrule
+\multicolumn{6}{l}{\emph{\logos{} v0.0.1, H8a (2026-10-01), verdicts by group}} \\
+memory-conflict resolution & 111 & 0.3763 & 0.8350 & $+0.4586$ & improved, $p<0.001$ \\
+mission-control briefing & 43 & 0.5552 & 0.9646 & $+0.4094$ & improved, $p<0.001$ \\
+workspace reasoning & 46 & 0.5366 & 0.9370 & $+0.4005$ & improved, $p<0.001$ \\
+context prioritization & 8 & 0.6204 & 0.9995 & $+0.3792$ & not estimable by group (8 items); improved by item, $p<0.001$ \\
+notification prioritization & 38 & 0.5888 & 0.8942 & $+0.3054$ & improved, $p<0.001$ \\
+tool routing & 62 & 0.4021 & 0.6501 & $+0.2479$ & improved, $p<0.001$ \\
+recommendation generation & 41 & 0.3263 & 0.3906 & $+0.0643$ & not significant \\
+overall & 349 & 0.4469 & 0.7896 & $+0.3427$ & descriptive; 5 tasks improved, none regressed: supported \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{H8: a stronger base}
+% source: H8a EXP:594-613, L1:291-300, 321-327; H8b EXP:545-576, L1:395-437.
+\paragraph{H8a (supported).} Fine-tuning helped the Ministral 3 base as it had helped the others: Logos v0.0.1 moved from 0.4469 \ci{0.4219}{0.4720} to 0.7896 \ci{0.7644}{0.8147} overall. Under the cluster bootstrap five tasks improved with $p<0.001$ and none regressed (Table~\ref{tab:per-task}, third block); recommendation generation ($+0.0643$) was not significant, and the 8-item context-prioritization task was not estimable by group. On the answerable subset the paired cluster difference is $+0.3952$ \ci{+0.3443}{+0.4438} (0.4857 to 0.8808) and on the should-decline subset $+0.1601$ \ci{+0.0712}{+0.2409} (0.3123 to 0.4724); agreement by group rose from 0.154 to 0.833. One caveat is recorded beside these gains: 41 of the base's 349 answers (11.7\%) were cut at the 512-token budget, against none of the adapter's (mean completion length 348 against 95 tokens), which may inflate the base-to-adapter differences.
+
+\paragraph{H8b (inconclusive).} On the primary population Hermes scores 0.8976 \ci{0.8634}{0.9301} and Logos v0.0.1 0.8808 \ci{0.8381}{0.9191}; the paired cluster difference over 61 groups is $-0.0168$ \ci{-0.0546}{+0.0177} (Table~\ref{tab:head-to-head}, Figure~\ref{fig:forest}). The interval crosses zero and is not contained in the $\pm 0.02$ equivalence margin, so the pre-registered verdict is inconclusive: a Hermes lead of up to 0.0546 is not ruled out, nor is a Logos lead of up to 0.0177. The secondary rows point the same way. On the should-decline subset the difference is $-0.0111$ \ci{-0.0429}{+0.0195}. Per task, recommendation generation regressed from 0.4946 to 0.3906 ($-0.1040$; $p = 0.006$ by group, $p<0.001$ by item) and workspace reasoning by $-0.0142$ ($p = 0.014$ by group, not significant by item); notification prioritization rose by $+0.0837$ ($p = 0.007$ by item, not significant by group); the other three estimable tasks' group intervals included zero (per-task intervals are not recorded). Agreement by group was higher for Logos (0.833 against 0.769; 0.853 against 0.770 on answerable groups), with no interval computed (descriptive). The overall means, 0.8051 and 0.7896, are descriptive.
+
+\subsection{H9: a Logos trained to think}
+% source: EXP:748-791; L2:136-145, 154-176, 185-194, 204-210.
+\paragraph{H9 (supported: better).} Logos v0.0.2 scores 0.9385 \ci{0.9083}{0.9663} on the answerable items against Hermes' 0.8976 \ci{0.8634}{0.9301}; the paired cluster difference over 61 groups is $+0.0409$ \ci{+0.0040}{+0.0780}, $p = 0.031$. The interval lies entirely above zero, so the pre-registered verdict is better; the record notes that the lower bound is close to zero. The first secondary row, the one the v0.0.7 data was built to move, did not reach significance by group: on the should-decline items Logos v0.0.2 scores 0.5855 against 0.4835, $+0.1020$ \ci{-0.0018}{+0.2062}, $p = 0.054$ over 17 groups. By task, notification prioritization ($+0.1324$, $p<0.001$), recommendation generation ($+0.0893$, $p = 0.002$) and memory-conflict resolution ($+0.0737$, $p = 0.048$) improved; tool routing ($+0.0330$), workspace reasoning ($+0.0172$) and mission-control briefing ($-0.0153$) had group intervals that included zero; context prioritization ($-0.0002$) was not estimable. Descriptively, agreement by group rose from 0.769 to 0.833 over all groups and from 0.770 to 0.869 over the answerable ones. The overall mean, 0.8596, is descriptive: v0.0.2 has no base arm.
+
+\paragraph{Logos v0.0.1 to v0.0.2 (secondary).} Against its own predecessor, v0.0.2 gains $+0.0577$ \ci{+0.0234}{+0.0952} on the answerable items ($p<0.001$) and $+0.1131$ \ci{+0.0028}{+0.2296} on the should-decline items ($p = 0.046$); recommendation generation ($+0.1933$, $p<0.001$) and memory-conflict resolution ($+0.0941$, $p = 0.005$) improved and no task regressed. Among the comparisons between fine-tuned models, this is the one in which the should-decline difference excludes zero, and it confounds the same three changes as H9.
+
+\paragraph{The traces (descriptive).} All 349 v0.0.2 completions carried a reasoning trace and every trace closed; the traces average 549 characters (median 540, maximum 840) against 575 in the validation targets. Completions averaged 293.5 tokens (median 285, 95th percentile 413) and took 53.8\,s on average on the two T4s (95th percentile 76.3\,s). Six completions reached the 1,024-token budget after a closed trace, all on answerable memory-conflict items, where the answer repeated a phrase; they were scored as generated, at 0.59 to 0.65 each. \code{format\_valid} is 0.0 for all three models.
+
+\par\medskip\noindent\fbox{\parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{\small\textbf{Reported, not decisive.} The secondary rows in this section are uncorrected for multiple comparisons. Three sit near the conventional threshold: memory-conflict resolution under H9 ($p = 0.048$ by group), the H9 should-decline row ($p = 0.054$) and the v0.0.1 to v0.0.2 should-decline row ($p = 0.046$). None of them bears on the pre-registered verdicts, which rest on the primary rows alone.}}
+
+% source: H8b EXP:545-576, L1:429-437; H9 EXP:748-791, L2:165-176; v0.0.1 to v0.0.2 L2:204-210.
+\begin{table}[t]
+\centering\scriptsize
+\caption{Comparisons between fine-tuned models. Every interval is a paired cluster-bootstrap 95\% interval by group; per-task rows give the difference and the verdict by group, with the item-level verdict where it differs. Consistency is the agreement rate by group. Per-task intervals are not recorded; ``n.s.'' is the recorded verdict that the group interval included zero. Sources: \code{docs/experiments.md} H8b and H9 results; Logos v0.0.1 and v0.0.2 run reports.}
+\label{tab:head-to-head}
+\begin{tabular}{L{27mm}L{40mm}L{40mm}L{40mm}}
+\toprule
+Row & H8b: Logos v0.0.1 $-$ Hermes & H9: Logos v0.0.2 $-$ Hermes & Logos v0.0.2 $-$ v0.0.1 (secondary) \\
+\midrule
+Answerable, 271 items, 61 groups (primary) & $-0.0168$ \ci{-0.0546}{+0.0177}; inconclusive & $+0.0409$ \ci{+0.0040}{+0.0780}, $p = 0.031$; better & $+0.0577$ \ci{+0.0234}{+0.0952}, $p<0.001$ \\
+Should-decline, 78 items, 17 groups & $-0.0111$ \ci{-0.0429}{+0.0195} & $+0.1020$ \ci{-0.0018}{+0.2062}, $p = 0.054$; not significant & $+0.1131$ \ci{+0.0028}{+0.2296}, $p = 0.046$ \\
+Per task, by group & recommendation $-0.1040$ regressed ($p = 0.006$); workspace $-0.0142$ regressed ($p = 0.014$; n.s.\ by item); notification $+0.0837$ n.s.\ (improved by item, $p = 0.007$); briefing $-0.0070$, tool routing $-0.0178$, memory $-0.0204$ n.s.; context not estimable & notification $+0.1324$ ($p<0.001$), recommendation $+0.0893$ ($p = 0.002$), memory $+0.0737$ ($p = 0.048$) improved; tool routing $+0.0330$, workspace $+0.0172$, briefing $-0.0153$ n.s.; context $-0.0002$ not estimable & recommendation $+0.1933$ ($p<0.001$), memory $+0.0941$ ($p = 0.005$) improved; no task regressed \\
+Consistency by group, all / answerable & 0.769 / 0.770 $\rightarrow$ 0.833 / 0.853 & 0.769 / 0.770 $\rightarrow$ 0.833 / 0.869 & 0.833 / 0.853 $\rightarrow$ 0.833 / 0.869 \\
+Overall mean (descriptive) & 0.8051 vs 0.7896 & 0.8051 vs 0.8596 & 0.7896 vs 0.8596 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% source: Hermes HER:310-320; Logos v0.0.1 L1:343-352.
+\begin{table}[t]
+\centering\small
+\caption{Grader sub-scores on the full benchmark. The score is the mean of the ranking, deciding-factor and confidence components where the reference supports them; \code{format\_valid} is reported and excluded. Sources: Hermes and Logos v0.0.1 run reports.}
+\label{tab:subscores}
+\begin{tabular}{lrrrr}
+\toprule
+Sub-score & Hermes base & Hermes fine-tuned & Logos v0.0.1 base & Logos v0.0.1 fine-tuned \\
+\midrule
+score (\code{judgment}) & 0.4755 & 0.8051 & 0.4469 & 0.7896 \\
+ranking & 0.5985 & 0.8822 & 0.4468 & 0.8529 \\
+\quad nDCG & 0.6174 & 0.9527 & 0.4505 & 0.9459 \\
+\quad top-1 accuracy & 0.5702 & 0.7765 & 0.4413 & 0.7135 \\
+\quad Kendall's $\tau$ & 0.5449 & 0.8479 & 0.5350 & 0.8345 \\
+deciding factor & 0.0860 & 0.6132 & 0.1805 & 0.5989 \\
+confidence & 0.7421 & 0.9198 & 0.7135 & 0.9169 \\
+\code{format\_valid} & 0.0000 & 0.0000 & 0.0000 & 0.0000 \\
+parse failures & 0 & 0 & 0 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}

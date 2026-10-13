@@ -1,0 +1,38 @@
+% Figure 1: system overview. Labels only; counts from docs/experiments.md (Status),
+% Kleos-Training-Data README (releases) and docs/evaluation.md (benchmark).
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  node distance=4mm and 6mm,
+  box/.style={draw, rounded corners=2pt, align=center, font=\footnotesize, inner sep=4pt, text width=30mm, minimum height=11mm},
+  wide/.style={box, text width=38mm},
+  arr/.style={-{Latex[length=2mm]}, thick}
+]
+% Row 1: data
+\node[box] (cat) {Scenario catalog\\ 18 scenario families,\\ 12 decision policies};
+\node[box, right=of cat] (gen) {Generation\\ 1,350 examples; every\\ answer computed by a policy};
+\node[box, right=of gen] (gate) {Promotion gates (14)\\ and sealing\\ (content hash)};
+\node[wide, right=of gate] (split) {Group split (sha256, seed 42)\\ train 820 / validation 181 /\\ test 349, JSON format held out};
+\draw[arr] (cat) -- (gen);
+\draw[arr] (gen) -- (gate);
+\draw[arr] (gate) -- (split);
+% Row 2: models and evaluation
+\node[box, below=10mm of cat] (qlora) {QLoRA fine-tuning\\ NF4, $r=16$, T4 GPUs\\ (Colab, Kaggle)};
+\node[box, right=of qlora] (arms) {Arms\\ base + orchestration (arm1)\\ vs fine-tuned (arm2)};
+\node[box, right=of arms] (bench) {Benchmark, 349 items\\ 271 answerable / 78\\ should-decline; 78 groups};
+\node[wide, right=of bench] (verdict) {Pre-registered verdict\\ paired bootstrap, cluster-\\ resampled by group from H8 on};
+\draw[arr] (qlora) -- (arms);
+\draw[arr] (arms) -- (bench);
+\draw[arr] (bench) -- (verdict);
+\draw[arr] (split.south west) ++(8mm,0) |- ++(0,-3mm) -| (qlora.north);
+% Row 3: serving
+\node[box, below=10mm of arms] (pkg) {Deployment package\\ pinned base revision,\\ adapter SHA-256};
+\node[box, right=of pkg] (space) {ZeroGPU Space\\ greedy decoding,\\ reproduction check};
+\node[box, right=of space] (app) {\kleos{} application\\ Hermes (fast),\\ Logos (shows its reasoning)};
+\draw[arr] (verdict.south) |- ++(0,-3mm) -| (pkg.north);
+\draw[arr] (pkg) -- (space);
+\draw[arr] (space) -- (app);
+\end{tikzpicture}
+\caption{The pipeline. The data pipeline (top row) lives in the companion repository and seals each release with a content hash; the training, evaluation and serving code (rows two and three) live in the KLEOS Models repository. The test split is the sealed benchmark; it was never used for selection.}
+\label{fig:pipeline}
+\end{figure}
